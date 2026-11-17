@@ -174,9 +174,14 @@ public:
     // Decoded frames in memory, across every decoder, and their soft limit (bytes)
     static size_t decodedBytesInUse();
     static size_t decodedBytesLimit();
-    // Hardware frames handed to the GPU in place (set by the render thread when it can sample them: macOS)
+    // Hardware frames handed to the GPU in place (set by the render thread when it can take them: macOS, and
+    // Windows with a shared device)
     static void setZeroCopy(bool on);
     static bool zeroCopy();
+    // The hardware device every decoder of its type uses instead of its own (Windows: the renderer's D3D11 device,
+    // so that the frames stay on it and are copied on the GPU into the renderer's textures). A reference is taken;
+    // nullptr: each decoder opens its own again. Decoders opened before keep theirs.
+    static void setSharedHardwareDevice(AVBufferRef *device);
     // A hardware frame whose surface the GPU refused: frames of its format are copied from now on (true: newly)
     static bool refuseSurface(const AVFrame *hw);
     // Compressed texture formats the GPU samples (HAP): DXT (S3TC) and BPTC (BC7, BC6). RGTC is always there.

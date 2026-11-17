@@ -8,7 +8,7 @@
 // NDI, OMT and the DeckLink driver are loaded at runtime: NyxMap builds and runs without them,
 // publishing becomes available as soon as the library is installed on the machine.
 //
-// This file depends on no OpenGL header (the Syphon / Spout implementations have their own).
+// This file depends on no graphics header (the Syphon / Spout implementations have their own).
 
 #include "Timecode.h"
 
@@ -60,13 +60,13 @@ struct PublishState {
 // Available at compile time (Syphon / Spout) or always (NDI / OMT, loaded at runtime)
 bool publishCompiledIn(PublishKind k);
 
-// --- GPU publishing (in the render thread, OpenGL context current) ---------------------------
+// --- Shared-surface publishing (Syphon, Spout), in the render thread: the pixels the QRhi renderer read back ---------------------------
 class GpuPublisher
 {
 public:
     virtual ~GpuPublisher() = default;
     virtual bool start(const QString &name, QString *err) = 0;
-    virtual void publish(unsigned int texture, int width, int height) = 0; // GL_TEXTURE_2D texture, bottom-left origin
+    virtual void publish(const unsigned char *rgba, int width, int height) = 0; // RGBA8, the picture's bottom row first
     virtual int receivers() const { return -1; }
 };
 std::unique_ptr<GpuPublisher> createSyphonPublisher(); // nullptr if not compiled in

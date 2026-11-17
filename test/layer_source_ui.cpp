@@ -67,7 +67,6 @@ int runLayerSourceUiTests(Engine &engine)
     QComboBox *tap = visible("sourceTap");
     for (const LayerTap option : {LayerTap::Source, LayerTap::PreFx, LayerTap::PostFx})
         check(tap && tap->findData(int(option)) >= 0, "the standard source tap is offered");
-    check(tap && tap->findData(int(LayerTap::MediaPipeMask)) >= 0, "the MediaPipe mask tap is offered");
     if (tap) check(choose(tap, int(LayerTap::Source)) && layerOf(b)->sourceTap == LayerTap::Source, "taken from its source");
     undo.undo();
     check(layerOf(b)->sourceTap == LayerTap::PostFx, "the tap undoes");

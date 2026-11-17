@@ -1,4 +1,4 @@
-#include "Gl.h"
+#include "ImageUtil.h"
 #include <QCoreApplication>
 #include <QImage>
 #include <QTemporaryDir>

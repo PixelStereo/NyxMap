@@ -23,6 +23,9 @@ struct LayerBuild {
 inline thread_local LayerBuild t_layerBuild;
 
 // Resources removed from the composition (under lock), then released in the render thread.
+// A Text layer's picture: its text drawn in `fill`, stored bottom row first like the images (Render.cpp); `inkOnly`:
+// the letters alone, top row first (what TextWriting follows)
+QImage renderTextLayer(const Layer &l, const QString &text, const QColor &fill, bool inkOnly = false);
 // The Text generator's settings in a layer state (Project.cpp)
 // An easing of the snapshots' fades (0 linear, 1 in, 2 out, 3 in-out, 4 in cubic, 5 out cubic) at t in 0..1
 double easeCurve(double t, int curve);
@@ -44,11 +47,8 @@ std::vector<Engine::SnapshotNode> snapshotTreeFromJson(const QJsonArray &a);
 
 struct Engine::Garbage {
     std::unique_ptr<VideoDecoder> video;
-    std::unique_ptr<VideoTexture> videoTex;
     std::shared_ptr<AudioStream> audio;
-    Texture2D tex, textTex, imageAutoTex, hdrTex;
     std::unique_ptr<IsfInstance> generator;
-    RenderTarget generatorTarget;
     std::vector<std::unique_ptr<IsfInstance>> effects;
     std::unique_ptr<LiveInput> input;
     std::unique_ptr<WebPage> webPage;

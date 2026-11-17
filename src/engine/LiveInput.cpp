@@ -90,12 +90,12 @@ public:
         m_h = h;
         m_fresh = true;
     }
-    bool take(Texture2D &tex)
+    bool takeImage(QImage *out) // the same, as a picture (QRhi): RGBA, the first row the bottom
     {
         QMutexLocker lk(&m_mutex);
         if (!m_fresh) return false;
         m_fresh = false;
-        tex.upload(m_rgba.constData(), m_w, m_h);
+        *out = QImage(reinterpret_cast<const uchar *>(m_rgba.constData()), m_w, m_h, m_w * 4, QImage::Format_RGBA8888).copy();
         return true;
     }
 
@@ -116,7 +116,7 @@ public:
         img.fill(c);
         m_frame.put(img.constBits(), img.width(), img.height(), int(img.bytesPerLine()), false);
     }
-    bool update(Texture2D &tex) override { return m_frame.take(tex); }
+    bool takeFrame(QImage *image) override { return m_frame.takeImage(image); }
 
 private:
     LatestFrame m_frame;
@@ -135,7 +135,7 @@ public:
         m_quit = true;
         if (m_thread.joinable()) m_thread.join();
     }
-    bool update(Texture2D &tex) override { return m_frame.take(tex); }
+    bool takeFrame(QImage *image) override { return m_frame.takeImage(image); }
     QString status() const override { return m_connected ? QString() : QStringLiteral("Waiting for the NDI source"); }
 
 private:
@@ -203,7 +203,7 @@ public:
         m_quit = true;
         if (m_thread.joinable()) m_thread.join();
     }
-    bool update(Texture2D &tex) override { return m_frame.take(tex); }
+    bool takeFrame(QImage *image) override { return m_frame.takeImage(image); }
     QString status() const override { return m_connected ? QString() : QStringLiteral("Waiting for the OMT source"); }
 
 private:
@@ -331,7 +331,7 @@ public:
 #endif
     }
     ~CameraInput() override { m_holder->deleteLater(); } // stopped and released in its own thread
-    bool update(Texture2D &tex) override { return m_frame->take(tex); }
+    bool takeFrame(QImage *image) override { return m_frame->takeImage(image); }
     QString status() const override
     {
         QMutexLocker lk(&m_status->mutex);
@@ -357,7 +357,7 @@ public:
     {
         return m_in.open(port, [this](const decklink::InputFrame &f) { receive(f); }, err);
     }
-    bool update(Texture2D &tex) override { return m_frame.take(tex); }
+    bool takeFrame(QImage *image) override { return m_frame.takeImage(image); }
     QString status() const override
     {
         if (m_in.hasSignal()) return {};
@@ -384,21 +384,18 @@ private:
 };
 
 #ifdef NYXMAP_HAS_SPOUT
-// --- Spout: the sender's texture copied on the GPU into the layer's, in the render thread
+// --- Spout: the sender's texture copied on the GPU, on QRhi's Direct3D 11 device, into a texture QRhi samples
 class SpoutInput : public LiveInput
 {
 public:
-    explicit SpoutInput(const QString &name) : m_name(name), m_rx(createSpoutReceive(name)) {}
-    bool update(Texture2D &tex) override
+    explicit SpoutInput(const QString &name) : m_name(name) {}
+    QRhiTexture *takeTexture(QRhi *rhi, QSize *size, bool *flipped) override // QRhi (Direct3D 11)
     {
-        SpoutReceive::Result r = m_rx->receive(tex.tex, tex.w, tex.h);
-        if (r == SpoutReceive::Resize) { // a new sender, or another size: the texture made at its size, then the frame
-            if (!tex.tex || tex.w != m_rx->width() || tex.h != m_rx->height()) tex.upload(nullptr, m_rx->width(), m_rx->height());
-            r = m_rx->receive(tex.tex, tex.w, tex.h);
-        }
-        m_found = r != SpoutReceive::Gone;
-        if (r == SpoutReceive::Received) m_seen = true;
-        return r == SpoutReceive::Received;
+        if (!m_rhiReceive) m_rhiReceive = createSpoutReceiveRhi(m_name);
+        QRhiTexture *t = m_rhiReceive->receive(rhi, size);
+        if (t) m_seen = m_found = true;
+        *flipped = true; // Direct3D's first row is the picture's top
+        return t;
     }
     QString status() const override
     {
@@ -408,7 +405,7 @@ public:
 
 private:
     QString m_name;
-    std::unique_ptr<SpoutReceive> m_rx;
+    std::unique_ptr<SpoutReceiveRhi> m_rhiReceive;
     std::atomic<bool> m_found{false}, m_seen{false};
 };
 #endif
@@ -538,7 +535,7 @@ public:
         });
     }
     ~ScreenInput() override { m_holder->deleteLater(); } // stopped and released in its own thread
-    bool update(Texture2D &tex) override { return m_frame->take(tex); }
+    bool takeFrame(QImage *image) override { return m_frame->takeImage(image); }
     QString status() const override
     {
         QMutexLocker lk(&m_status->mutex);

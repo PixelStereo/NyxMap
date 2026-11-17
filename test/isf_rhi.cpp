@@ -71,7 +71,7 @@ int main(int argc, char **argv)
         const IsfInstance::RhiSources src = IsfInstance::rhiSources(f);
         QString error;
         if (!src.error.isEmpty()) {
-            ++unreadable; // not a shader this host reads at all (the OpenGL path refuses it too)
+            ++unreadable; // not a shader this host reads at all
             if (verbose) std::printf("  unreadable %s: %s\n", qPrintable(f), qPrintable(firstLine(src.error)));
             continue;
         }

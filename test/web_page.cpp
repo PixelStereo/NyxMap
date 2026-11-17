@@ -12,7 +12,6 @@
 #include <QFile>
 #include <QImage>
 #include <QJsonArray>
-#include <QSurfaceFormat>
 #include <QTemporaryDir>
 #include <QThread>
 #include <atomic>
@@ -40,13 +39,12 @@ class FakePage : public WebPage
 {
 public:
     explicit FakePage(const WebSource &s) : m_settings(s) { fakeLog.url = s.url; }
-    bool update(Texture2D &tex) override
+    bool takeFrame(QImage *out) override // the QRhi renderer's
     {
-        if (m_sent) return false;
-        m_sent = true;
-        QImage img(m_settings.width, m_settings.height, QImage::Format_RGBA8888);
-        img.fill(QColor(0, 0, 255));
-        tex.upload(img.constBits(), img.width(), img.height());
+        if (m_sentFrame) return false;
+        m_sentFrame = true;
+        *out = QImage(m_settings.width, m_settings.height, QImage::Format_RGBA8888);
+        out->fill(QColor(0, 0, 255));
         return true;
     }
     void configure(const WebSource &s) override
@@ -59,7 +57,7 @@ public:
 
 private:
     WebSource m_settings;
-    bool m_sent = false;
+    bool m_sentFrame = false;
 };
 
 QColor centre(const QImage &img) { return img.isNull() ? QColor() : img.pixelColor(img.width() / 2, img.height() / 2); }
@@ -74,16 +72,14 @@ int main(int argc, char **argv)
     qputenv("QTWEBENGINE_CHROMIUM_FLAGS", "--no-sandbox --disable-gpu");
     qputenv("QTWEBENGINE_DISABLE_SANDBOX", "1");
 #endif
-    QSurfaceFormat format;
-    format.setVersion(3, 3);
-    format.setProfile(QSurfaceFormat::CoreProfile);
-    QSurfaceFormat::setDefaultFormat(format);
-    QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
+
+
+
     QApplication app(argc, argv);
     Engine e;
     QString err;
     if (!e.initialize(&err)) {
-        std::printf("FAIL web_page: OpenGL: %s\n", qPrintable(err));
+        std::printf("FAIL web_page: renderer: %s\n", qPrintable(err));
         return 1;
     }
     QTemporaryDir tmp;

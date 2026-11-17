@@ -4,7 +4,7 @@
 // JSON header parsing, translation to GLSL 330 core, multi-pass rendering,
 // persistent and float buffers, imported images.
 
-#include "Gl.h"
+#include <QImage>
 #include "Parameter.h"
 #include <QJsonObject>
 #include <QPointF>
@@ -13,6 +13,7 @@
 #include <QVector>
 #include <algorithm>
 #include <functional>
+#include <memory>
 #include <vector>
 
 // Value of a parameter (any numeric type), for undo.
@@ -29,6 +30,11 @@ struct IsfValue {
     }
     bool operator!=(const IsfValue &o) const { return !(*this == o); }
 };
+
+class QRhi;
+class QRhiCommandBuffer;
+class QRhiTexture;
+class RhiTarget;
 
 struct IsfInput {
     enum Type { Event, Bool, Long, Float, Point2D, Color, Image, Audio, AudioFFT, Unknown };
@@ -52,10 +58,9 @@ struct IsfInput {
     quint64 imageLayer = 0;
     // A NyxMap extension ("LAYER_ONLY": true): the input shows a layer, never an image file
     bool layerOnly = false;
-    Texture2D imageTex;
-    // A picture of the engine for this input instead (transitions: startImage, endImage); 0: none
-    GLuint extTex = 0;
+    // A picture of the engine for this input instead (transitions: startImage, endImage), set by the QRhi renderer
     int extW = 0, extH = 0;
+    QRhiTexture *rhiExt = nullptr; // (its size: extW × extH)
 
     // An "audio" or "audioFFT" input: the sound it shows (saved), and its MAX (the columns wanted; 0: the native
     // width). The engine binds the shared analysis texture before each render.
@@ -63,7 +68,6 @@ struct IsfInput {
     AudioSource audioSource = LiveInput;
     int audioMax = 0;
 
-    GLint loc = -1, sizeLoc = -1, rectLoc = -1;
     static QString typeName(Type t);
     // A number (or numbers) a timeline, an animation or a snapshot's fade can move: a float, a choice among numbers,
     // a point (x, y), a color (r, g, b, a)
@@ -105,25 +109,17 @@ struct IsfPass {
 struct IsfTarget {
     QString name;
     bool persistent = false, isFloat = false;
-    RenderTarget rt[2];
-    int front = 0;
-    GLint loc = -1, sizeLoc = -1, rectLoc = -1;
 };
 
 struct IsfImported {
     QString name, path;
-    Texture2D tex;
-    GLint loc = -1, sizeLoc = -1, rectLoc = -1;
 };
 
 // Shared resources provided by the engine at render time.
 struct IsfRenderContext {
     double dt = 0;
     double elapsed = -1; // TIME catch-up; negative uses dt (standalone callers)
-    GLuint blackTex = 0;
-    std::function<void()> drawQuad;                                // fullscreen quad (VAO bound)
-    std::function<void(int count)> drawPoints;                     // count squares (6 vertices each), no attribute
-    std::function<void(GLuint tex, const RenderTarget &)> blit;   // plain copy
+    bool paused = false; // the show is paused: no layer is drawn but those that came in meanwhile
 };
 
 class IsfInstance
@@ -134,37 +130,33 @@ public:
     IsfInstance(const IsfInstance &) = delete;
     IsfInstance &operator=(const IsfInstance &) = delete;
 
-    // Parses the .fs file (and optional .vs), then compiles. The GL context must be current.
+    // Reads the .fs file (and optional .vs): its inputs, passes, targets and imports. The shaders are built by the QRhi
+    // renderer, from its own instance (loadRhi)
     bool load(const QString &path);
-    // Compile and load into a temporary instance; the current program stays
-    // alive on failure. The IsfInstance pointer itself is never replaced.
-    // The OpenGL context must be current (same as load()).
+    // Read again into a temporary instance; this one stays as it is on failure. The IsfInstance pointer itself is never
+    // replaced.
     bool reloadSafely();
-    void releaseGl();
-
-    // Renders into `out` (size outW x outH). inputTex may be 0 (generator).
-    // A stateless generator can redraw its held frame without consuming time or events.
-    void render(const IsfRenderContext &rc, GLuint inputTex, int inW, int inH, RenderTarget &out, int outW, int outH,
-                bool repeatFrame = false);
     bool canSkipDraw() const { return m_canSkipDraw; }
     void advanceWithoutDrawing(const IsfRenderContext &rc);
 
-    bool setImageInput(int index, const QString &path, QString *err); // GL context current
-    // Texture of the engine bound to the image input `name` at the next renders (0: back to its own image)
-    void setImageTexture(const QString &name, GLuint tex, int w, int h);
+    bool setImageInput(int index, const QString &path, QString *err);
     IsfInput *input(const QString &name);
     // A texture of the engine bound at the next renders to a sampler the shader declares itself (not one of its
-    // inputs: the Line generator's segments); 0 unbinds it
-    void setExtraTexture(const QByteArray &uniform, GLuint tex);
+    // inputs: the Line generator's segments)
+    void setExtraRhiTexture(const QString &name, QRhiTexture *tex); // the same through QRhi (renderRhi)
 
     // In a file: the shader (path), its mask, its image inputs' files ("images": input → path) and, unless its
     // values are kept elsewhere (a layer keeps its shaders' values in its own parameters), its parameters' values
     // ("params": address → value, as parameters() names them)
     QJsonObject save(const QString &projectDir, bool withParams = true) const;
-    void restore(const QJsonObject &o, const QString &projectDir); // GL context current (its images are loaded)
+    void restore(const QJsonObject &o, const QString &projectDir);
     void resetParams();
     // Restart: TIME and FRAMEINDEX back to 0, its persistent buffers emptied, at its next render (a preset can hold it)
     void requestRestart() { m_restartPending = true; }
+    // The QRhi renderer draws with an instance of its own (RhiRenderer follows this one): it takes the Restart asked of this
+    // one, and gives its clock back to it
+    bool takeRestart() { const bool asked = m_restartPending; m_restartPending = false; return asked; }
+    void adoptClock(const IsfInstance &o) { m_time = o.m_time; m_frameIndex = o.m_frameIndex; }
     double time() const { return m_time; }
 
     QString path() const { return m_path; }
@@ -172,10 +164,10 @@ public:
     QString description() const { return m_description; }
     QString credit() const { return m_credit; }
     QString error() const { return m_error; }
-    bool isValid() const { return m_program != 0; }
+    bool isValid() const { return m_valid; }
     bool isFilter() const { return m_isFilter; }
-    // Its picture moves with TIME or TIMEDELTA (the compiler drops a uniform the shader never reads): `speed` matters
-    bool usesTime() const { return m_locTime >= 0 || m_locTimeDelta >= 0; }
+    // Its picture moves with TIME or TIMEDELTA (the shader reads TIME or TIMEDELTA): `speed` matters
+    bool usesTime() const { return m_usesTime; }
     bool enabled = true;
     // Pace of TIME and TIMEDELTA (1: real time, 0: stopped): it scales the step, so TIME goes on from where it is
     // and the picture does not jump when it changes
@@ -201,10 +193,11 @@ public:
 
     // QRhi prototype (docs/developers/qrhi-prototype.md): the shader as Vulkan-flavoured GLSL 440, what
     // QShaderBaker bakes into SPIR-V, Metal and HLSL. Its values in one std140 block (binding 0), each image at its
-    // own binding, the varyings at explicit locations (matched by name between the stages). No GL. error: why it
+    // own binding, the varyings at explicit locations (matched by name between the stages). error: why it
     // could not be read.
     struct RhiSources {
         QString vertex, fragment, error;
+        QString vertexPoints; // the vertex shader of a POINTS pass: no vertex attribute (isf_position is 0)
         // The block's members as std140 lays them out (offset in bytes), with the input's default
         struct Uniform {
             enum Kind { Int, Float, Bool, Vec2, Vec4 } kind = Float;
@@ -219,8 +212,19 @@ public:
         QString inputImage; // the filter's input image (empty: a generator)
     };
     static RhiSources rhiSources(const QString &path);
+    // Whether the shaders of those sources compile (baked for every backend, kept by their text); err: why not
+    static bool checkShaders(const RhiSources &src, QString *err);
 
-    // Lightweight header parsing (for the library, no GL).
+    // The QRhi renderer (IsfRhi.cpp), on the state of the instance (inputs, time, passes). loadRhi: read and baked for `rhi`, no device needed (false: error()). renderRhi: as render()
+    // does, into `out` (made outSize; RGBA16F when it already is, else RGBA8), recorded in `cb` outside any pass;
+    // `input` the filter's picture (nullptr: none). Render thread of `rhi`.
+    bool loadRhi(const QString &path, QRhi *rhi);
+    void renderRhi(QRhiCommandBuffer *cb, const IsfRenderContext &rc, QRhiTexture *input, RhiTarget &out, QSize outSize,
+                   bool repeatFrame = false);
+    void releaseRhi();
+    bool isValidRhi() const;
+
+    // Lightweight header parsing (for the library).
     struct Header {
         QString name, description;
         QStringList categories;
@@ -233,10 +237,13 @@ public:
 
 private:
     bool readSources(const QString &path, QString *fragment, QString *vertex);
+    RhiSources rhiSourcesOf(const QString &fsBody, const QString &vsBody) const; // from what parse() read
+    struct RhiState;
+    struct RhiStateDeleter {
+        void operator()(RhiState *s) const;
+    };
+    std::unique_ptr<RhiState, RhiStateDeleter> m_rhi;
     bool parse(const QString &src, QString *body);
-    bool compile(const QString &fsBody, const QString &vsBody);
-    QString uniformBlock() const;
-    void cacheLocations();
     double evalSize(const QString &expr, int w, int h, int fallback) const;
 
     QString m_path, m_name, m_description, m_credit, m_error;
@@ -246,17 +253,7 @@ private:
     std::vector<IsfPass> m_passes;
     std::vector<IsfTarget> m_targets;
     std::vector<IsfImported> m_imported;
-    struct ExtraTexture {
-        QByteArray uniform;
-        GLuint tex = 0;
-        GLint loc = -1;
-        GLuint program = 0; // the program its location was found in
-    };
-    std::vector<ExtraTexture> m_extraTextures;
-
-    GLuint m_program = 0;
-    GLint m_locPassIndex = -1, m_locRenderSize = -1, m_locTime = -1, m_locTimeDelta = -1, m_locDate = -1,
-          m_locFrameIndex = -1;
+    bool m_valid = false, m_usesTime = false;
     double m_time = 0;
     int m_frameIndex = 0;
     bool m_restartPending = false; // Restart asked: done by the next render (its buffers are the render thread's)

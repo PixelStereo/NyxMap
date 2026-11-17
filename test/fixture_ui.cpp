@@ -22,7 +22,6 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPushButton>
-#include <QSurfaceFormat>
 #include <QTableWidget>
 #include <QElapsedTimer>
 #include <QImage>
@@ -50,11 +49,9 @@ static void check(bool ok, const char *why)
 
 int main(int argc, char **argv)
 {
-    QSurfaceFormat format;
-    format.setVersion(3, 3);
-    format.setProfile(QSurfaceFormat::CoreProfile);
-    QSurfaceFormat::setDefaultFormat(format);
-    QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
+
+
+
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     QApplication app(argc, argv);
     app.setApplicationName("NyxMapFixtureUITest");

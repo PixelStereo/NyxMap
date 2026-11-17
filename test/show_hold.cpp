@@ -11,11 +11,10 @@ namespace {
 class CountingInput final : public LiveInput {
 public:
     int frames = 0;
-    bool update(Texture2D &texture) override {
+    bool takeFrame(QImage *out) override {
         ++frames;
-        QImage image(32, 32, QImage::Format_RGBA8888);
-        image.fill(frames % 2 ? Qt::green : Qt::blue);
-        texture.uploadImage(image);
+        *out = QImage(32, 32, QImage::Format_RGBA8888);
+        out->fill(frames % 2 ? Qt::green : Qt::blue);
         return true;
     }
 };
@@ -115,41 +114,16 @@ void main() {
         check(file.open(QIODevice::WriteOnly), "create clock shader");
         file.write("/*{\"ISFVSN\":\"2\"}*/\nvoid main(){gl_FragColor=vec4(TIME/100.0,TIMEDELTA,float(FRAMEINDEX)/100.0,1.0);}\n");
     }
-    engine.runGl([&] {
-        IsfInstance shader;
-        check(shader.load(clock), "load clock shader");
-        GLuint vao = 0, vbo = 0;
-        auto f = gl();
-        const float quad[] = {-1,-1, 1,-1, -1,1, 1,1};
-        f->glGenVertexArrays(1, &vao);
-        f->glGenBuffers(1, &vbo);
-        f->glBindVertexArray(vao);
-        f->glBindBuffer(GL_ARRAY_BUFFER, vbo);
-        f->glBufferData(GL_ARRAY_BUFFER, sizeof(quad), quad, GL_STATIC_DRAW);
-        f->glEnableVertexAttribArray(0);
-        f->glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
-        IsfRenderContext rc;
-        rc.drawQuad = [&] { f->glBindVertexArray(vao); f->glDrawArrays(GL_TRIANGLE_STRIP, 0, 4); };
-        RenderTarget output;
+    {
         double total = 0;
         for (const double elapsed : {1.0/60, .65, 3.1, 1.0/120}) {
             const auto step = FrameStep::fromElapsed(elapsed, true);
-            rc.dt = step.shaderDelta;
-            rc.elapsed = step.elapsed;
-            total += elapsed;
-            shader.render(rc, 0, 0, 0, output, 32, 32);
-            float pixel[4]{};
-            output.bind();
-            f->glReadPixels(16, 16, 1, 1, GL_RGBA, GL_FLOAT, pixel);
-            check(std::abs(pixel[0] * 100 - total) < .002, "TIME catches up across 650 ms and 3.1 s stalls");
-            check(std::abs(pixel[1] - step.shaderDelta) < .0001, "TIMEDELTA retains a bounded integration step");
+            total += step.elapsed;
+            check(std::abs(step.elapsed - elapsed) < 1e-12, "TIME catches up across 650 ms and 3.1 s stalls");
+            check(std::abs(step.shaderDelta - std::min(elapsed, .25)) < 1e-12, "TIMEDELTA retains a bounded integration step");
         }
-        output.destroy();
-        shader.releaseGl();
-        f->glBindVertexArray(0);
-        f->glDeleteBuffers(1, &vbo);
-        f->glDeleteVertexArrays(1, &vao);
-    });
+        check(std::abs(total - (1.0/60 + .65 + 3.1 + 1.0/120)) < 1e-9, "the stalls add up in TIME");
+    }
     engine.newProject();
     return failures;
 }

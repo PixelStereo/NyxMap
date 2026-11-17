@@ -11,6 +11,7 @@ formula installed into APP/Contents/Resources/licenses/macos/<formula>/.
 Fails when a library's formula cannot be found, or when its licence is GPL only: the package may not contain one.
 """
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -22,6 +23,7 @@ CELLAR = Path(subprocess.check_output(["brew", "--cellar"], text=True).strip())
 # licenses/touchengine.txt). The TouchEngine SDK's frameworks: TouchEngine.framework and IPM.framework, wherever it is
 OWN = re.compile(r"^lib(omt|vmx|ndi)\b")
 OWN_FRAMEWORKS = {"TouchEngine.framework", "IPM.framework"}
+QT = re.compile(r"^Qt\w+\.framework$")
 FFMPEG = re.compile(r"^lib(avcodec|avdevice|avfilter|avformat|avutil|swresample|swscale)\.\d+\.dylib$")
 # Libraries whose licence is not their formula's: gettext's programs are GPL, its libintl is LGPL (gettext's
 # COPYING and its manual, "The GNU libintl library is covered by the GNU Lesser General Public License")
@@ -102,12 +104,15 @@ def main():
         shutil.rmtree(out)
     out.mkdir(parents=True)
 
-    by_formula, errors = {}, []
+    by_formula, errors, qt = {}, [], []
     for name, path in libraries(app / "Contents" / "Frameworks").items():
         if OWN.match(name) or any(a.name in OWN_FRAMEWORKS for a in (path, *path.parents)):
             continue
         if FFMPEG.match(name):  # rebuilt without GPL parts (build_ffmpeg_lgpl.py), not Homebrew's
             by_formula.setdefault("ffmpeg", []).append(name)
+            continue
+        if QT.match(name):  # the official Qt (the aqt install of .github/actions/qt), not a Homebrew formula
+            qt.append(name)
             continue
         formulas = formula_of(name)
         if len(formulas) != 1:
@@ -149,6 +154,10 @@ def main():
                     f"{', '.join(sorted(by_formula[formula]))} |")
     if errors:
         sys.exit("\n".join(errors))
+    if qt:
+        version = os.environ.get("QT_VERSION", "")
+        rows.append(f"| Qt | {version} | LGPL-3.0 (the modules used) | `licenses/LGPL-3.0.txt` | https://www.qt.io | "
+                    f"{', '.join(sorted(qt))} |")
 
     (resources / "THIRD-PARTY-MACOS.md").write_text(
         "# Libraries in the macOS package\n\n"
@@ -158,7 +167,7 @@ def main():
         "| Formula | Version | Licence | Licence text | Home page | Libraries |\n|---|---|---|---|---|---|\n"
         + "\n".join(rows) + "\n", encoding="utf-8")
     print("\n".join(rows))
-    print(f"{len(rows)} formulas, {sum(len(v) for v in by_formula.values())} libraries")
+    print(f"{len(rows)} formulas, {sum(len(v) for v in by_formula.values()) + len(qt)} libraries")
 
 
 if __name__ == "__main__":

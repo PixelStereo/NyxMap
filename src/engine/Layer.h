@@ -6,7 +6,7 @@
 #include "AudioStream.h"
 #include "ClockGenerator.h"
 #include "TextWriting.h"
-#include "Gl.h"
+#include "ImageUtil.h"
 #include "Isf.h"
 #include "LineGenerator.h"
 #include "LiveInput.h"
@@ -16,7 +16,7 @@
 #include "Parameter.h"
 #include "Publish.h"
 #include "VideoDecoder.h"
-#include "VideoTexture.h"
+#include "VideoFrame.h"
 #include "WebPage.h"
 #include "Tox.h"
 
@@ -84,17 +84,7 @@ enum class LayerTap {
     PreFx = 0,  // after its ROI and color, before its effect chain
     PostFx = 1, // after its effect chain (its own mapping and opacity are not part of it)
     Source = 2, // its source's own picture, as decoded or generated: before its ROI, its color and its effects
-    MediaPipeMask = 3, // foreground alpha inferred from the post-FX picture
-    MediaPipeHair = 4,
-    MediaPipeParts = 5,
-    MediaPipeCutout = 6,
-    MediaPipePose = 7,
-    MediaPipeLandscape = 8,
-    MediaPipeHairDetail = 9,
-    MediaPipeDeepLab = 10,
-    MediaPipePartsForeground = 11,
 };
-inline bool isMediaPipeTap(LayerTap tap) { return tap >= LayerTap::MediaPipeMask && tap <= LayerTap::MediaPipePartsForeground; }
 QString layerTapName(LayerTap t); // "Source", "Pre-FX", "Post-FX"
 QString layerTapKey(LayerTap t);
 LayerTap layerTapFromKey(const QString &k);
@@ -351,11 +341,7 @@ struct Layer {
     bool frameUploaded = true;              // and already on the GPU
     double videoHiddenSeconds = 0;
     bool videoDecodeIdle = false;
-    std::unique_ptr<VideoTexture> videoTex; // its picture (created in the render thread)
     // Mipmaps of its picture made for this frame of the video (a plain video: made again only for a new frame)
-    GLuint mipTex = 0;
-    uint64_t mipFrame = 0; // VideoTexture::pictureSerial() (plain video) or the render's frame they were made in
-    int mipKind = 0;       // 1: plain video, 2: once per frame of the render
     bool playing = true;
     PlayMode mode = PlayMode::Loop;
     bool ended = false; // Stop mode: the end was reached, the layer shows nothing
@@ -377,20 +363,16 @@ struct Layer {
     bool muted = false;
 
     // Video / image / live input: source texture (fed in the render thread)
-    Texture2D sourceTex;
     QString imageColorInfo; // tagged source profile and original depth, before upload conversion
     QColorSpace imageProfile;
     QString sourceColorSpace = QStringLiteral("auto");
     // Only uncommon SDR ICC profiles need a second upload; common spaces use
     // the source shader. Original pixels remain available for manual overrides.
-    Texture2D imageAutoTex;
     QImage pendingAutoImage;
     // An HDR image (.hdr, .exr): its pixels as read, linear floats not clipped, for what needs them (a 3D scene's
     // environment: its "HDR file" stage). The layer's own picture is the clipped one, as any image's
-    Texture2D hdrTex;
     std::vector<float> pendingHdr;
     QSize pendingHdrSize;
-    RenderTarget sourceColorTarget;
     QString sourceColorCachedKey;
     std::unique_ptr<LiveInput> input; // a live input (its URI in sourcePath): frames come in on its own thread
     QImage pendingImage; // image to upload to the GPU on the next frame
@@ -400,18 +382,17 @@ struct Layer {
     TextSource text;
     std::shared_ptr<TextWriting> textWriting; // render thread: the text being written
     QString textWritingKey;
-    Texture2D textTex;
     QString textKey; // what textTex shows (text and style): redrawn only when it changes
 
     // 3D (Model3D.h). A 3D Scene is a group (isGroup) whose picture is its objects rendered by its camera; its members
     // are 3D objects only: models (type Model: its file, read; its meshes reach the GPU on the render thread) and lights
     // (type Light)
     bool scene3d = false;
+    int sceneComputed = 0; // the triangles its last frame drew (the QRhi renderer sets it)
     // A Merge 3D (only in a 3D scene or another Merge 3D): a transform for what it holds, models, lights and other Merge
     // 3Ds. It is not rendered: its scene draws what it holds. Its transform is modelPlacement's
     bool merge3d = false;
     SceneSettings scene;
-    std::shared_ptr<Scene3D> sceneRenderer; // render thread
     std::shared_ptr<Model3D> model;
     ModelPlacement modelPlacement;
 
@@ -499,16 +480,12 @@ struct Layer {
     // ISF generator
     std::unique_ptr<IsfInstance> generator;
     int genWidth = 1920, genHeight = 1080;
-    RenderTarget generatorTarget;
 
     // ISF effect chain
     std::vector<std::unique_ptr<IsfInstance>> effects;
-    RenderTarget fxTarget[2];
 
-    RenderTarget groupTarget; // group: composite of its members; viewport: what it sees, at its own size
     // The published frame must remain intact while a delayed Syphon/Spout share copies
     // the previous frame: use a third render target only for delayed sharing.
-    RenderTarget vpOut[3];
     // Render thread. A plain viewport (no ROI, color, effect, mask, matte or output color of its own, at full opacity,
     // its picture used by nothing else) is composited straight into its output: vpDirect, set by the frame that drew it
     // so. vpPictureUsed: another layer, a shader, a model or the inspector's preview shows its picture this frame
@@ -521,12 +498,9 @@ struct Layer {
         // published at the same tick, so it cannot be the next render target.
         return delayed ? 3 - oldFront - newFront : oldFront;
     }
-    RenderTarget prepTarget;  // roi + color
     // Its masks (Masks.h): edited by the interface, drawn by the render thread when their revision changes
     std::vector<Mask> masks;
     LayerMatte matte; // another layer's picture as its matte (none: layer 0)
-    RenderTarget matteTarget; // that picture as it is in the composition, this frame (its matte in Composition space)
-    RenderTarget mattePicture; // its picture through a matte in Picture space
     // A Timecode generator (a text source showing its clock): its settings and its clock
     std::optional<TimecodeSettings> timecode;
     std::shared_ptr<TimecodeClock> tcClock;
@@ -537,22 +511,14 @@ struct Layer {
     // handed to its shader by the render thread as a texture of segments
     std::vector<LinePath> lines;
     unsigned linesRevision = 1;
-    Texture2D linesTex;
-    unsigned linesTexRev = 0;
-    QSize linesTexSize; // the picture's size its lengths were measured in
-    Texture2D shapeMaskSurface, shapeMaskComp; // their alpha, in its picture and in the composition
     unsigned shapeMaskSurfaceRev = 0, shapeMaskCompRev = 0;
     QSize shapeMaskSurfaceSize, shapeMaskCompSize;
-    RenderTarget shapeMaskTarget; // its picture through its surface masks
-    GLuint rawTex = 0;        // source picture before roi (roi preview)
-    int rawW = 0, rawH = 0;
 
     Mapping mapping;
     bool isMappingZone = false;
     quint64 mappingZone = 0; // stable layer id of a geometry-only Zone in the same canvas
     // Animations of its own numbers (one track each, on this layer): the Anim tab (see Engine::setLayerAnims)
     std::vector<Animation> anims;
-    GLuint meshVbo = 0;  // its mesh's vertices (render thread)
     bool meshUsesGrid = false;
     Mapping meshShape;   // the mapping they were built from
 
@@ -561,18 +527,12 @@ struct Layer {
     QString transition;
     float transitionGain = 1.0f; // sound during such a transition: the incoming source rises, the outgoing one falls
 
-    RenderTarget maskTarget[2]; // an effect's result through its mask
     // Its pictures along its effects that a mask takes (stage k: after its effect k), kept: the effects after them
     // write their targets again. stageTex[k]: this frame's (0: its source), valid for the stages wanted only
     std::set<int> stagesWanted;          // made each frame (Engine::markNeeded)
-    std::map<int, RenderTarget> stageTargets;
-    std::vector<GLuint> stageTex;
 
-    // Frame render result
-    GLuint finalTex = 0;
+    // Frame render result: the size of its picture after its ROI (the QRhi renderer sets it)
     int finalW = 0, finalH = 0;
-    GLuint preFxTex = 0; // picture just before the effect chain (tap of a layer used as a source)
-    int preFxW = 0, preFxH = 0;
 
     // Its parameters (Parameter.h), the ones it has as it is now: its own, its generator's (speed, param/<input>) and
     // its effects' (fx/<fx>/…). Made again when what it is changes (its kind, its source, its effects, the

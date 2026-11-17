@@ -1,0 +1,21 @@
+name: Qt
+description: >
+  Installs NyxMap's Qt with the modules it uses (aqtinstall, cached) on macOS and Windows: the workflow's QT_VERSION,
+  the same on both, since the QRhi renderer has no compatibility guarantee across Qt versions. CMake finds it first
+  (Qt6_DIR, QT_ROOT_DIR). Linux builds with its distribution's Qt for now.
+inputs:
+  arch:
+    description: "aqt's architecture (empty: the platform's default)"
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - uses: jurplel/install-qt-action@v4
+      with:
+        version: ${{ env.QT_VERSION }}
+        arch: ${{ inputs.arch }}
+        # Qt WebEngine (the Web Page generator) and the modules aqt needs installed with it; Shader Tools: QRhi's
+        # shaders; Image Formats: TIFF, WebP… pictures
+        modules: 'qtmultimedia qtshadertools qtimageformats qtwebengine qtwebchannel qtpositioning'
+        cache: true

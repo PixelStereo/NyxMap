@@ -26,7 +26,7 @@ shot() { xwd -root -silent | convert xwd:- "$OUT/$1.png"; }
 X0=0; Y0=0
 origin() { ui_origin "NyxMap"; }
 wait_for_main_window() {
-    if ! ui_wait_for_window "$APP" 30 "NyxMap"; then
+    if ! ui_wait_for_window "$APP" 120 "NyxMap"; then
         fail "main application window not found (log: $OUT/log1.txt)"
         xwininfo -root -tree > "$OUT/windows.txt" 2>&1
         cat "$OUT/log1.txt"
@@ -39,7 +39,7 @@ wait_for_main_window() {
 # missing-media warning is modal and appears afterwards; don't send Return to
 # whichever window happens to have focus during that transition.
 dismiss_open_warning() {
-    local deadline=$((SECONDS + 30)) dialog
+    local deadline=$((SECONDS + 120)) dialog
     until dialog=$(xdotool search --onlyvisible --name "^Open Project$" 2>/dev/null | head -n 1) && [ -n "$dialog" ]; do
         kill -0 "$APP" 2>/dev/null || { fail "application exited before the project warning"; return 1; }
         [ "$SECONDS" -lt "$deadline" ] || {

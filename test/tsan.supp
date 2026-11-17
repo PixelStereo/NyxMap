@@ -8,6 +8,11 @@ called_from_lib:libQt6Gui
 # unloaded"), so its reports are matched by module instead
 race:libgallium*
 mutex:libgallium*
+# The Vulkan loader and its software driver (lavapipe), loaded by QRhi: their own locks, invisible to ThreadSanitizer
+race:libvulkan*
+mutex:libvulkan*
+race:libvulkan_lvp*
+mutex:libvulkan_lvp*
 called_from_lib:libavcodec
 called_from_lib:libavutil
 # GLib (pulled in by Qt's platform and network code): its "gdbus" thread frees memory that the main thread

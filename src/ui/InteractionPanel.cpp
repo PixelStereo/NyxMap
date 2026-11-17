@@ -62,95 +62,6 @@
 // ---------------------------------------------------------------------------
 namespace {
 
-void showVisionSetup(QWidget *parent, Engine *engine, const Interaction &input, const QString &category)
-{
-    QDialog dialog(parent);
-    dialog.setWindowTitle(QStringLiteral("MediaPipe Setup · %1").arg(category));
-    const QString prefix = QStringLiteral("/mediapipe/%1/").arg(osc::safeName(category).toLower());
-    const auto address = [&prefix](const QString &key) { return prefix + osc::safeName(key); };
-    dialog.resize(930, 570);
-    auto *layout = new QVBoxLayout(&dialog);
-    auto *split = new QSplitter(Qt::Horizontal, &dialog);
-    auto *preview = new QLabel;
-    preview->setAlignment(Qt::AlignCenter);
-    preview->setMinimumSize(280, 180);
-    preview->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
-    split->addWidget(preview);
-    auto *meters = new QTreeWidget;
-    meters->setRootIsDecorated(false);
-    meters->setHeaderLabels({QStringLiteral("Signal"), QStringLiteral("Live value"), QStringLiteral("Send OSC")});
-    meters->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-    meters->header()->setSectionResizeMode(1, QHeaderView::Stretch);
-    split->addWidget(meters);
-    split->setSizes({480, 450});
-    layout->addWidget(split, 1);
-    auto *status = new QLabel;
-    status->setWordWrap(true);
-    layout->addWidget(status);
-    auto *output = new QHBoxLayout;
-    auto *armed = new QCheckBox(QStringLiteral("Send selected signals"));
-    auto *host = new QLineEdit(QStringLiteral("127.0.0.1"));
-    host->setPlaceholderText(QStringLiteral("Destination IP"));
-    auto *port = new QSpinBox;
-    port->setRange(1, 65535);
-    port->setValue(1234);
-    output->addWidget(armed);
-    output->addWidget(host);
-    output->addWidget(port);
-    layout->addLayout(output);
-    layout->addWidget(new QLabel(QStringLiteral("OSC · %1<signal>").arg(prefix)));
-
-    QUdpSocket socket;
-    struct Row { QTreeWidgetItem *item; QProgressBar *meter; };
-    QMap<QString, Row> rows;
-    QTimer timer;
-    auto refresh = [&] {
-        const auto frame = engine->visionPreview(input.pixels, true);
-        if (frame.isNull()) preview->clear();
-        else preview->setPixmap(QPixmap::fromImage(frame).scaled(preview->size(), Qt::KeepAspectRatio,
-                                                                 Qt::SmoothTransformation));
-        const auto expressions = engine->visionSignals(input);
-        for (auto it = expressions.begin(); it != expressions.end(); ++it) {
-            if (rows.contains(it.key())) continue;
-            auto *item = new QTreeWidgetItem(meters, {it.key()});
-            item->setCheckState(2, Qt::Unchecked);
-            item->setToolTip(0, address(it.key()));
-            auto *meter = new QProgressBar;
-            meter->setRange(0, 1000);
-            meters->setItemWidget(item, 1, meter);
-            rows.insert(it.key(), {item, meter});
-        }
-        const QHostAddress destination(host->text().trimmed());
-        const bool sending = armed->isChecked() && !destination.isNull();
-        int sent = 0;
-        bool failed = false;
-        for (auto it = rows.begin(); it != rows.end(); ++it) {
-            const double value = expressions.value(it.key()).toDouble();
-            it->meter->setValue(qRound(1000 * std::clamp(value, 0.0, 1.0)));
-            it->meter->setFormat(expressions.isEmpty() ? QStringLiteral("—") : QString::number(value, 'f', 3));
-            if (sending && !expressions.isEmpty() && it->item->checkState(2) == Qt::Checked) {
-                const auto packet = osc::encode({address(it.key()), QStringLiteral("f"), {value}});
-                if (socket.writeDatagram(packet, destination, quint16(port->value())) < 0) failed = true;
-                else ++sent;
-            }
-        }
-        QString message = engine->visionStatus(input.pixels, true);
-        if (expressions.isEmpty()) message += QStringLiteral(" · Waiting for signals");
-        else if (expressions.value("Face · Count").toInt(-1) == 0)
-            message += QStringLiteral(" · No face detected");
-        if (armed->isChecked() && destination.isNull()) message += QStringLiteral(" · Enter a valid destination IP");
-        if (sent) message += QStringLiteral(" · OSC sent: %1").arg(sent);
-        if (failed) message += QStringLiteral(" · OSC send failed");
-        status->setText(message);
-    };
-    QObject::connect(&timer, &QTimer::timeout, &dialog, refresh);
-    timer.start(50);
-    engine->setVisionSetupInput(input);
-    refresh();
-    dialog.exec();
-    engine->setVisionSetupInput(std::nullopt);
-}
-
 class SetTargetRoutes : public QUndoCommand
 {
 public:
@@ -219,8 +130,7 @@ constexpr int kGroupRole = Qt::UserRole + 1; // an item of a group: its id (an i
 
 constexpr char kMime[] = "application/x-nyxmap-interaction-settings";
 const InteractionSource kKinds[] = {InteractionSource::Keyboard, InteractionSource::Midi,  InteractionSource::Osc,
-                                    InteractionSource::Internal, InteractionSource::Audio, InteractionSource::Pixels,
-                                    InteractionSource::Hands};
+                                    InteractionSource::Internal, InteractionSource::Audio};
 
 // A frame that tells when it is clicked (where no child takes the click): a filter selected
 class ClickFrame : public QFrame
@@ -438,8 +348,7 @@ InteractionPanel::InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *pa
     v->addWidget(split, 1);
 
     connect(m_kinds, &QButtonGroup::idClicked, this, [this] {
-        const bool audio = shownKind() == InteractionSource::Audio || shownKind() == InteractionSource::Pixels ||
-                           shownKind() == InteractionSource::Hands;
+        const bool audio = shownKind() == InteractionSource::Audio;
         if (audio)
             m_learn->setChecked(false);
         m_learn->setEnabled(!audio);
@@ -622,8 +531,6 @@ QString InteractionPanel::describe(const Interaction &it) const
         return it.oscAddress.isEmpty() ? QStringLiteral("OSC (no address)")
                                        : QStringLiteral("OSC %1").arg(it.oscAddress) + (it.oscArgument ? QStringLiteral(" [%1]").arg(it.oscArgument) : QString());
     case InteractionSource::Internal: return showmenu::valueLabel(m_engine, it.sourceLayer, it.sourceParam, QStringLiteral("(no source)"));
-    case InteractionSource::Pixels:
-    case InteractionSource::Hands:
     case InteractionSource::Audio: {Interaction named=it;named.name.clear();return named.label();}
     }
     return QString();
@@ -1025,8 +932,6 @@ void InteractionPanel::applyLearned(const InteractionEvent &ev)
         input.oscAddress = e->address;
         input.oscArgument = e->argument;
         break;
-    case InteractionSource::Pixels:
-    case InteractionSource::Hands:
     case InteractionSource::Audio:
     case InteractionSource::Internal: break;
     }
@@ -1083,8 +988,7 @@ void InteractionPanel::learnFor(quint64 layer, const QString &path, InteractionS
     rebuildList();
     select(id);
     rebuildSettings();
-    if (kind != InteractionSource::Internal && kind != InteractionSource::Audio && kind != InteractionSource::Pixels &&
-        kind != InteractionSource::Hands) {
+    if (kind != InteractionSource::Internal && kind != InteractionSource::Audio) {
         m_learnKind = kind;
         m_learn->setChecked(true); // the next source of that kind becomes its
     }
@@ -1555,221 +1459,6 @@ void InteractionPanel::rebuildSettings()
             attachPreset({gap},{QStringLiteral("source/audio/gap")});
             form->addRow(QString(),note(QStringLiteral("A pulse of 40 ms at the hit's velocity: add an Envelope filter for a flash or an impact.")));
         }
-        break;
-    }
-    case InteractionSource::Pixels:
-    case InteractionSource::Hands: {
-        const bool hands = it.source == InteractionSource::Hands;
-        form->addRow(note(QStringLiteral("1 · Choose an image layer (camera, video or mask), then 2 · Map "
-                                         "its analysis below. Masks are separate Motion Difference FX.")));
-        auto *source = new QToolButton;
-        source->setObjectName(QStringLiteral("visionSource"));
-        source->setPopupMode(QToolButton::InstantPopup);
-        source->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        QString sourceName = QStringLiteral("Choose a layer…");
-        if (it.pixels.layer) {
-            Engine::Lock lock(&m_engine->mutex());
-            const auto *layer = m_engine->layer(m_engine->indexOfId(it.pixels.layer));
-            sourceName = layer ? layer->name : QStringLiteral("Missing layer %1").arg(it.pixels.layer);
-        }
-        source->setText(sourceName);
-        auto *menu = new QMenu(source);
-        source->setMenu(menu);
-        connect(menu, &QMenu::aboutToShow, this, [this, menu, edit] {
-            clearInteractionMenu(menu);
-            const auto addLayer = [this, edit](QMenu *parent, quint64 id, const QString &label) {
-                parent->addAction(label, this, [this, edit, id] {
-                    edit(QStringLiteral("Change Image Analysis Source"), [id](Interaction &x) { x.pixels.layer = id; });
-                    rebuildSettings();
-                });
-            };
-            addLayer(menu, 0, QStringLiteral("No Layer"));
-            menu->addSeparator();
-            showmenu::fillLayerTree(menu, m_engine, addLayer,
-                                    [addLayer](QMenu *into, quint64 id, const QString &name, bool isGroup) {
-                                        addLayer(into, id, isGroup ? QStringLiteral("Use This Group") : name);
-                                        into->addSeparator();
-                                    });
-        });
-        form->addRow(QStringLiteral("Layer"), source);
-        attachPreset({source}, {QStringLiteral("source/vision/layer")});
-        auto *tap = new QComboBox;
-        tap->setObjectName(QStringLiteral("visionTap"));
-        tap->addItem(QStringLiteral("Pre FX"), 1);
-        tap->addItem(QStringLiteral("Post FX"), 2);
-        tap->setCurrentIndex(std::clamp(it.pixels.tap, 1, 2) - 1);
-        form->addRow(QStringLiteral("Analyze"), tap);
-        tap->setEnabled(it.pixels.layer != 0);
-        connect(tap, qOverload<int>(&QComboBox::activated), this, [this, edit](int value) {
-            edit(QStringLiteral("Change Analysis Tap"), [value](Interaction &x) { x.pixels.tap = value + 1; });
-            rebuildSettings();
-        });
-        attachPreset({tap}, {QStringLiteral("source/vision/tap")});
-        if (!hands) {
-            auto *channel = new QComboBox;
-            channel->setObjectName(QStringLiteral("pixelChannel"));
-            channel->addItems(PixelAnalysis::channelNames());
-            channel->setCurrentIndex(int(it.pixels.channel));
-            form->addRow(QStringLiteral("Channel"), channel);
-            connect(channel, qOverload<int>(&QComboBox::activated), this, [edit](int value) {
-                edit(QStringLiteral("Change Pixel Channel"),
-                     [value](Interaction &x) { x.pixels.channel = PixelAnalysis::Channel(value); });
-            });
-            attachPreset({channel}, {QStringLiteral("source/pixels/channel")});
-            auto *feature = new QComboBox;
-            feature->setObjectName(QStringLiteral("pixelFeature"));
-            feature->addItems(PixelAnalysis::featureNames());
-            feature->setCurrentIndex(int(it.pixelFeature));
-            form->addRow(QStringLiteral("Measure"), feature);
-            connect(feature, qOverload<int>(&QComboBox::activated), this, [edit](int value) {
-                edit(QStringLiteral("Change Pixel Measure"),
-                     [value](Interaction &x) { x.pixelFeature = PixelAnalysis::Feature(value); });
-            });
-            attachPreset({feature}, {QStringLiteral("source/pixels/feature")});
-            auto *threshold = new QDoubleSpinBox;
-            threshold->setRange(0, 1);
-            threshold->setDecimals(3);
-            threshold->setSingleStep(.01);
-            threshold->setValue(it.pixels.threshold);
-            threshold->setKeyboardTracking(false);
-            form->addRow(QStringLiteral("Active threshold"), threshold);
-            connect(threshold, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [edit](double value) {
-                edit(
-                    QStringLiteral("Change Pixel Threshold"), [value](Interaction &x) { x.pixels.threshold = value; },
-                    QStringLiteral("pixel_threshold"));
-            });
-            attachPreset({threshold}, {QStringLiteral("source/pixels/threshold")});
-        } else {
-            const auto task = [](HandTracking::Feature measure) {
-                const unsigned kind = HandTracking::taskFor(measure);
-                return kind == 2 ? 1u : kind; // hand landmarks and gestures share a category
-            };
-            const auto currentTask = task(it.handFeature);
-            const auto names = HandTracking::featureNames();
-            auto *category = new QComboBox;
-            category->setObjectName(QStringLiteral("visionCategory"));
-            category->addItem(QStringLiteral("Hands"), 1u);
-            category->addItem(QStringLiteral("Face"), 4u);
-            category->addItem(QStringLiteral("Body"), 8u);
-            category->addItem(QStringLiteral("Objects"), 16u);
-            category->addItem(QStringLiteral("Segmentation"), 32u);
-            category->addItem(QStringLiteral("Face detection"), 64u);
-            category->addItem(QStringLiteral("Image classification"), 128u);
-            category->setCurrentIndex(category->findData(currentTask));
-            form->addRow(QStringLiteral("Category"), category);
-            auto changeMeasure = [this, edit](HandTracking::Feature measure) {
-                edit(QStringLiteral("Change MediaPipe Measure"), [measure](Interaction &x) { x.handFeature = measure; });
-                rebuildSettings();
-            };
-            connect(category, qOverload<int>(&QComboBox::activated), this,
-                    [category, task, names, changeMeasure](int index) {
-                const auto chosen = category->itemData(index).toUInt();
-                for (int i = 0; i < names.size(); ++i) {
-                    const auto measure = HandTracking::Feature(i);
-                    if (task(measure) == chosen) {
-                        changeMeasure(measure);
-                        return;
-                    }
-                }
-            });
-            auto *feature = new QComboBox;
-            feature->setObjectName(QStringLiteral("handFeature"));
-            for (int i = 0; i < names.size(); ++i)
-                if (task(HandTracking::Feature(i)) == currentTask)
-                    feature->addItem(names[i], i);
-            feature->setCurrentIndex(feature->findData(int(it.handFeature)));
-            form->addRow(QStringLiteral("Measure"), feature);
-            connect(feature, qOverload<int>(&QComboBox::activated), this, [feature, changeMeasure](int index) {
-                changeMeasure(HandTracking::Feature(feature->itemData(index).toInt()));
-            });
-            attachPreset({feature}, {QStringLiteral("source/hands/feature")});
-            if (currentTask == 1) {
-                auto *hand = new QComboBox;
-                hand->setObjectName(QStringLiteral("trackedHand"));
-                hand->addItem(HandTracking::taskFor(it.handFeature) == 2 ? QStringLiteral("Any tracked hand")
-                                                                        : QStringLiteral("First tracked"), 0);
-                if (it.handIndex == 1) hand->addItem(QStringLiteral("Second tracked"), 1);
-                hand->addItem(QStringLiteral("Left"), 2);
-                hand->addItem(QStringLiteral("Right"), 3);
-                hand->setCurrentIndex(hand->findData(it.handIndex));
-                form->addRow(QStringLiteral("Hand"), hand);
-                connect(hand, qOverload<int>(&QComboBox::activated), this, [edit, hand](int index) {
-                    const int selection = hand->itemData(index).toInt();
-                    edit(QStringLiteral("Change Tracked Hand"), [selection](Interaction &x) { x.handIndex = selection; });
-                });
-                attachPreset({hand}, {QStringLiteral("source/hands/index")});
-            }
-            auto *landmark = new QSpinBox;
-            landmark->setRange(0, 477);
-            landmark->setValue(it.visionLandmark);
-            landmark->setKeyboardTracking(false);
-            landmark->setToolTip(QStringLiteral("MediaPipe index for landmark, world-coordinate and blendshape measurements"));
-            form->addRow(QStringLiteral("Landmark / blendshape index"), landmark);
-            connect(landmark, qOverload<int>(&QSpinBox::valueChanged), this, [edit](int value) {
-                edit(QStringLiteral("Change MediaPipe Landmark"), [value](Interaction &x) { x.visionLandmark = value; });
-            });
-            attachPreset({landmark}, {QStringLiteral("source/hands/landmark")});
-            auto *confidence = new QDoubleSpinBox;
-            confidence->setRange(.5, .99);
-            confidence->setDecimals(2);
-            confidence->setSingleStep(.05);
-            confidence->setValue(it.handConfidence);
-            confidence->setKeyboardTracking(false);
-            form->addRow(QStringLiteral("Min confidence"), confidence);
-            connect(confidence, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [edit](double value) {
-                edit(QStringLiteral("Change Hand Confidence"), [value](Interaction &x) { x.handConfidence = value; });
-            });
-            attachPreset({confidence}, {QStringLiteral("source/hands/confidence")});
-            auto *setup = new QPushButton(QStringLiteral("Setup…"));
-            setup->setObjectName(QStringLiteral("visionSetup"));
-            form->addRow(setup);
-            connect(setup, &QPushButton::clicked, this, [this, category] {
-                if (const auto root = this->selected()) {
-                    const auto &input = m_xyAxis == 1 && !root->xyInputs.empty() ? root->xyInputs.front() : *root;
-                    showVisionSetup(this, m_engine, input, category->currentText());
-                }
-            });
-        }
-        auto *status = new QLabel;
-        status->setWordWrap(true);
-        status->setObjectName(QStringLiteral("visionStatus"));
-        form->addRow(status);
-        QLabel *preview = nullptr;
-        if (!hands) {
-            preview = new QLabel;
-            preview->setObjectName(QStringLiteral("visionPreview"));
-            preview->setMinimumHeight(80);
-            preview->setMaximumHeight(200);
-            preview->setAlignment(Qt::AlignCenter);
-            form->addRow(preview);
-        }
-        auto *timer = new QTimer(status);
-        const auto settings = it.pixels;
-        auto refresh = [this, status, preview, settings, hands] {
-            auto current = settings;
-            if (const auto root = this->selected()) {
-                const auto &input = m_xyAxis == 1 && !root->xyInputs.empty() ? root->xyInputs.front() : *root;
-                current = input.pixels;
-            }
-            status->setText(m_engine->visionStatus(current, hands));
-            if (!preview) return;
-            auto image = m_engine->visionPreview(current);
-            if (!image.isNull()) {
-                if (!hands && current.roi != QRectF(0, 0, 1, 1)) {
-                    QPainter painter(&image);
-                    painter.setPen(QPen(Qt::yellow, 1));
-                    const auto r = current.roi;
-                    painter.drawRect(QRectF(r.x() * image.width(), r.y() * image.height(), r.width() * image.width(),
-                                            r.height() * image.height()));
-                }
-                preview->setPixmap(
-                    QPixmap::fromImage(image).scaled(280, 180, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-            } else
-                preview->clear();
-        };
-        connect(timer, &QTimer::timeout, status, refresh);
-        timer->start(150);
-        refresh();
         break;
     }
     case InteractionSource::Internal: {

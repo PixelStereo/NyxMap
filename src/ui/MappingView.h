@@ -1,11 +1,11 @@
 #pragma once
 #include <QJsonObject>
-#include "GlDraw.h"
+#include "RhiDraw.h"
 #include "Mapping.h"
 #include "Masks.h"
 #include "Fixtures.h"
 #include "LineGenerator.h"
-#include <QOpenGLWidget>
+#include <QRhiWidget>
 #include <QPointF>
 #include <QRectF>
 #include <vector>
@@ -15,6 +15,8 @@ class QUndoStack;
 class QLabel;
 class QToolButton;
 class QDoubleSpinBox;
+class QPainter;
+class PaintOverlay;
 
 // Preview of the whole composition + interactive mapping editing for the selected layer. The viewports are
 // drawn as frames over it, with their names; dragging a frame moves the viewport in the composition.
@@ -25,7 +27,7 @@ class QDoubleSpinBox;
 // Magnetism (button next to the zoom): a dragged point is caught by the corners and edges around it — the
 // composition's, its center lines, the viewports' frames, the other layers', the other points of the layer —
 // and a dragged layer or viewport by its edges or center. Hold Shift while dragging to snap; otherwise move freely.
-class MappingView : public QOpenGLWidget
+class MappingView : public QRhiWidget
 {
     Q_OBJECT
 public:
@@ -68,8 +70,9 @@ signals:
     void mappingEdited();
 
 protected:
-    void initializeGL() override;
-    void paintGL() override;
+    void initialize(QRhiCommandBuffer *cb) override;
+    void render(QRhiCommandBuffer *cb) override;
+    void releaseResources() override;
     void mousePressEvent(QMouseEvent *e) override;
     void mouseMoveEvent(QMouseEvent *e) override;
     void mouseReleaseEvent(QMouseEvent *e) override;
@@ -96,8 +99,9 @@ private:
     bool isViewport(int layer) const;
     int hitViewportFrame(QPointF widgetPos) const;
     void paintScene();
-    void paintViewportNames();
-    void paintCoordinates();     // labels of the selected points (composition pixels)
+    void paintOverlay(QPainter &p);  // what a QPainter draws over the picture: names, labels, fixtures
+    void paintViewportNames(QPainter &p);
+    void paintCoordinates(QPainter &p);     // labels of the selected points (composition pixels)
     // Magnetism (lock held). Targets in composition coordinates (normalized, origin top left).
     struct SnapTargets {
         std::vector<double> xs, ys;   // lines
@@ -144,7 +148,10 @@ private:
     Engine *m_engine;
     QUndoStack *m_undo = nullptr;
     Mapping m_dragBefore; // state at the start of the gesture, for undo
-    GlDraw m_draw;
+    RhiDraw m_draw;
+    qint64 m_pictureKey = 0;
+    QSize m_pictureSize;
+    PaintOverlay *m_overlay = nullptr;
     int m_layer = -1;
     bool m_showAll = true;
 
@@ -176,7 +183,7 @@ private:
     enum class FixtureDrag { None, Move, Resize, Rotate } m_fixtureDrag = FixtureDrag::None;
     FixturePatch m_fixturesBefore; // at the start of the gesture, for undo
     QPointF m_fixtureGrab;         // the press, normalized
-    void paintFixtures();
+    void paintFixtures(QPainter &p);
     bool pressFixture(QMouseEvent *e); // true: taken by a fixture (not under the engine's lock)
     bool dragFixture(QMouseEvent *e);
     bool releaseFixture();

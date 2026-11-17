@@ -7,8 +7,8 @@
 //   input:test:<r>,<g>,<b>     (a solid color, made here: the tests)
 // Frames arrive on threads of their own; the render thread takes the newest one (update) into the layer's texture.
 
-#include "Gl.h"
 
+#include <QImage>
 #include <QSize>
 #include <QString>
 #include <memory>
@@ -32,12 +32,19 @@ QString liveInputUriOfPath(const QString &path); // empty: not one
 QString liveInputName(const QString &uri); // its name, from its URI ("FaceTime HD Camera", "MACHINE (Source)")
 QString liveInputKind(const QString &uri);
 
+class QRhi;
+class QRhiTexture;
+
 class LiveInput
 {
 public:
     virtual ~LiveInput() = default;
-    // Render thread, context current: the newest picture into `tex` (RGBA); true when a new one came
-    virtual bool update(Texture2D &tex) = 0;
+    // QRhi: the newest picture as RGBA, the first row the bottom, when a new one came. The inputs that arrive as pixels give
+    // it; Syphon and Spout (a GPU texture of another API) do not yet
+    virtual bool takeFrame(QImage *) { return false; }
+    // QRhi: the newest picture as a texture of this QRhi, for the inputs that are a GPU texture of another API (Syphon).
+    // The texture stays valid until the next call; `flipped`: its first row is the picture's top (ours is the bottom). nullptr: none (yet)
+    virtual QRhiTexture *takeTexture(QRhi *, QSize *, bool *flipped) { (void)flipped; return nullptr; }
     virtual QString status() const { return {}; } // why there is no picture (empty: fine)
 };
 

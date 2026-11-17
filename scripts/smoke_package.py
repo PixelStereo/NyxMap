@@ -6,9 +6,7 @@ Checks that the NDI and OMT libraries shipped with it load (--check-libraries), 
 FFmpeg. Fails if the program cannot start (a library missing), the project does
 not load, a layer or an effect is in error, or no picture is written.
 
-usage: smoke_package.py <NyxMap executable> <isf folder> <test media folder> <work folder> [--allow-no-gl]
-  --allow-no-gl: exit code 1 (OpenGL unavailable on this runner) is reported but not a failure — the program did start,
-                 so its libraries were found.
+usage: smoke_package.py <NyxMap executable> <isf folder> <test media folder> <work folder>
 """
 import json
 import os
@@ -18,7 +16,6 @@ import sys
 
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith('--')]
-    allow_no_gl = '--allow-no-gl' in sys.argv
     if len(args) != 4:
         print(__doc__)
         return 2
@@ -54,18 +51,6 @@ def main():
     if libs.returncode != 0:
         print(f'FAIL: the NDI or OMT library of the package does not load (exit code {libs.returncode})')
         return 1
-    vision_env = {**os.environ, "NYXMAP_MEDIAPIPE_DELEGATE": "cpu"}
-    vision_env.pop("NYXMAP_MEDIAPIPE_PYTHON", None)
-    try:
-        result = subprocess.run([exe, '--check-mediapipe'], env=vision_env, timeout=120,
-                                capture_output=True, text=True)
-    except subprocess.TimeoutExpired:
-        print('FAIL: bundled MediaPipe did not finish within two minutes')
-        return 1
-    print(result.stdout + result.stderr, end='', flush=True)
-    if result.returncode:
-        print(f'FAIL: bundled MediaPipe inference failed (exit code {result.returncode})')
-        return 1
     cmd = [exe, '--render', out, '--frames', '10', '--strict', proj]
     print(' '.join(cmd), flush=True)
     try:
@@ -73,13 +58,9 @@ def main():
     except subprocess.TimeoutExpired:
         print('FAIL: the packaged program did not finish within 3 minutes')
         return 1
-    meaning = {0: 'rendered', 1: 'OpenGL unavailable', 2: 'output not written', 3: 'project not loaded',
+    meaning = {0: 'rendered', 1: 'no graphics device (Metal, Direct3D 11 or Vulkan)', 2: 'output not written', 3: 'project not loaded',
                4: 'a layer or an effect in error'}
     print(f'exit code {rc}: {meaning.get(rc, "did not start or crashed (a library missing?)")}')
-    if rc == 1 and allow_no_gl:
-        print('::warning::no OpenGL on this runner: the packaged program started (its libraries were found), '
-              'nothing rendered')
-        return 0
     if rc != 0:
         return 1
     if not os.path.exists(out) or os.path.getsize(out) < 100:

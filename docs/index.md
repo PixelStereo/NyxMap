@@ -47,7 +47,7 @@ hide:
 
     Animations, interactions, envelopes, clock and camera tracking.
 
-    [Parameters](control/parameters.md) · [Animations](control/animations.md) · [Clock](control/clock-and-envelopes.md) · [Vision](control/vision.md)
+    [Parameters](control/parameters.md) · [Animations](control/animations.md) · [Clock](control/clock-and-envelopes.md)
 
 -   :material-play-box-multiple: **Show**
 

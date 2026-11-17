@@ -2,7 +2,6 @@
 #include "StoredContent.h"
 #include <QGuiApplication>
 #include <QJsonDocument>
-#include <QSurfaceFormat>
 #include <QTemporaryDir>
 #include <cmath>
 #include <iostream>
@@ -15,10 +14,8 @@ static void check(bool ok, const char *why)
 static bool near(double a, double b) { return std::abs(a - b) < 1e-5; }
 int main(int argc, char **argv)
 {
-    QSurfaceFormat format;
-    format.setVersion(3, 3);
-    format.setProfile(QSurfaceFormat::CoreProfile);
-    QSurfaceFormat::setDefaultFormat(format);
+
+
     QGuiApplication app(argc, argv);
     Engine engine;
     QString error;

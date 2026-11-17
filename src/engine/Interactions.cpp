@@ -7,7 +7,7 @@
 // ---------------------------------------------------------------------------
 // Names
 // ---------------------------------------------------------------------------
-static const char *const kSources[] = {"keyboard", "midi", "osc", "internal", "audio", "pixels", "hands"};
+static const char *const kSources[] = {"keyboard", "midi", "osc", "internal", "audio"};
 static const char *const kFilters[] = {"average", "weighted_average", "pulse_detection", "attack_release", "damper",
                                        "curve", "math", "clamp", "steps", "threshold", "delay", "speed", "remap", "toggle", "envelope"};
 static const char *const kMathOps[] = {"add", "subtract", "multiply", "divide", "modulo", "power", "min", "max",
@@ -78,10 +78,6 @@ QString interactionSourceName(InteractionSource s)
     case InteractionSource::Osc: return QStringLiteral("OSC");
     case InteractionSource::Internal: return QStringLiteral("Internal");
     case InteractionSource::Audio: return QStringLiteral("Audio");
-    case InteractionSource::Pixels:
-        return QStringLiteral("Pixels");
-    case InteractionSource::Hands:
-        return QStringLiteral("MediaPipe");
     }
     return QString();
 }
@@ -220,10 +216,6 @@ QString InteractionEvent::describe() const
     case InteractionSource::Osc: return QStringLiteral("OSC %1").arg(address) + (argument ? QStringLiteral(" [%1]").arg(argument) : QString());
     case InteractionSource::Internal: return QStringLiteral("Internal");
     case InteractionSource::Audio: return QStringLiteral("Audio");
-    case InteractionSource::Pixels:
-        return QStringLiteral("Pixels");
-    case InteractionSource::Hands:
-        return QStringLiteral("MediaPipe");
     }
     return QString();
 }
@@ -242,8 +234,6 @@ bool Interaction::matches(const InteractionEvent &e) const
         if (e.message != midiMessage) return false;
         return midiMessage == MidiMessageKind::PitchBend || e.number == midiNumber;
     case InteractionSource::Osc: return !oscAddress.isEmpty() && e.address == oscAddress && e.argument == oscArgument;
-    case InteractionSource::Pixels:
-    case InteractionSource::Hands:
     case InteractionSource::Audio:
     case InteractionSource::Internal: return false; // read from the show each frame, not sent
     }
@@ -261,10 +251,6 @@ QString Interaction::label() const
                  midiMessage == MidiMessageKind::PitchBend ? QString() : QStringLiteral(" %1").arg(midiNumber));
     case InteractionSource::Osc: return oscAddress.isEmpty() ? QStringLiteral("OSC") : QStringLiteral("OSC %1").arg(oscAddress);
     case InteractionSource::Internal: return QStringLiteral("Internal %1").arg(id);
-    case InteractionSource::Pixels:
-        return QStringLiteral("Pixels · ") + PixelAnalysis::featureNames().value(int(pixelFeature));
-    case InteractionSource::Hands:
-        return QStringLiteral("MediaPipe · ") + HandTracking::featureNames().value(int(handFeature));
     case InteractionSource::Audio: {
         const QString what = audioFeature==AudioFeature::Band ? QStringLiteral("%1–%2 Hz").arg(audioLow,0,'f',0).arg(audioHigh,0,'f',0) : audioFeature==AudioFeature::Level ? QStringLiteral("level") : audioFeature==AudioFeature::Hit ? QStringLiteral("hits %1–%2 Hz").arg(audioLow,0,'f',0).arg(audioHigh,0,'f',0) : QStringLiteral("attacks");
         return (audioInput ? QStringLiteral("Audio in ") : QStringLiteral("Audio ")) + what;
@@ -276,8 +262,8 @@ QString Interaction::label() const
 static const char *const kNotState[] = {
     "id",           "name",           "source",          "key",         "port",         "channel",
     "message",      "number",         "address",         "argument",    "source_layer", "source_param",
-    "audio_low",    "audio_high",     "audio_feature",   "audio_input", "pixels",       "pixel_feature",
-    "hand_feature", "hand_index",     "hand_confidence", "layer",       "param",        "mode",
+    "audio_low",    "audio_high",     "audio_feature",   "audio_input",
+    "layer",       "param",        "mode",
     "conditions",   "conditions_all", "if_true",         "if_false"}; // an Action's: its definition
 
 QJsonObject Interaction::stateJson() const
@@ -478,15 +464,6 @@ QJsonObject Interaction::toJson() const
         o["source_layer"] = QString::number(sourceLayer);
         o["source_param"] = sourceParam;
         break;
-    case InteractionSource::Pixels:
-    case InteractionSource::Hands:
-        o["pixels"] = pixels.toJson();
-        o["pixel_feature"] = int(pixelFeature);
-        o["hand_feature"] = int(handFeature);
-        o["vision_landmark"] = visionLandmark;
-        o["hand_index"] = handIndex;
-        o["hand_confidence"] = handConfidence;
-        break;
     case InteractionSource::Audio:
         o["audio_low"] = audioLow;
         o["audio_high"] = audioHigh;
@@ -561,12 +538,6 @@ Interaction Interaction::fromJson(const QJsonObject &o)
     { const double s=o.value("audio_sensitivity").toDouble(0.5),g=o.value("audio_gap").toDouble(0.08);
       it.audioSensitivity=std::isfinite(s)?std::clamp(s,0.,1.):0.5; it.audioGap=std::isfinite(g)?std::clamp(g,0.04,2.):0.08; }
     it.audioInput=o.value("audio_input").toBool(false);
-    it.pixels = PixelAnalysis::Settings::fromJson(o.value("pixels").toObject());
-    it.pixelFeature = PixelAnalysis::Feature(std::clamp(o.value("pixel_feature").toInt(), 0, 10));
-    it.visionLandmark = std::clamp(o.value("vision_landmark").toInt(), 0, 477);
-    it.handFeature = HandTracking::Feature(std::clamp(o.value("hand_feature").toInt(8), 0, int(HandTracking::Feature::HandRightness)));
-    it.handIndex = std::clamp(o.value("hand_index").toInt(), 0, 3);
-    it.handConfidence = std::clamp(o.value("hand_confidence").toDouble(.7), .5, .99);
     it.layer = o.value("layer").toString().toULongLong();
     it.param = o.value("param").toString();
     it.colorMapAlpha = o.value("color_map_alpha").toBool(false);

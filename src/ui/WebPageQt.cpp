@@ -18,7 +18,7 @@
 #ifdef NYXMAP_HAS_WEB
 
 #include "AnnotatedMutex.h"
-#include "Gl.h"
+#include "ImageUtil.h"
 #include "WebPage.h"
 
 #include <QApplication>
@@ -187,16 +187,12 @@ public:
         m_shared->closed = true;
         post([shared = m_shared] { delete shared->host.data(); });
     }
-    bool update(Texture2D &tex) override
+    bool takeFrame(QImage *out) override // QRhi
     {
-        QImage frame;
-        {
-            QMutexLocker lk(&m_shared->mutex);
-            if (!m_shared->fresh) return false;
-            m_shared->fresh = false;
-            frame = m_shared->frame; // shared, not copied
-        }
-        tex.upload(frame.constBits(), frame.width(), frame.height());
+        QMutexLocker lk(&m_shared->mutex);
+        if (!m_shared->fresh) return false;
+        m_shared->fresh = false;
+        *out = m_shared->frame; // shared, not copied
         return true;
     }
     QString status() const override

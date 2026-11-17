@@ -40,7 +40,7 @@ Run it again after `git pull` to rebuild. CI runs the scripts on fresh macOS, Ub
 
 ### Step by step
 
-**Requirements:** CMake 3.21+, Qt 6.2+, FFmpeg 6.1+, C++17 and OpenGL 3.3 core. Qt Multimedia (cameras) and Qt SVG (SVG images) are optional: without them, CMake says so and the feature is left out. Clone with submodules:
+**Requirements:** CMake 3.21+, Qt 6.7+ (QRhiWidget), FFmpeg 6.1+, C++17 and OpenGL 3.3 core. Qt Multimedia (cameras) and Qt SVG (SVG images) are optional: without them, CMake says so and the feature is left out. Clone with submodules:
 
 ```bash
 git clone --recurse-submodules https://github.com/PixelStereo/NyxMap.git
@@ -65,11 +65,11 @@ before keeps its options: run the `cmake -S …` line again to change them.
 </details>
 
 <details>
-<summary><strong>Linux — Ubuntu 24.04 or newer</strong></summary>
+<summary><strong>Linux — Ubuntu 26.04 or newer</strong></summary>
 
 ```bash
 sudo apt install build-essential cmake pkg-config qt6-base-dev libqt6opengl6-dev \
-  qt6-multimedia-dev qt6-svg-dev qt6-webengine-dev libgl1-mesa-dev libavformat-dev libavcodec-dev \
+  qt6-multimedia-dev qt6-shadertools-dev qt6-base-private-dev qt6-svg-dev qt6-webengine-dev libgl1-mesa-dev libavformat-dev libavcodec-dev \
   libswscale-dev libswresample-dev libavutil-dev libasound2-dev \
   git clang dotnet-sdk-8.0  # OMT (see below)
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
@@ -88,7 +88,7 @@ Page generator), shared FFmpeg (an LGPL build), CMake, and for OMT git, LLVM's
 clang and the .NET SDK. From an MSVC developer shell:
 
 ```powershell
-cmake -S . -B build -DCMAKE_PREFIX_PATH="C:/Qt/6.8.3/msvc2022_64" -DFFMPEG_ROOT="C:/ffmpeg" `
+cmake -S . -B build -DCMAKE_PREFIX_PATH="C:/Qt/6.10.2/msvc2022_64" -DFFMPEG_ROOT="C:/ffmpeg" `
   -DNYXMAP_ACCEPT_NDI_SDK_LICENSE=ON  # NDI included: you accept the NDI SDK licence (see below)
 cmake --build build --config Release
 ```

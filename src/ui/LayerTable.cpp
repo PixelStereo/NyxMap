@@ -36,7 +36,7 @@
 #include <tuple>
 
 enum Col { ColHandle, ColVisible, ColLock, ColSolo, ColName, ColBlend, ColOpacity, ColAudio, ColCount };
-enum NameRole { RoleMeta = Qt::UserRole + 1, RoleDepth, RoleArrow, RoleTag, RoleThumb };
+enum NameRole { RoleMeta = Qt::UserRole + 1, RoleDepth, RoleArrow, RoleTag, RoleThumb, RoleMetaHead, RolePlayback, RoleMetaTail };
 
 static const char *const kRowsMime = kLayerRowsMime;
 static constexpr int kArrowZone = 22;  // px at the left of a group's name: fold / unfold
@@ -44,6 +44,22 @@ static constexpr int kIndent = 26;     // px: members of a group
 
 namespace {
 // The name cell: the layer's small picture (or its kind's tag), its name in bold and, under it, what it is and how it plays
+// The S of the solo column keeps its own colour in a selected row (dim: off, yellow: soloed); the selection's white would
+// look lit
+class SoloDelegate : public QStyledItemDelegate
+{
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+
+protected:
+    void initStyleOption(QStyleOptionViewItem *option, const QModelIndex &index) const override
+    {
+        QStyledItemDelegate::initStyleOption(option, index);
+        const QBrush own = index.data(Qt::ForegroundRole).value<QBrush>();
+        if (own.style() != Qt::NoBrush) option->palette.setBrush(QPalette::HighlightedText, own);
+    }
+};
+
 class NameDelegate : public QStyledItemDelegate
 {
 public:
@@ -92,8 +108,43 @@ public:
         QFontMetrics gm(g);
         p->setFont(g);
         p->setPen(QColor(140, 140, 150));
-        p->drawText(QRect(textBox.left(), textBox.top() + 6 + fm.height(), textBox.width(), gm.height()), Qt::AlignLeft | Qt::AlignVCenter,
-                    gm.elidedText(ix.data(RoleMeta).toString(), Qt::ElideRight, textBox.width()));
+        const QRect metaLine(textBox.left(), textBox.top() + 6 + fm.height(), textBox.width(), gm.height());
+        const QString head = ix.data(RoleMetaHead).toString(), tail = ix.data(RoleMetaTail).toString();
+        const QStringList playback = ix.data(RolePlayback).toString().split(QLatin1Char('\x1f'));
+        if (playback.size() != 4) { // nothing that runs: one line of text
+            p->drawText(metaLine, Qt::AlignLeft | Qt::AlignVCenter,
+                        gm.elidedText(ix.data(RoleMeta).toString(), Qt::ElideRight, textBox.width()));
+        } else {
+            // What runs sits in spaces of fixed widths (the widest glyphs and digits), so that the line does not move
+            auto widest = [&](const QStringList &candidates) {
+                int w = 0;
+                for (const QString &c : candidates) w = std::max(w, gm.horizontalAdvance(c));
+                return w;
+            };
+            int digit = 0;
+            for (QChar c = QLatin1Char('0'); c <= QLatin1Char('9'); c = QChar(c.unicode() + 1)) digit = std::max(digit, gm.horizontalAdvance(c));
+            const int stateW = widest({QStringLiteral("■"), QStringLiteral("❚❚"), QStringLiteral("◀"), QStringLiteral("▶")});
+            const int modeW = widest({QStringLiteral("→|"), QStringLiteral("↻"), QStringLiteral("⇄"), QStringLiteral("→■")});
+            const int colon = gm.horizontalAdvance(QLatin1Char(':')), dot = gm.horizontalAdvance(QLatin1Char('.')), gap = gm.horizontalAdvance(QLatin1Char(' '));
+            const int positionW = 4 * digit + colon + 2 * digit; // 00:00, room for a hundred minutes
+            const int durationW = 4 * digit + colon + dot + 2 * digit + 2 * digit;
+            int x = metaLine.left();
+            auto put = [&](const QString &text, int width, Qt::Alignment align = Qt::AlignLeft) {
+                p->drawText(QRect(x, metaLine.top(), width, metaLine.height()), align | Qt::AlignVCenter, text);
+                x += width;
+            };
+            if (!head.isEmpty()) put(head + QStringLiteral(" · "), gm.horizontalAdvance(head + QStringLiteral(" · ")));
+            put(playback[0], stateW);
+            x += gap;
+            put(playback[1], positionW, Qt::AlignRight);
+            put(QStringLiteral(" / "), gm.horizontalAdvance(QStringLiteral(" / ")));
+            put(playback[2], durationW);
+            x += gap;
+            put(playback[3], modeW);
+            if (!tail.isEmpty() && x < metaLine.right())
+                p->drawText(QRect(x, metaLine.top(), metaLine.right() - x, metaLine.height()), Qt::AlignLeft | Qt::AlignVCenter,
+                            gm.elidedText(QStringLiteral(" · ") + tail, Qt::ElideRight, metaLine.right() - x));
+        }
         p->restore();
     }
     QSize sizeHint(const QStyleOptionViewItem &, const QModelIndex &) const override { return QSize(160, 44); }
@@ -522,18 +573,19 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     // What to show: all the layers, or only the videos (pictures), the 3D ones or the sounds, as the Media Bin does
     {
         struct Pill { const char *name; const char *colour; const char *tip; };
-        static const Pill pills[5] = {{"All", "#9fb0d0", "Show every layer and the fixtures"},
-                                      {"Video", "#b08cff", "Show the videos, images, generators, texts and live inputs"},
-                                      {"3D", "#5ad1e0", "Show the 3D scenes, models, lights, cameras and paths"},
-                                      {"Audio", "#3fbf6f", "Show the sounds and the audio inputs"},
-                                      {"Light", "#e8c35a", "Show the list of the fixtures (DMX lights), under the layers"}};
+        static const Pill pills[6] = {{"All", "#a3afc6", "Show every layer and the fixtures"},
+                                      {"Video", "#a598cf", "Show the videos, images, texts and live inputs"},
+                                      {"3D", "#6fb9c4", "Show the 3D scenes, models, lights, cameras and paths"},
+                                      {"Audio", "#62ad80", "Show the sounds and the audio inputs"},
+                                      {"Light", "#d3bb7c", "Show the list of the fixtures (DMX lights), under the layers"},
+                                      {"ISF", "#7ba2d8", "Show the ISF generators"}};
         auto *row = new QHBoxLayout;
         row->setSpacing(6);
-        // Video, 3D and Audio add up (each is a bit of m_filter, as its category); Light shows or hides the fixtures' list;
+        // Video, ISF, 3D and Audio add up (each is a bit of m_filter, as its category); Light shows or hides the fixtures' list;
         // All selects them all, or takes them all away
         auto *buttons = new QButtonGroup(this);
         buttons->setExclusive(false);
-        for (int i = 0; i < 5; ++i) {
+        for (int i : {0, 1, 5, 2, 3, 4}) { // shown: All, Video, ISF, 3D, Audio, Light
             auto *pill = new QToolButton;
             pill->setObjectName(QStringLiteral("layerPill%1").arg(QLatin1String(pills[i].name)));
             pill->setCheckable(true);
@@ -554,14 +606,14 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
         connect(buttons, &QButtonGroup::idClicked, this, [this](int id) {
             if (id == 0) { // All: every kind follows it
                 const bool on = m_filterPills[0]->isChecked();
-                for (int k = 1; k < 5; ++k) m_filterPills[size_t(k)]->setChecked(on);
+                for (int k = 1; k < 6; ++k) m_filterPills[size_t(k)]->setChecked(on);
             } else {
                 bool all = true;
-                for (int k = 1; k < 5; ++k) all &= m_filterPills[size_t(k)]->isChecked();
+                for (int k = 1; k < 6; ++k) all &= m_filterPills[size_t(k)]->isChecked();
                 m_filterPills[0]->setChecked(all);
             }
             int mask = 0;
-            for (int k = 1; k < 4; ++k)
+            for (int k : {1, 2, 3, 5})
                 if (m_filterPills[size_t(k)]->isChecked()) mask |= 1 << k;
             setFilter(mask);
             emit fixturesShownChanged(m_filterPills[4]->isChecked());
@@ -616,6 +668,7 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     m_table->verticalHeader()->setVisible(false);
     m_table->verticalHeader()->setDefaultSectionSize(44);
     m_table->setItemDelegateForColumn(ColName, new NameDelegate(m_table));
+    m_table->setItemDelegateForColumn(ColSolo, new SoloDelegate(m_table));
     m_table->setShowGrid(false);
     m_table->setAlternatingRowColors(true);
     m_table->setFocusPolicy(Qt::StrongFocus);
@@ -839,9 +892,13 @@ void LayerTable::updateRow(int r, const Row &row)
     QTableWidgetItem *name = text(ColName, row.name, row.name + (row.source.isEmpty() ? QString() : QStringLiteral("\n") + row.source));
     QStringList meta;
     if (row.effectCount) meta << QStringLiteral("%1 FX%2").arg(row.effectCount).arg(row.effectsOn ? QString() : QStringLiteral(" (off)"));
-    if (!row.playback.isEmpty() && !row.viewport) meta << row.playback;
+    if (!row.playback.isEmpty() && !row.viewport) meta << QString(row.playback).replace(QLatin1Char('\x1f'), QLatin1Char(' '));
     if (!row.source.isEmpty()) meta << row.source;
     name->setData(RoleMeta, meta.join(QStringLiteral(" · ")));
+    // The same, in parts: what comes before what runs, what runs (fields), what comes after
+    name->setData(RoleMetaHead, row.effectCount ? QStringLiteral("%1 FX%2").arg(row.effectCount).arg(row.effectsOn ? QString() : QStringLiteral(" (off)")) : QString());
+    name->setData(RolePlayback, !row.playback.isEmpty() && !row.viewport ? row.playback : QString());
+    name->setData(RoleMetaTail, row.source);
     name->setData(RoleDepth, row.depth);
     name->setData(RoleArrow, row.group ? (row.collapsed ? QStringLiteral("▸") : QStringLiteral("▾")) : QString());
     name->setData(RoleTag, row.tag);
@@ -939,7 +996,7 @@ void LayerTable::updateRowLevels(int r, const Row &row)
     if (!slider->isDragging() && std::abs(slider->value() - pct) > 1e-9) slider->setValue(pct);
 }
 
-// The kinds shown: a bit per category (1 video, 2 3D, 3 audio)
+// The kinds shown: a bit per category (1 video, 2 3D, 3 audio, 5 ISF)
 void LayerTable::setFilter(int mask)
 {
     if (mask == m_filter) return;
@@ -950,7 +1007,7 @@ void LayerTable::setFilter(int mask)
 // With a filter, a row shows if its kind is chosen (a group: if something it holds is)
 static std::vector<LayerTable::Row> filtered(std::vector<LayerTable::Row> rows, int mask)
 {
-    if (mask == 0b1110) return rows; // every kind
+    if (mask == 0b101110) return rows; // every kind
     std::vector<bool> shown(rows.size(), false);
     for (size_t i = 0; i < rows.size(); ++i)
         if (!rows[i].group && !rows[i].viewport && rows[i].category > 0 && (mask & (1 << rows[i].category))) {

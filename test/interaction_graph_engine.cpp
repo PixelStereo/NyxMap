@@ -7,15 +7,12 @@
 #include <QNetworkDatagram>
 #include <QUdpSocket>
 #include <QApplication>
-#include <QSurfaceFormat>
 #include <QTemporaryDir>
 #include <cstdio>
 int main(int argc, char **argv)
 {
-    QSurfaceFormat format;
-    format.setVersion(3, 3);
-    format.setProfile(QSurfaceFormat::CoreProfile);
-    QSurfaceFormat::setDefaultFormat(format);
+
+
     QApplication app(argc, argv);
     Engine engine;
     QString error;

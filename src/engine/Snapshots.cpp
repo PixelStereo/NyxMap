@@ -1601,13 +1601,6 @@ void Engine::endTransition(Layer *l, std::unique_ptr<SourceTransition> t)
     if (!t) return;
     if (l) {
         l->transitionGain = 1.0f;
-        // Its picture was the mix, released now: the incoming picture until it is drawn again (a frame held by a
-        // pause or the emergency stop composites it as it is)
-        if (t->target.tex && l->finalTex == t->target.tex) {
-            l->finalTex = t->incomingTex;
-            l->finalW = t->incomingW;
-            l->finalH = t->incomingH;
-        }
     }
     retireTransition(std::move(t));
 }
@@ -1646,8 +1639,7 @@ void Engine::releaseRetired(bool wait)
         }
         SourceTransition &x = *r.t;
         if (x.from) releaseLayer(*x.from);
-        if (x.shader) x.shader->releaseGl();
-        x.target.destroy();
+        if (x.shader) x.shader->releaseRhi();
         it = m_retiring.erase(it);
     }
 }
@@ -1784,18 +1776,6 @@ QStringList Engine::interactionKeys()
                      QStringLiteral("source/audio/feature"),
                      QStringLiteral("source/audio/low"),
                      QStringLiteral("source/audio/high"),
-                     QStringLiteral("source/vision/layer"),
-                     QStringLiteral("source/vision/tap"),
-                     QStringLiteral("source/pixels/channel"),
-                     QStringLiteral("source/pixels/feature"),
-                     QStringLiteral("source/pixels/threshold"),
-                     QStringLiteral("source/pixels/roi/x"),
-                     QStringLiteral("source/pixels/roi/y"),
-                     QStringLiteral("source/pixels/roi/width"),
-                     QStringLiteral("source/pixels/roi/height"),
-                     QStringLiteral("source/hands/feature"),
-                     QStringLiteral("source/hands/index"),
-                     QStringLiteral("source/hands/confidence"),
                      QStringLiteral("target"),
                      QStringLiteral("enable"),
                      QStringLiteral("master"),

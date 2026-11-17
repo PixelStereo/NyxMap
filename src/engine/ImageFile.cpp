@@ -141,7 +141,7 @@ bool readHdrPixels(const QString &path, std::vector<float> *rgba, QSize *size, i
             if (rows != fh) return;
         }
         // Scaled down to maxWidth (an average of the pixels each one covers), interleaved RGBA, its first row at the
-        // bottom (as the layers' pictures in OpenGL)
+        // bottom (as the layers' pictures)
         const int w = std::min(fw, maxWidth), h = std::max(1, int(std::lround(double(fh) * w / fw)));
         rgba->assign(size_t(w) * h * 4, 0.0f);
         static const int order[4] = {2, 0, 1, 3}; // R, G, B, A from the planes G, B, R, A

@@ -17,7 +17,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-find_package(Qt6 6.2 REQUIRED COMPONENTS Core Gui Widgets OpenGL OpenGLWidgets Network)
+find_package(Qt6 6.7 REQUIRED COMPONENTS Core Gui Widgets Network)
 
 # ---------------------------------------------------------------------------
 # FFmpeg: pkg-config (macOS Homebrew, Linux) or FFMPEG_ROOT (Windows, "shared" build)
@@ -43,7 +43,6 @@ endif()
 # Engine: no dependency on widgets (reusable with another UI)
 # ---------------------------------------------------------------------------
 add_library(nyxmap_engine STATIC
-  src/engine/Gl.cpp
   src/engine/Model3D.cpp
   src/engine/Path3D.cpp
   src/engine/MaterialX.cpp
@@ -63,7 +62,6 @@ add_library(nyxmap_engine STATIC
   src/engine/VideoDecoderSeek.cpp
   src/engine/VideoDecoderMetrics.cpp
   src/engine/ProcessMemory.cpp
-  src/engine/VideoTexture.cpp
   src/engine/Hap.cpp
   src/engine/Snappy.cpp
   src/engine/WorkerPool.cpp
@@ -109,10 +107,10 @@ add_library(nyxmap_engine STATIC
   src/engine/Fixtures.cpp
   src/engine/Dmx.cpp
   src/engine/PixelSampler.cpp
+  src/engine/TestCard.cpp
   src/engine/PixelMapping.cpp
   src/engine/Zip.cpp
   src/engine/Gdtf.cpp
-  src/engine/TestCard.cpp
   src/engine/Masks.cpp
   src/engine/Timecode.cpp
   src/engine/TimecodeClock.cpp
@@ -121,10 +119,6 @@ add_library(nyxmap_engine STATIC
   src/engine/ClockGenerator.cpp
   src/engine/TextWriting.cpp
   src/engine/Interactions.cpp
-  src/engine/PixelAnalysis.cpp
-  src/engine/HandTracking.cpp
-  src/engine/VisionRuntime.cpp
-  src/engine/VisionEngine.cpp
   src/engine/InteractionsEngine.cpp
   src/engine/Presets.cpp
   src/engine/Animations.cpp
@@ -150,14 +144,53 @@ if(NYXMAP_FAUST_COMPILER)
   endif()
 endif()
 
-# Embed the worker so installed builds do not need a source checkout.
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS scripts/mediapipe_worker.py)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/scripts/mediapipe_worker.py" NYXMAP_MEDIAPIPE_WORKER)
-configure_file(src/engine/MediaPipeWorkerScript.h.in generated/MediaPipeWorkerScript.h @ONLY)
-target_include_directories(nyxmap_engine PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
-
-target_link_libraries(nyxmap_engine PUBLIC Qt6::Core Qt6::Gui Qt6::OpenGL Qt6::Network ffmpeg)
-target_compile_definitions(nyxmap_engine PUBLIC GL_SILENCE_DEPRECATION)
+# QRhi (Metal, Direct3D, Vulkan) and its shaders, baked at run time (ISF)
+set(QT_NO_PRIVATE_MODULE_WARNING ON) # QRhi is semi-public: Qt pinned, the renderer isolated behind it
+# Up to Qt 6.8 the private modules come with their public ones; from 6.9 they are packages of their own (on Linux
+# distributions: qt6-base-private-dev)
+find_package(Qt6 REQUIRED COMPONENTS ShaderTools)
+foreach(private GuiPrivate ShaderToolsPrivate)
+  if(NOT TARGET Qt6::${private})
+    find_package(Qt6 QUIET COMPONENTS ${private})
+  endif()
+  if(NOT TARGET Qt6::${private})
+    message(FATAL_ERROR "Qt6::${private} not found: QRhi needs Qt's private headers (qt6-base-private-dev on Debian and Ubuntu)")
+  endif()
+endforeach()
+target_sources(nyxmap_engine PRIVATE src/engine/RhiDevice.cpp src/engine/RhiVideoTexture.cpp src/engine/RhiTarget.cpp
+  src/engine/RhiResources.cpp src/engine/IsfRhi.cpp src/engine/RhiRenderer.cpp src/engine/RhiScene.cpp)
+# The engine's own shaders, baked at build time for every backend (SPIR-V, MSL, HLSL)
+# Direct3D compiles HLSL at run time unless the bytecode is in the shader: the big lit 3D shaders took seconds each on the
+# CI runners (and every test makes its own device). With fxc at hand (the Windows SDK), they are compiled here, so
+# that an error in one fails the build instead of drawing nothing.
+set(NYXMAP_PRECOMPILE "")
+if(WIN32)
+  find_program(NYXMAP_FXC fxc HINTS "$ENV{WindowsSdkVerBinPath}/x64" "$ENV{WindowsSdkBinPath}/x64")
+  if(NYXMAP_FXC)
+    set(NYXMAP_PRECOMPILE PRECOMPILE)
+    message(STATUS "Direct3D shaders precompiled with ${NYXMAP_FXC}")
+  else()
+    message(WARNING "fxc not found: the Direct3D shaders are compiled at run time")
+  endif()
+endif()
+qt_add_shaders(nyxmap_engine "nyxmap_shaders"
+  PREFIX "/shaders"
+  ${NYXMAP_PRECOMPILE}
+  NOGLSL # SPIR-V (Vulkan), MSL (Metal), HLSL (Direct3D)
+  BASE src/engine/shaders
+  FILES src/engine/shaders/videoconvert.vert src/engine/shaders/videoconvert.frag
+        src/engine/shaders/blit.vert src/engine/shaders/blit.frag src/engine/shaders/fullscreen.vert
+        src/engine/shaders/composite.vert src/engine/shaders/composite.frag src/engine/shaders/prep.frag
+        src/engine/shaders/effectmask.frag src/engine/shaders/outputcolor.frag
+        src/engine/shaders/shapemask.frag src/engine/shaders/matte.frag src/engine/shaders/compositediff.frag src/engine/shaders/fade.frag src/engine/shaders/testcard.frag
+        src/engine/shaders/sceneview.vert src/engine/shaders/sceneplain.frag src/engine/shaders/sceneunlit.frag
+        src/engine/shaders/scenelit.frag src/engine/shaders/scenepost.vert src/engine/shaders/scenepost.frag
+        src/engine/shaders/sceneshadow.frag src/engine/shaders/scenepoint.frag
+        src/engine/shaders/scenedepth.frag src/engine/shaders/sceneao.frag src/engine/shaders/sceneaoblur.frag
+        src/engine/shaders/scenelit_noglow.frag src/engine/shaders/sceneglowdown.frag src/engine/shaders/sceneglowup.frag
+        src/engine/shaders/scenebackground.frag src/engine/shaders/scenesky.vert src/engine/shaders/scenesky.frag
+        src/engine/shaders/scenesky_noglow.frag src/engine/shaders/scenefog.frag src/engine/shaders/scenefogblur.frag)
+target_link_libraries(nyxmap_engine PUBLIC Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::ShaderToolsPrivate Qt6::Network ffmpeg)
 if(WIN32)
   target_link_libraries(nyxmap_engine PRIVATE psapi pdh) # resource usage (ProcessMemory.cpp)
 endif()
@@ -208,7 +241,7 @@ if(APPLE)
   # Link the Core Audio frameworks directly rather than loading them at runtime
   target_compile_definitions(nyxmap_engine PRIVATE MA_NO_RUNTIME_LINKING)
   target_link_libraries(nyxmap_engine PRIVATE "-framework CoreFoundation" "-framework CoreAudio"
-    "-framework AudioToolbox" "-framework OpenGL")
+    "-framework AudioToolbox")
 elseif(UNIX)
   find_package(Threads REQUIRED)
   target_link_libraries(nyxmap_engine PRIVATE Threads::Threads ${CMAKE_DL_LIBS} m)
@@ -281,16 +314,19 @@ target_include_directories(nyxmap_engine PRIVATE "${CMAKE_SOURCE_DIR}/third_part
 option(NYXMAP_SYPHON "Syphon publishing (macOS)" ON)
 option(NYXMAP_SPOUT "Spout publishing and inputs (Windows)" ON)
 
-# macOS: the output windows shown through Metal (OpenGL into a window only works on the main thread there)
+# macOS: the output windows shown through Metal
 if(APPLE)
   enable_language(OBJCXX)
-  target_sources(nyxmap_engine PRIVATE src/engine/PresentMetal.mm src/engine/Permissions.mm src/engine/VideoSurfaceMac.cpp)
-  set_source_files_properties(src/engine/PresentMetal.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
-  target_compile_definitions(nyxmap_engine PRIVATE GL_SILENCE_DEPRECATION)
+  target_sources(nyxmap_engine PRIVATE src/engine/Permissions.mm
+    src/engine/RhiVideoSurfaceMac.mm)
+  set_source_files_properties(src/engine/RhiVideoSurfaceMac.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
   target_link_libraries(nyxmap_engine PRIVATE "-framework Metal" "-framework QuartzCore" "-framework IOSurface"
     "-framework AppKit" "-framework Network" "-framework CoreVideo" "-framework CoreGraphics" "-framework IOKit")
+elseif(WIN32)
+  target_sources(nyxmap_engine PRIVATE src/engine/RhiVideoSurfaceD3D11.cpp)
+  target_link_libraries(nyxmap_engine PRIVATE d3d11)
 else()
-  target_sources(nyxmap_engine PRIVATE src/engine/VideoSurfaceNone.cpp)
+  target_sources(nyxmap_engine PRIVATE src/engine/RhiVideoSurfaceNone.cpp)
 endif()
 
 if(APPLE AND NYXMAP_SYPHON)
@@ -301,14 +337,15 @@ if(APPLE AND NYXMAP_SYPHON)
   file(GLOB SYPHON_HEADERS "${syphon_SOURCE_DIR}/*.h")
   file(COPY ${SYPHON_HEADERS} DESTINATION "${CMAKE_BINARY_DIR}/syphon-include/Syphon")
   file(GLOB SYPHON_SOURCES "${syphon_SOURCE_DIR}/*.m" "${syphon_SOURCE_DIR}/*.c")
-  # OpenGL version only: the Metal server would require compiling .metal shaders
-  list(FILTER SYPHON_SOURCES EXCLUDE REGEX "Metal")
+  # The base server (an IOSurface), the Metal client (an IOSurface as a texture) and the server directory: neither the
+  # OpenGL servers and clients nor the Metal server (it would require compiling .metal shaders)
+  list(FILTER SYPHON_SOURCES EXCLUDE REGEX "SyphonMetalServer|OpenGL|GLShader|GLVertices|RendererGL|RendererCoreGL|RendererLegacyGL|IOSurfaceImageCore|IOSurfaceImageLegacy|SyphonServer\\.m|SyphonClient\\.m|SyphonImage\\.m")
   add_library(syphon STATIC ${SYPHON_SOURCES})
   target_include_directories(syphon PUBLIC "${CMAKE_BINARY_DIR}/syphon-include" PRIVATE "${syphon_SOURCE_DIR}")
-  target_compile_definitions(syphon PRIVATE SYPHON_CORE_SHARE GL_SILENCE_DEPRECATION)
+  target_compile_definitions(syphon PRIVATE SYPHON_CORE_SHARE)
   target_compile_options(syphon PRIVATE -w "SHELL:-include ${syphon_SOURCE_DIR}/Syphon_Prefix.pch"
     $<$<COMPILE_LANGUAGE:OBJC>:-fobjc-arc>)
-  target_link_libraries(syphon PUBLIC "-framework Cocoa" "-framework OpenGL" "-framework IOSurface" "-framework Foundation")
+  target_link_libraries(syphon PUBLIC "-framework Cocoa" "-framework IOSurface" "-framework Foundation" "-framework Metal")
   target_sources(nyxmap_engine PRIVATE src/engine/PublishSyphon.mm src/engine/LiveInputSyphon.mm)
   set_source_files_properties(src/engine/PublishSyphon.mm src/engine/LiveInputSyphon.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
   target_link_libraries(nyxmap_engine PRIVATE syphon)
@@ -357,19 +394,19 @@ if(NYXMAP_DECKLINK)
 endif()
 
 if(WIN32 AND NYXMAP_SPOUT)
-  nyxmap_submodule(spout2 SPOUTSDK/SpoutGL/Spout.cpp)
+  nyxmap_submodule(spout2 SPOUTSDK/SpoutGL/SpoutCopy.cpp)
   set(SPOUT_DIR "${CMAKE_SOURCE_DIR}/third_party/spout2/SPOUTSDK/SpoutGL")
+  # SpoutDX only (Direct3D 11, on QRhi's device): the SDK's OpenGL interop is not built
   add_library(spout_gl STATIC
-    ${SPOUT_DIR}/Spout.cpp ${SPOUT_DIR}/SpoutCopy.cpp ${SPOUT_DIR}/SpoutDirectX.cpp
-    ${SPOUT_DIR}/SpoutFrameCount.cpp ${SPOUT_DIR}/SpoutGL.cpp ${SPOUT_DIR}/SpoutGLextensions.cpp
-    ${SPOUT_DIR}/SpoutReceiver.cpp ${SPOUT_DIR}/SpoutSender.cpp ${SPOUT_DIR}/SpoutSenderNames.cpp
-    ${SPOUT_DIR}/SpoutSharedMemory.cpp ${SPOUT_DIR}/SpoutUtils.cpp)
-  target_include_directories(spout_gl PUBLIC ${SPOUT_DIR})
+    ${SPOUT_DIR}/SpoutCopy.cpp ${SPOUT_DIR}/SpoutDirectX.cpp ${SPOUT_DIR}/SpoutFrameCount.cpp
+    ${SPOUT_DIR}/SpoutSenderNames.cpp ${SPOUT_DIR}/SpoutSharedMemory.cpp ${SPOUT_DIR}/SpoutUtils.cpp
+    ${CMAKE_SOURCE_DIR}/third_party/spout2/SPOUTSDK/SpoutDirectX/SpoutDX/SpoutDX.cpp)
+  target_include_directories(spout_gl PUBLIC ${SPOUT_DIR} ${CMAKE_SOURCE_DIR}/third_party/spout2/SPOUTSDK/SpoutDirectX/SpoutDX)
   target_compile_definitions(spout_gl PUBLIC SPOUT_BUILD_STATIC)
   if(MSVC)
     target_compile_options(spout_gl PRIVATE /W0)
   endif()
-  target_link_libraries(spout_gl PUBLIC opengl32 d3d9 d3d11 dxgi version winmm shlwapi)
+  target_link_libraries(spout_gl PUBLIC d3d9 d3d11 dxgi version winmm shlwapi)
   target_sources(nyxmap_engine PRIVATE src/engine/PublishSpout.cpp src/engine/LiveInputSpout.cpp)
   target_link_libraries(nyxmap_engine PRIVATE spout_gl)
   target_compile_definitions(nyxmap_engine PRIVATE NYXMAP_HAS_SPOUT)
@@ -403,7 +440,7 @@ set(UI_SOURCES
   src/ui/DmxOutputsPanel.cpp
   src/ui/MaskPanel.cpp
   src/ui/OutputWindow.cpp
-  src/ui/GlDraw.cpp
+  src/ui/RhiDraw.cpp
   src/ui/Commands.cpp
   src/ui/LayerTable.cpp
   src/ui/MediaBin.cpp
@@ -427,8 +464,14 @@ if(APPLE)
   list(APPEND UI_SOURCES src/ui/MacPresentation.mm)
 endif()
 add_library(nyxmap_ui STATIC ${UI_SOURCES})
+# The interface's shaders (RhiDraw), baked for every backend
+# (no GLSL: Metal, Direct3D and Vulkan)
+qt_add_shaders(nyxmap_ui "nyxmap_ui_shaders"
+  PREFIX "/shaders"
+  BASE src/ui/shaders
+  FILES src/ui/shaders/uidraw.vert src/ui/shaders/uidraw_tex.frag src/ui/shaders/uidraw_color.frag)
 target_include_directories(nyxmap_ui PUBLIC src src/ui PRIVATE "${CMAKE_BINARY_DIR}/generated") # NyxMapVersion.h
-target_link_libraries(nyxmap_ui PUBLIC nyxmap_engine Qt6::Widgets Qt6::OpenGLWidgets)
+target_link_libraries(nyxmap_ui PUBLIC nyxmap_engine Qt6::Widgets)
 target_compile_options(nyxmap_ui PRIVATE ${NYXMAP_WARNINGS})
 if(APPLE)
   target_link_libraries(nyxmap_ui PUBLIC "-framework AppKit")
@@ -653,7 +696,7 @@ endif()
 # ---------------------------------------------------------------------------
 option(NYXMAP_TESTS "Build the engine tests" ON)
 if(NYXMAP_TESTS)
-  add_executable(nyxmap_tests EXCLUDE_FROM_ALL test/engine_test.cpp test/text_writing.cpp test/operator_state.cpp test/video_test.cpp test/cue_capture.cpp test/cue_lifecycle.cpp test/gpu_targets.cpp test/image_precision.cpp test/show_hold.cpp test/scene3d.cpp test/path3d.cpp test/instance3d.cpp test/output_color.cpp test/golden_render.cpp test/timeline_repeat.cpp test/timeline_events.cpp test/media_playhead.cpp test/show_actions.cpp test/interaction_actions.cpp test/interaction_filters.cpp test/color_animation.cpp test/xy_controls.cpp test/show_control.cpp test/preview_sources.cpp test/recall_delay.cpp test/recall_integrity.cpp test/emergency_stop.cpp test/psd_layers.cpp test/live_inputs.cpp test/clock_generators.cpp test/file_sources.cpp test/tox.cpp src/ui/Commands.cpp src/ui/LogModel.cpp)
+  add_executable(nyxmap_tests EXCLUDE_FROM_ALL test/engine_test.cpp test/text_writing.cpp test/operator_state.cpp test/video_test.cpp test/cue_capture.cpp test/cue_lifecycle.cpp test/show_hold.cpp test/scene3d.cpp test/path3d.cpp test/instance3d.cpp test/output_color.cpp test/golden_render.cpp test/timeline_repeat.cpp test/timeline_events.cpp test/media_playhead.cpp test/show_actions.cpp test/interaction_actions.cpp test/interaction_filters.cpp test/color_animation.cpp test/xy_controls.cpp test/show_control.cpp test/preview_sources.cpp test/recall_delay.cpp test/recall_integrity.cpp test/emergency_stop.cpp test/psd_layers.cpp test/live_inputs.cpp test/clock_generators.cpp test/file_sources.cpp test/tox.cpp src/ui/Commands.cpp src/ui/LogModel.cpp)
   target_include_directories(nyxmap_tests PRIVATE src/ui)
   target_link_libraries(nyxmap_tests PRIVATE nyxmap_engine)
   target_compile_options(nyxmap_tests PRIVATE ${NYXMAP_WARNINGS})
@@ -703,9 +746,6 @@ if(NYXMAP_TESTS)
   nyxmap_test_main(nyxmap_engine_tests beat_clock test/beat_clock.cpp)
   nyxmap_test_main(nyxmap_engine_tests audio_levels test/audio_levels.cpp)
   nyxmap_test_main(nyxmap_engine_tests show_editing test/show_editing.cpp)
-  nyxmap_test_main(nyxmap_engine_tests vision_analysis test/vision_analysis.cpp)
-  nyxmap_test_main(nyxmap_engine_tests vision_engine test/vision_engine.cpp)
-  nyxmap_test_main(nyxmap_engine_tests vision_hand_inference test/hand_inference.cpp)
   nyxmap_test_main(nyxmap_engine_tests preset_actions test/preset_actions.cpp)
   nyxmap_test_main(nyxmap_engine_tests isf_library test/isf_library.cpp)
   nyxmap_test_main(nyxmap_engine_tests pixel_mapping test/pixel_mapping.cpp WARNINGS)
@@ -725,7 +765,6 @@ if(NYXMAP_TESTS)
   nyxmap_test_main(nyxmap_ui_tests output_color_state test/output_color_state.cpp)
   nyxmap_test_main(nyxmap_ui_tests color_timeline_ui test/color_timeline_ui.cpp)
   nyxmap_test_main(nyxmap_ui_tests timeline_events_ui test/timeline_events_ui.cpp)
-  nyxmap_test_main(nyxmap_ui_tests vision_interaction_ui test/vision_interaction_ui.cpp)
   nyxmap_test_main(nyxmap_ui_tests audio_interaction_ui test/audio_interaction_ui.cpp)
   nyxmap_test_main(nyxmap_ui_tests interaction_actions_ui test/interaction_actions_ui.cpp)
   nyxmap_test_main(nyxmap_ui_tests animation_drivers test/animation_drivers.cpp)
@@ -771,42 +810,39 @@ if(NYXMAP_TESTS)
   add_test(NAME image_import COMMAND nyxmap_image_import_test)
   add_executable(nyxmap_benchmark_rates_test test/benchmark_rates.cpp)
   add_test(NAME benchmark_rates COMMAND nyxmap_benchmark_rates_test)
-  # QRhi prototype (docs/developers/qrhi-prototype.md): every ISF baked for Metal, Direct3D and Vulkan by QShaderBaker
-  find_package(Qt6 QUIET COMPONENTS ShaderTools ShaderToolsPrivate)
-  if(TARGET Qt6::ShaderToolsPrivate)
-    add_executable(nyxmap_isf_rhi_test test/isf_rhi.cpp)
-    target_link_libraries(nyxmap_isf_rhi_test PRIVATE nyxmap_engine Qt6::ShaderToolsPrivate)
-    target_compile_definitions(nyxmap_isf_rhi_test PRIVATE SOURCE_DIR="${CMAKE_SOURCE_DIR}")
-    add_test(NAME isf_rhi COMMAND nyxmap_isf_rhi_test)
-    if(APPLE)
-      # VideoToolbox's frames into QRhi's Metal textures with no copy: colours against FFmpeg, cost against OpenGL
-      find_package(Qt6 QUIET COMPONENTS GuiPrivate)
-      add_executable(nyxmap_rhi_video_test test/rhi_video.mm)
-      set_source_files_properties(test/rhi_video.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
-      target_include_directories(nyxmap_rhi_video_test PRIVATE src/engine)
-      target_link_libraries(nyxmap_rhi_video_test PRIVATE nyxmap_engine Qt6::GuiPrivate Qt6::ShaderToolsPrivate Qt6::OpenGL
-                            "-framework Metal" "-framework CoreVideo")
-      target_compile_definitions(nyxmap_rhi_video_test PRIVATE TEST_DIR="${CMAKE_SOURCE_DIR}/test")
-      add_test(NAME rhi_video COMMAND nyxmap_rhi_video_test)
-      set_tests_properties(rhi_video PROPERTIES SKIP_RETURN_CODE 77)
-      # A whole composition (videos, ISF effects, an RGBA mask) through QRhi and OpenGL: the same pictures, the cost
-      add_executable(nyxmap_rhi_composition_test test/rhi_composition.mm)
-      set_source_files_properties(test/rhi_composition.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
-      target_include_directories(nyxmap_rhi_composition_test PRIVATE src/engine)
-      target_link_libraries(nyxmap_rhi_composition_test PRIVATE nyxmap_engine Qt6::GuiPrivate Qt6::ShaderToolsPrivate
-                            Qt6::OpenGL "-framework Metal" "-framework CoreVideo")
-      target_compile_definitions(nyxmap_rhi_composition_test PRIVATE SOURCE_DIR="${CMAKE_SOURCE_DIR}")
-      add_test(NAME rhi_composition COMMAND nyxmap_rhi_composition_test --seconds 0.5)
-      set_tests_properties(rhi_composition PROPERTIES SKIP_RETURN_CODE 77)
-      # HAP's blocks uploaded as they are into QRhi's compressed textures: colours and cost against OpenGL
-      add_executable(nyxmap_rhi_hap_test test/rhi_hap.cpp)
-      target_include_directories(nyxmap_rhi_hap_test PRIVATE src/engine)
-      target_link_libraries(nyxmap_rhi_hap_test PRIVATE nyxmap_engine Qt6::GuiPrivate Qt6::ShaderToolsPrivate Qt6::OpenGL)
-      target_compile_definitions(nyxmap_rhi_hap_test PRIVATE TEST_DIR="${CMAKE_SOURCE_DIR}/test")
-      add_test(NAME rhi_hap COMMAND nyxmap_rhi_hap_test)
-      set_tests_properties(rhi_hap PROPERTIES SKIP_RETURN_CODE 77)
-    endif()
-  endif()
+  # QRhi (docs/developers/qrhi-prototype.md): every ISF baked for Metal, Direct3D and Vulkan by QShaderBaker
+  add_executable(nyxmap_isf_rhi_test test/isf_rhi.cpp)
+  target_link_libraries(nyxmap_isf_rhi_test PRIVATE nyxmap_engine)
+  target_compile_definitions(nyxmap_isf_rhi_test PRIVATE SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+  add_test(NAME isf_rhi COMMAND nyxmap_isf_rhi_test)
+  # An output window shown through the QRhi renderer's swapchain: what it presents is the viewport's picture
+  add_executable(nyxmap_rhi_output_test test/rhi_output.cpp)
+  target_include_directories(nyxmap_rhi_output_test PRIVATE src/engine)
+  target_link_libraries(nyxmap_rhi_output_test PRIVATE nyxmap_engine)
+  target_compile_definitions(nyxmap_rhi_output_test PRIVATE TEST_DIR="${CMAKE_SOURCE_DIR}/test")
+  add_test(NAME rhi_output COMMAND nyxmap_rhi_output_test)
+  set_tests_properties(rhi_output PROPERTIES SKIP_RETURN_CODE 77)
+  # The interface's previews with the QRhi renderer: its pictures read back as pixels
+  add_executable(nyxmap_rhi_preview_test test/rhi_preview.cpp)
+  target_include_directories(nyxmap_rhi_preview_test PRIVATE src/engine)
+  target_link_libraries(nyxmap_rhi_preview_test PRIVATE nyxmap_engine)
+  target_compile_definitions(nyxmap_rhi_preview_test PRIVATE TEST_DIR="${CMAKE_SOURCE_DIR}/test")
+  add_test(NAME rhi_preview COMMAND nyxmap_rhi_preview_test)
+  set_tests_properties(rhi_preview PROPERTIES SKIP_RETURN_CODE 77)
+  # What the interface's pictures cost a frame: cmake --build build --target nyxmap_preview_cost
+  add_executable(nyxmap_preview_cost EXCLUDE_FROM_ALL test/preview_cost.cpp)
+  target_include_directories(nyxmap_preview_cost PRIVATE src/engine)
+  target_link_libraries(nyxmap_preview_cost PRIVATE nyxmap_engine)
+  # A real TouchDesigner component (NYXMAP_TOX): skipped without one
+  add_executable(nyxmap_tox_real_test test/tox_real.cpp)
+  target_include_directories(nyxmap_tox_real_test PRIVATE src/engine)
+  target_link_libraries(nyxmap_tox_real_test PRIVATE nyxmap_engine)
+  add_test(NAME tox_real COMMAND nyxmap_tox_real_test)
+  set_tests_properties(tox_real PROPERTIES SKIP_RETURN_CODE 77)
+  # These tests each create their own native GPU device/context (D3D11 on Windows, Metal on macOS,
+  # Vulkan elsewhere). Running several at once can exhaust software/CI adapters and crash drivers;
+  # serialize GPU integration tests while keeping the CPU-only suite parallel.
+  set_tests_properties(isf_rhi rhi_output rhi_preview PROPERTIES RUN_SERIAL TRUE)
   add_executable(nyxmap_naming_test test/naming.cpp)
   target_include_directories(nyxmap_naming_test PRIVATE src/engine)
   target_link_libraries(nyxmap_naming_test PRIVATE Qt6::Core)
@@ -841,7 +877,6 @@ if(NYXMAP_TESTS)
       $<TARGET_FILE:NyxMap> ${CMAKE_SOURCE_DIR}/examples/pbr/PBR.nyxmap ${CMAKE_BINARY_DIR}/pbr-preview.png)
     set_tests_properties(pbr_render PROPERTIES TIMEOUT 300)
     add_test(NAME endurance_analysis COMMAND ${Python3_EXECUTABLE} -m unittest discover -s ${CMAKE_SOURCE_DIR}/test -p test_endurance_analysis.py)
-    add_test(NAME vision_model_download COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/test/hand_model_download.py)
     add_test(NAME ci_scope COMMAND ${Python3_EXECUTABLE} -m unittest discover -s ${CMAKE_SOURCE_DIR}/.github/scripts -p test_ci_scope.py)
   endif()
   add_executable(nyxmap_mask_geometry_test test/mask_geometry.cpp src/engine/Masks.cpp)
@@ -872,24 +907,23 @@ if(NYXMAP_TESTS)
   add_test(NAME web_page COMMAND nyxmap_web_page_test)
   set_tests_properties(web_page PROPERTIES TIMEOUT 120)
   set_tests_properties(audio_generators audio_generators_portable audio_generator_engine beat_clock
-    audio_levels audio_effects show_editing vision_analysis vision_engine preset_actions pixel_mapping line_generator
-    publishing_concurrency cue_dispatch vision_interaction_ui animation_drivers interaction_graph_engine
+    audio_levels audio_effects show_editing preset_actions pixel_mapping line_generator
+    publishing_concurrency cue_dispatch animation_drivers interaction_graph_engine
     show_editing_ui audio_analysis_concurrency PROPERTIES TIMEOUT 60)
-  # Start late in a busy run on the Apple software renderer (GL setup alone takes long under load): not a hang
+  # Start late in a busy run on a virtual GPU (the device's setup alone takes long under load): not a hang
   set_tests_properties(show_controls fixture_ui PROPERTIES TIMEOUT 120)
   set_tests_properties(remote_server audio_hits PROPERTIES TIMEOUT 120)
-  set_tests_properties(vision_hand_inference PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
   set_tests_properties(color_timeline_ui timeline_events_ui midi_virtual realtime_timing timeline_activity color_picker_ui
     PROPERTIES TIMEOUT 30)
   set_tests_properties(show_clock decoder_alpha PROPERTIES TIMEOUT 15)
 
-  # MediaPipe inference and decoder seeks are sensitive to CPU/GPU contention on Apple Silicon runners.
+  # Decoder seeks are sensitive to CPU/GPU contention on Apple Silicon runners.
   # Keep these two integration tests isolated while the rest of the suite runs with ctest -j4.
   if(APPLE)
-    set_tests_properties(vision_hand_inference preset_actions cue_dispatch PROPERTIES RUN_SERIAL TRUE)
+    set_tests_properties(preset_actions cue_dispatch PROPERTIES RUN_SERIAL TRUE)
   endif()
 
-  foreach(area scene3d path3d instance3d show_control xy_controls color_animation output_color show_hold recall_integrity image_precision operator_state preview_sources emergency_stop cue_capture cue_lifecycle gpu_targets golden timeline_repeat timeline_events media_playhead show_actions interaction_actions interaction_filters recall_delay isf_safe video project playback undo structure compositing osc snapshots masks rendering thread publishing
+  foreach(area scene3d path3d instance3d show_control xy_controls color_animation output_color show_hold recall_integrity operator_state preview_sources emergency_stop cue_capture cue_lifecycle  golden timeline_repeat timeline_events media_playhead show_actions interaction_actions interaction_filters recall_delay isf_safe video project playback undo structure compositing osc snapshots masks rendering thread publishing
           media sound layersource timecode interactions psd live_inputs clocks text_writing file_sources tox)
     add_test(NAME ${area} COMMAND nyxmap_tests --area ${area})
   endforeach()
@@ -939,6 +973,9 @@ if(NYXMAP_TESTS)
   set_tests_properties(isf_safe scene3d instance3d PROPERTIES COST 90)
   set_tests_properties(project output_color video masks PROPERTIES COST 40)
   # Several videos played together: cmake --build build --target nyxmap_bench
+  # What the interface's 3D view costs: cmake --build build --target nyxmap_scene_view_bench
+  add_executable(nyxmap_scene_view_bench EXCLUDE_FROM_ALL test/scene_view_bench.cpp)
+  target_link_libraries(nyxmap_scene_view_bench PRIVATE nyxmap_engine Qt6::Widgets)
   add_executable(nyxmap_bench EXCLUDE_FROM_ALL test/bench.cpp)
   target_link_libraries(nyxmap_bench PRIVATE nyxmap_engine)
 endif()

@@ -8,7 +8,6 @@
 #include <QImage>
 #include <QJsonDocument>
 #include <QNetworkDatagram>
-#include <QSurfaceFormat>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QUdpSocket>
@@ -551,7 +550,8 @@ static void gpuTests(Engine &e, const QString &tmp)
     f.size = {1.0, 0.5}; // the pixels at a quarter and three quarters of the width
     p.fixtures.push_back(f);
     e.setFixturePatch(p);
-    QByteArray u = sampled(e, 1, 5);
+    // The first samples are of the frames before the picture's: read until it shows
+    QByteArray u = settle(e, 1, 5, [](const QByteArray &q) { return at(q, 100) != 0 || at(q, 105) != 0; });
     check(u.size() == 512, "the composition is sampled into the universe");
     if (u.size() == 512)
         check(at(u, 100) == 255 && at(u, 101) == 0 && at(u, 102) == 0 && at(u, 103) == 0 && at(u, 104) == 0 &&
@@ -733,11 +733,9 @@ static void networkTests(Engine &e)
 int main(int argc, char **argv)
 {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
-    QSurfaceFormat fmt;
-    fmt.setVersion(3, 3);
-    fmt.setProfile(QSurfaceFormat::CoreProfile);
-    QSurfaceFormat::setDefaultFormat(fmt);
-    QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
+
+
+
     QGuiApplication app(argc, argv);
 
     modelTests();
@@ -750,7 +748,7 @@ int main(int argc, char **argv)
     Engine e;
     QString err;
     if (!e.initialize(&err)) {
-        std::printf("FAIL OpenGL: %s\n", qPrintable(err));
+        std::printf("FAIL renderer: %s\n", qPrintable(err));
         return 1;
     }
     QTemporaryDir tmp;

@@ -52,7 +52,7 @@ public:
     QList<int> selectedRows() const; // in order
     void startRename(int row);
     QWidget *table() const;
-    void setFilter(int mask);     // the kinds shown: a bit each (1 video, 2 3D, 3 audio); all three by default
+    void setFilter(int mask);     // the kinds shown: a bit each (1 video, 2 3D, 3 audio, 5 ISF); all by default
     void setThumbnail(quint64 id, const QImage &image); // the small picture of a layer, shown in its row
 
 signals:
@@ -83,8 +83,8 @@ private:
     void updateRowLevels(int r, const Row &row);
     QTableWidget *m_table;
     std::vector<Row> m_rows, m_raw;
-    int m_filter = 0b1110;
-    std::array<class QToolButton *, 5> m_filterPills{}; // All, Video, 3D, Audio, Light (the fixtures)
+    int m_filter = 0b101110; // video, 3D, audio, ISF
+    std::array<class QToolButton *, 6> m_filterPills{}; // All, Video, 3D, Audio, Light (the fixtures), ISF (shown after Video)
     QHash<quint64, QPixmap> m_thumbs;
     bool m_updating = false;
 };

@@ -7,16 +7,14 @@
 #include <QDoubleSpinBox>
 #include <QMouseEvent>
 #include <QKeyEvent>
-#include <QSurfaceFormat>
 #include <QToolButton>
 #include <QUndoStack>
 #include <cmath>
 #include <cstdio>
 int main(int argc, char **argv)
 {
-    QSurfaceFormat format; format.setVersion(3, 3); format.setProfile(QSurfaceFormat::CoreProfile);
-    QSurfaceFormat::setDefaultFormat(format);
-    QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
+
+
     QApplication app(argc, argv); app.setApplicationName("NyxMapMaskUITest");
     Engine engine; QString error;
     if (!engine.initialize(&error)) return 1;

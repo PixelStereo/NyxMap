@@ -97,8 +97,8 @@ private:
         const QJsonObject meta{{"schema", 2}, {"version", m_version}, {"git_sha", QStringLiteral(NYXMAP_BUILD_SHA)},
                                {"utc_start", QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
                                {"host_os", QSysInfo::prettyProductName()},
-                               {"gpu_vendor", m_engine->glVendor()}, {"gpu_renderer", m_engine->glRenderer()},
-                               {"opengl_version", m_engine->glVersion()},
+                               {"gpu_vendor", m_engine->gpuVendor()}, {"gpu_renderer", m_engine->gpuRenderer()},
+                               {"graphics_api", m_engine->gpuApi()},
                                {"driver_override", qEnvironmentVariable("NYXMAP_GPU_DRIVER", "unspecified")},
                                {"project", project}, {"project_sha256", fingerprint(project)}};
         csv.write("# NYXMAP endurance metrics v2\n# ");

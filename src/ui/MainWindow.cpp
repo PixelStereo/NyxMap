@@ -901,7 +901,7 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     m_mouseTimer.start();
     m_settings->startAudio(); // sound card saved in the settings (system default otherwise)
     if (!m_engine->isThreaded()) {
-        // Platform without OpenGL rendering on a separate thread: rendering is clocked by the UI.
+        // Platform without rendering on a separate thread: rendering is clocked by the UI.
         m_renderTimer.setTimerType(Qt::PreciseTimer);
         m_renderTimer.setInterval(16);
         // A zero-interval timer renders whenever the event loop is ready.
@@ -1567,20 +1567,20 @@ void MainWindow::addViewport()
 static QColor layerColor(SourceType t)
 {
     switch (t) {
-    case SourceType::Video: return QColor(110, 175, 255);
-    case SourceType::Image: return QColor(120, 215, 235);
-    case SourceType::Isf: return QColor(195, 150, 255);
-    case SourceType::Text: return QColor(240, 225, 140);
-    case SourceType::Audio: return QColor(125, 225, 130);
-    case SourceType::Layer: return QColor(190, 190, 200);
-    case SourceType::Input: return QColor(255, 130, 120);
-    case SourceType::Tox: return QColor(255, 130, 200);
-    case SourceType::Web: return QColor(150, 200, 170);
-    case SourceType::Model: return QColor(90, 215, 200);
-    case SourceType::Light: return QColor(255, 225, 90);
-    case SourceType::Path: return QColor(120, 200, 255);
-    case SourceType::Camera: return QColor(150, 205, 255);
-    default: return QColor(230, 230, 233);
+    case SourceType::Video: return QColor(172, 156, 214); // videos and images: mauve; ISF: blue
+    case SourceType::Image: return QColor(172, 156, 214);
+    case SourceType::Isf: return QColor(122, 164, 218);
+    case SourceType::Text: return QColor(214, 204, 152);
+    case SourceType::Audio: return QColor(132, 196, 142);
+    case SourceType::Layer: return QColor(185, 185, 195);
+    case SourceType::Input: return QColor(214, 142, 136);
+    case SourceType::Tox: return QColor(212, 142, 184);
+    case SourceType::Web: return QColor(146, 184, 164);
+    case SourceType::Model: return QColor(112, 188, 178);
+    case SourceType::Light: return QColor(218, 200, 122);
+    case SourceType::Path: return QColor(128, 176, 212);
+    case SourceType::Camera: return QColor(150, 184, 222);
+    default: return QColor(226, 226, 230);
     }
 }
 
@@ -1602,6 +1602,14 @@ static QString layerTag(SourceType t)
     case SourceType::Camera: return QStringLiteral("⎔");
     default: return QStringLiteral("○");
     }
+}
+
+// A running time in whole seconds (the hundredths of a second would shift the line at every frame)
+static QString fmtSeconds(double s)
+{
+    if (s < 0) s = 0;
+    const int whole = int(s);
+    return QStringLiteral("%1:%2").arg(whole / 60, 2, 10, QChar('0')).arg(whole % 60, 2, 10, QChar('0'));
 }
 
 static QString fmtClock(double s)
@@ -1652,7 +1660,7 @@ void MainWindow::refreshLayerListFromEngine(bool wait)
                                   : layerTag(l->type != SourceType::None ? l->type : l->missingType);
             r.viewport = l->isViewport;
             r.hidden = l->isViewport;
-            r.color = l->isMappingZone ? QColor(165, 146, 240) : l->isViewport ? QColor(140, 200, 255) : l->scene3d ? QColor(255, 150, 70) : l->merge3d ? QColor(255, 196, 90) : l->isGroup ? QColor(255, 214, 165) : layerColor(l->type != SourceType::None ? l->type : l->missingType);
+            r.color = l->isMappingZone ? QColor(160, 148, 214) : l->isViewport ? QColor(146, 184, 220) : l->scene3d ? QColor(216, 152, 100) : l->merge3d ? QColor(218, 190, 118) : l->isGroup ? QColor(222, 206, 178) : layerColor(l->type != SourceType::None ? l->type : l->missingType);
             r.group = l->isGroup;
             r.collapsed = l->isGroup && l->collapsed;
             r.locked = l->locked;
@@ -1669,6 +1677,7 @@ void MainWindow::refreshLayerListFromEngine(bool wait)
             r.category = l->scene3d || l->merge3d ? 2
                          : l->isGroup ? 0
                          : l->type == SourceType::Audio ? 3
+                         : l->type == SourceType::Isf ? 5
                          : l->type == SourceType::Model || l->type == SourceType::Light || l->type == SourceType::Path || l->type == SourceType::Camera ? 2
                                                                                                                                                          : 1;
             r.enabled = l->enabled;
@@ -1762,9 +1771,11 @@ void MainWindow::refreshLayerListFromEngine(bool wait)
             if (l->type == SourceType::Video || l->type == SourceType::Audio) {
                 static const QString kModeSymbol[] = {QStringLiteral("→|"), QStringLiteral("↻"), QStringLiteral("⇄"),
                                                       QStringLiteral("→■")};
-                r.playback = QStringLiteral("%1 %2 / %3  %4")
-                                 .arg(l->ended ? QStringLiteral("■") : !l->playing ? QStringLiteral("❚❚") : l->speed < 0 ? QStringLiteral("◀") : QStringLiteral("▶"),
-                                      fmtClock(l->position()), fmtClock(l->duration()), kModeSymbol[int(l->mode)]);
+                // Fields (the list paints each in a space of its own, so that the running time moves nothing): the state,
+                // the position in whole seconds, the duration, the mode
+                r.playback = QStringList{l->ended ? QStringLiteral("■") : !l->playing ? QStringLiteral("❚❚") : l->speed < 0 ? QStringLiteral("◀") : QStringLiteral("▶"),
+                                         fmtSeconds(l->position()), fmtClock(l->duration()), kModeSymbol[int(l->mode)]}
+                                 .join(QLatin1Char('\x1f'));
             } else if (l->type == SourceType::Isf || l->type == SourceType::Text) {
                 r.playback = QStringLiteral("real time");
             } else if (l->type == SourceType::Web) {

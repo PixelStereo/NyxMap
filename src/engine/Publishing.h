@@ -1,9 +1,8 @@
 #pragma once
 // The publishers of the viewports (NDI, OMT, Syphon, Spout; the tests' tap): one set per viewport, following its
-// settings. Owned by the Engine; driven from the render thread with the engine's OpenGL context current, its states
+// settings. Owned by the Engine; driven from the render thread, its states
 // read from any thread. It knows nothing of the layers: the engine hands it each viewport's id, settings and picture.
 
-#include "Gl.h"
 #include "Publish.h"
 
 #include <QElapsedTimer>
@@ -18,24 +17,24 @@
 class Publishing
 {
 public:
-    // drawQuad: draws the engine's full-screen quad (the flip for the readback goes through it)
-    explicit Publishing(std::function<void()> drawQuad);
+    Publishing();
     ~Publishing();
 
     // --- Render thread, context current
-    bool initGl(QString *log);
     // Every viewport's publishers follow its settings (in the list's order: the first one carries the test tap);
     // those of a viewport that is gone are stopped. Cheap when nothing changed
     void follow(const std::vector<std::pair<quint64, PublishSettings>> &viewports);
-    // NDI, OMT, the tap: the picture read back without waiting, sent by a thread of their own (before the frame's end)
-    // tc: the timecode the picture carries (ATC), if any
-    void readback(quint64 viewport, const RenderTarget &picture, double fps, quint64 frame,
-                  const std::optional<Timecode> &tc = std::nullopt);
-    // Syphon, Spout: their contexts copy the finished picture (after the frame's end)
-    void share(quint64 viewport, const RenderTarget &picture);
-    bool sharing() const; // a Syphon or Spout publisher is on: the frame must be finished before share()
+    // Syphon, Spout: the picture's pixels
+    void share(quint64 viewport, const unsigned char *rgba, int width, int height);
+    // Through QRhi: the pictures come as pixels (RGBA, the picture's bottom row first, as a texture holds them), read
+    // back by the renderer. wantsPixels(): a NDI, OMT, DeckLink publisher or the tap is on (submitPixels); wantsShare():
+    // a Syphon or Spout publisher is on (share())
+    bool wantsPixels(quint64 viewport) const;
+    bool wantsShare(quint64 viewport) const;
+    void submitPixels(quint64 viewport, const unsigned char *rgba, int width, int height, double fps, quint64 frame,
+                      const std::optional<Timecode> &tc = std::nullopt);
     quint64 readbacksSkipped() const { return m_readbacksSkipped.load(); } // NDI / OMT frames not sent: GPU late
-    void release();       // every publisher stopped, the OpenGL objects deleted
+    void release();       // every publisher stopped
 
     // --- Any thread
     PublishState state(quint64 viewport, PublishKind k) const;
@@ -50,10 +49,9 @@ private:
     void apply(Publication &pub, const PublishSettings &s);
     void releasePublication(Publication &pub);
     void setState(Publication &pub, PublishKind k, PublishState st);
+    void updateReceivers(Publication &pub, quint64 frame);   // about twice per second
+    int announcedRate(Publication &pub, double fps);          // changes only if the new value holds for 2 s
 
-    std::function<void()> m_drawQuad;
-    GLuint m_flipProgram = 0;
-    GLint m_flipTexLoc = -1;
     std::map<quint64, std::unique_ptr<Publication>> m_pubs; // by viewport id (render thread; states: m_stateMutex)
     mutable std::mutex m_stateMutex;
     std::mutex m_tapMutex;

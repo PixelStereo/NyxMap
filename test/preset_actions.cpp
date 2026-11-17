@@ -4,7 +4,6 @@
 #include <QElapsedTimer>
 #include <QGuiApplication>
 #include <QThread>
-#include <QSurfaceFormat>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
@@ -16,10 +15,8 @@ static void require(bool ok, const char *why)
 
 int main(int argc, char **argv)
 {
-    QSurfaceFormat f;
-    f.setVersion(3, 3);
-    f.setProfile(QSurfaceFormat::CoreProfile);
-    QSurfaceFormat::setDefaultFormat(f);
+
+
     QGuiApplication app(argc, argv);
     try {
         Engine e;

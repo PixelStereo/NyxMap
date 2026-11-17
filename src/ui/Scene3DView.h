@@ -4,17 +4,18 @@
 // along X, Y and Z with handles (W, E, R). The engine draws the scene from this camera (Engine::setPreviewScene); the
 // grid, the camera, the lights and the handles are drawn over it here. Every gesture is one undo step.
 
-#include "GlDraw.h"
 #include "Model3D.h"
-#include <QOpenGLWidget>
+#include "RhiDraw.h"
+#include <QRhiWidget>
 #include <QPointer>
 
 class Engine;
 class QUndoStack;
 class QToolButton;
 class QPainter;
+class PaintOverlay;
 
-class Scene3DView : public QOpenGLWidget
+class Scene3DView : public QRhiWidget
 {
     Q_OBJECT
 public:
@@ -44,8 +45,9 @@ signals:
     void layerPicked(int index); // a model, a light, or (its camera) the scene clicked here
 
 protected:
-    void initializeGL() override;
-    void paintGL() override;
+    void initialize(QRhiCommandBuffer *cb) override;
+    void render(QRhiCommandBuffer *cb) override;
+    void releaseResources() override;
     void resizeEvent(QResizeEvent *e) override;
     void mousePressEvent(QMouseEvent *e) override;
     void mouseMoveEvent(QMouseEvent *e) override;
@@ -91,8 +93,8 @@ private:
     // A handle under the cursor: its axis (0 X, 1 Y, 2 Z, 3 all: the middle of the scale handles), -1 none
     int hitHandle(const Object &o, QPointF at) const;
     std::vector<QPointF> ring(const Object &o, int axis) const;
-    void paintGround(QPainter &p);
-    void paintOverlay(QPainter &p);
+    void paintOverlay(QPainter &p); // over the picture, with a QPainter
+    void paintGround();            // the grid, under it
     void beginEdit(const Object &o);
     void commitEdit();
     QString pathOf(const Object &o, const QString &what, int axis) const; // "model/position/x"…
@@ -100,7 +102,9 @@ private:
     Engine *m_engine;
     int m_slot;
     QUndoStack *m_undo = nullptr;
-    GlDraw m_draw;
+    RhiDraw m_draw;
+    qint64 m_pictureKey = 0;
+    PaintOverlay *m_overlay = nullptr;
     quint64 m_scene = 0, m_root = 0, m_selected = 0; // the 3D scene whose camera it uses; what it looks at (that scene or a Merge 3D of it)
     SceneSettings m_cam;
     Mode m_mode = Mode::Move;

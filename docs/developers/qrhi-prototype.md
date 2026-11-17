@@ -1,9 +1,153 @@
 # QRhi prototype
 
-The renderer is OpenGL. OpenGL is deprecated on macOS, so NyxMap studies a move to
-Qt's QRhi, which drives Metal, Direct3D 11/12 and Vulkan from one API and keeps
-the application in C++ and Qt. Nothing changes in the production renderer until
-a measured prototype shows a gain without losing a feature.
+NyxMap's renderer moves from OpenGL to Qt's QRhi, which drives Metal, Direct3D
+11/12 and Vulkan from one API and keeps the application in C++ and Qt. OpenGL
+goes once every part has been ported, each checked picture by picture against
+the OpenGL renderer it replaces. This page records the measurements that led to
+it and the parts ported so far.
+
+## Ported
+
+- **Video** (`RhiVideoTexture`, the port of `VideoTexture`): every pixel layout,
+  HAP's compressed blocks, and hardware frames kept on the GPU
+  (`RhiVideoSurface`: VideoToolbox adopted with no copy on macOS; on Windows the
+  decoders decode on QRhi's Direct3D 11 device and each frame is copied once on
+  the GPU, instead of the trip through the CPU the OpenGL renderer makes there).
+  Planes of three channels and of four 16-bit channels, which no QRhi format
+  holds, go as one channel three or four times as wide. `rhi_video` checks every
+  test file against `VideoTexture`: at most 1 level apart (rounding).
+- **ISF** (`IsfInstance::renderRhi`, `IsfRhi.cpp`, on the instance's own state):
+  passes, persistent and float targets, imported images, POINTS passes with
+  their blending, generators. `isf_render` draws every shipped shader through
+  both renderers, three frames in a row from the same picture: 305 of 311 as
+  OpenGL draws them, the other 6 differing only by GPU noise (hashes of
+  `sin()`/`fract()` of large values, a thin line a sub-pixel apart: their 8 × 8
+  averages agree).
+- **The frame** (`RhiRenderer`, the port of Render.cpp's render pass and
+  compositing): an engine set to it (`Engine::setRhiRendering`, or
+  `NYXMAP_RENDERER=rhi`) keeps its decoders, animations and sequences and draws
+  each frame through QRhi. Ported: video, image and ISF generator sources, a
+  source's color space, ROI (rectangle, triangle, quad) and color, the effect
+  chain (masks, mix, channels, mask-only effects), groups, viewports (plain or
+  with their own picture, output color, exposure, opacity), the composition,
+  composition opacity and blackout, the blend modes (Difference reads a copy of
+  what is drawn before it, in a pass of its own), surface and composition
+  masks, mattes in Picture and Composition space, text layers (the clocks and
+  the typewriter too), source transitions (a transition shader, or a crossfade;
+  the outgoing source's QRhi state moves to the transition when it begins),
+  mapped meshes. `rhi_engine` runs two engines on one scene, OpenGL and QRhi:
+  their viewports and composition match (at most 2 levels apart), and so does a
+  transition caught half way, with the project's antialiasing (4 samples) and
+  mipmaps on. Antialiasing draws a composite into a multisampled buffer resolved
+  into the target at each pass's end (a later pass, after a Difference layer,
+  starts by drawing what the earlier ones resolved: QRhi keeps no multisampled
+  contents between passes). A layer drawn under 90% of its size is sampled from
+  mip levels of a copy of its picture, made again once per frame of a plain
+  video and once per frame of the render otherwise, as many times as OpenGL
+  makes them. Live inputs that arrive as pixels (cameras, screens and windows, NDI,
+  OMT, DeckLink; `LiveInput::takeFrame`) and web pages go into the layer's QRhi
+  texture. A Syphon server's IOSurface becomes a Metal texture of QRhi's device
+  through Syphon's Metal client and is sampled as it is, no copy
+  (`LiveInput::takeTexture`). `rhi_preview` checks a solid input, and a GL engine
+  publishing to a QRhi one through Syphon. A Spout sender's frames are copied by
+  SpoutDX on QRhi's own Direct3D 11 device into a texture of ours that QRhi samples
+  (`SpoutReceiveRhi`; written without a Windows machine here, built by the Windows CI,
+  not run against a real sender). TouchEngine, on macOS, works through QRhi's own
+  Metal device (`ToxMetal`): the source layers' QRhi textures are copied on the GPU
+  into pooled Metal textures it reads, its output (a Metal or IOSurface texture) is
+  wrapped as a QRhi texture after the wait on the shared event it asks for, with the
+  component map's swizzle and the texture origin handled. No OpenGL there. Written
+  and built against the SDK here, but the machine has no TouchDesigner key
+  ("No TouchDesigner or TouchPlayer key was found"), so a cook was never run: the
+  instance is created, the Metal context associated and the component loaded up
+  to the licence check. `NYXMAP_TOX=<component> NYXMAP_RENDERER=rhi nyxmap_tox_real_test`
+  runs a real component and prints what comes out (needs a licence). On Windows,
+  `ToxD3D11` does the same through QRhi's Direct3D 11 device: inputs copied into
+  pooled textures wrapped by `TED3D11TextureCreate` (the SDK's D3D11 context
+  synchronises them), outputs opened with `TED3D11ContextGetTexture`, held
+  through their DXGI keyed mutex (acquired at the value the instance gives,
+  released to 0 or to the next value when it asks for it) and wrapped as QRhi
+  textures. Written from the SDK's own example without a Windows machine here:
+  built by the Windows CI, never run. Where the device is not Metal or Direct3D 11
+  the OpenGL path with read-back pictures remains (`rhi_preview` checks it with a
+  stand-in component). Not yet: 3D scenes.
+- **Outputs** (`RhiRenderer::present`): each output window has a swapchain of
+  the engine's QRhi, made by the render thread; its viewport's picture is drawn
+  into it as it is, the right way up (the textures' flip, reversed). The window's
+  surface type is the backend's (`Engine::outputSurfaceType`: Metal, Direct3D,
+  Vulkan). The window the frame follows the screen by waits for its vsync, the
+  others do not. `rhi_output` presents into a real window and reads the
+  swapchain back: the viewport's picture, scaled to the window, mean 0.002 apart.
+- **Previews and views**: the pictures the interface's preview cells ask for (the
+  composition, a layer, a viewport) are reduced to at most 1024 px and read back
+  during the frame (`Engine::previewImage`; the composition for the mapping view,
+  up to 1600 px, only while it asks: `compositionImage`). The preview cells and the
+  mapping view are `QRhiWidget`s (Qt 6.7) that draw them through `RhiDraw` on
+  the window's own QRhi: a picture, then the lines and triangles of the handles;
+  names, labels and fixtures go through a transparent `PaintOverlay` child with a
+  QPainter. The OpenGL renderer gives the same pictures (a readback of its
+  targets) until it goes. `rhi_preview` checks them. Not yet: 3D views.
+- **Publishing**, through the same bridge: the pictures of the viewports that are
+  published are read back whole during the frame. NDI, OMT, DeckLink and the tests'
+  tap get them as BGRA, top row first (`Publishing::submitPixels`, flipped and
+  swizzled on the CPU, sent by the publisher's own thread); Syphon and Spout get
+  an OpenGL texture of the picture (`share`). The settings take effect one frame
+  late. `rhi_preview` checks the tap's pixels and a Syphon-like publisher. Not
+  covered: real NDI, OMT, Syphon and Spout receivers. A Syphon Metal server and a
+  Spout D3D11 sender would drop the OpenGL texture.
+- **Pixel readers**, through the same bridge: the pictures they need are read back
+  from QRhi during the frame and, where an OpenGL reader still takes a texture,
+  uploaded into one. The inspector's source preview (a layer's picture before
+  its ROI, at up to 15 Hz), pixel mapping (the composition, read back whole while
+  there are fixtures; `rhi_preview` checks the universe) and the sonification's
+  mean colour (a
+  16 × 16 read of the viewport listened to, averaged on the CPU). Unlike OpenGL's
+  they do not trail the GPU by a frame (the offscreen frame completes at once),
+  but they cost a whole picture's readback each frame; a GPU sampler would
+  replace them. Sonification is not covered by a test yet.
+- **3D**, step by step (`RhiScene`, `Model3D::rhiDraws`): the interface's 3D views
+  (the flat look with edges and the unlit look, the models' colours as they are)
+  are drawn through QRhi from the view's camera, with the shape FX of the models
+  (bend, twist, taper, wave, noise) in the vertex shader. 3D scenes (the layers)
+  are drawn lit: up to eight lights (directional, point, spot, area), the
+  studio's light (no limit to their number: OpenGL took eight; they sit in a storage
+  buffer), physically based materials with their maps (base colour,
+  roughness, metal, normals, occlusion, emission), tone mapping, multisampled as
+  the project's quality asks, their shadows (spot, directional and point lights,
+  no limit to their number either: each light's view of the models goes in a layer of
+  a float array, six for a point light, read with a gathered comparison), then the
+  camera's grade (colours, vignette).
+  `rhi_scene` compares both with OpenGL, picture by picture: the views pixel for
+  pixel on Metal, the lit scenes 0.01 to 0.2 levels apart on average (the
+  silhouettes' pixels differ without antialiasing). The cells' 3D views,
+  `Scene3DView`, are `QRhiWidget`s showing those pictures (the grid under them
+  through `RhiDraw`, the handles over them through the overlay); the OpenGL
+  renderer's views come back the same way, as pixels. Occlusion
+  between surfaces (from the depth of what is seen, at half size, blurred), reflections
+  of the last picture and the glow (a second, float attachment spread over six
+  halvings) match OpenGL too (`rhi_scene`). The
+  environment (a layer's picture or an HDR file, copied in half floats with its blurred
+  levels, lighting the models and shown behind them) and the fog (the air walked from
+  the camera at half the size, lit by the lights through their shadows) match
+  OpenGL too. Shared materials' maps and height maps and the layers' pictures on models
+  are taken (`rhi_preview`). Not yet, in lit scenes: the supersampled quality level.
+  `MaterialSphere`, the material preview, is a `QRhiWidget` drawing the scene on its own device: no
+  `QOpenGLWidget` is left in the interface, and its views use the window's own API (Metal here).
+- Shared pieces: `RhiTarget` (the port of `RenderTarget`), `RhiResources`
+  (samplers, a black picture, a quad, a copy between formats, shader resource
+  bindings kept per combination of resources).
+- The engine's shaders are baked at build time (`qt_add_shaders`, no GLSL
+  target); ISF shaders at run time (`QShaderBaker`). Qt Shader Tools is now a
+  build and runtime dependency.
+
+## Windows bench
+
+The Windows CI job packages the benches as `NyxMap-rhi-bench-windows` (a run of
+the Build workflow, `workflow_dispatch`, on the branch). On a Windows machine with
+a real GPU: extract it, run `RunBench.cmd`, send back `report.txt`. It makes 4K
+test videos with the bundled ffmpeg (H.264, HEVC 10-bit and HAP, as its encoders
+allow), plays any video put in `media\yours`, and runs `isf_rhi`, `rhi_video` and
+`rhi_composition` (4, 9 and 16 layers at 4K) through Direct3D 11 and OpenGL.
 
 The prototype answers three questions, in this order:
 
@@ -60,7 +204,7 @@ The pictures are the OpenGL path's, and as close to FFmpeg's own decoding. The
 cost is the same order: neither API is the bottleneck for one stream. The
 `rhi_video` test checks the colours (skipped without Metal or hardware frames).
 
-HAP: `test/rhi_hap.cpp` uploads HAP's compressed blocks as they are into QRhi's
+HAP (measured with the probe that `rhi_video` replaced) uploads HAP's compressed blocks as they are into QRhi's
 block-compressed textures (BC1, BC3, BC4, BC7), decompressed by the GPU as it
 samples, and converts them with the OpenGL path's formula (RGB(A), scaled
 YCoCg, alpha). Per frame, upload and conversion, GPU done:
@@ -73,7 +217,7 @@ YCoCg, alpha). Per frame, upload and conversion, GPU done:
 
 The same pictures, the same cost. One gain: on Apple Silicon OpenGL offers no
 BPTC, so Hap R (BC7) and Hap HDR (BC6H) are decoded on the CPU there, while
-QRhi's Metal backend samples BC7 as it is. The `rhi_hap` test checks the
+QRhi's Metal backend samples BC7 as it is. `rhi_video` checks the
 colours. HAP Q Alpha is left out of this probe (FFmpeg does not encode it); its
 two textures are a BC3 and a BC4, both covered here.
 

@@ -1,6 +1,5 @@
 #include "Engine.h"
 #include <QApplication>
-#include <QSurfaceFormat>
 #include <QTimer>
 #include <QElapsedTimer>
 #include <QThread>
@@ -8,8 +7,8 @@
 #include <thread>
 #include <cstdio>
 int main(int argc,char **argv) {
-    QSurfaceFormat format;format.setVersion(3,3);format.setProfile(QSurfaceFormat::CoreProfile);QSurfaceFormat::setDefaultFormat(format);
-    QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);QApplication app(argc,argv);
+
+QApplication app(argc,argv);
     Engine engine;
     QString error;
     if (!engine.initialize(&error)) return 1;
@@ -22,11 +21,11 @@ int main(int argc,char **argv) {
     const auto surfaceId=engine.layerId(engine.addLayer("Surface"));Engine::Snapshot snapshot;snapshot.name="Slow cue";snapshot.layers=engine.captureLayers();snapshot.fade=0;
     const int index=engine.addSnapshot(snapshot);const auto id=engine.snapshot(index).id;
     std::atomic<bool> inSlowRecall{false};int recorded=0,heartbeats=0;bool correctThread=false;
-    QObject::connect(&engine,&Engine::snapshotRecalled,&engine,[&](int){inSlowRecall=true;QThread::msleep(120);inSlowRecall=false;},Qt::DirectConnection);
+    QObject::connect(&engine,&Engine::snapshotRecalled,&engine,[&](int){inSlowRecall=true;QThread::msleep(400);inSlowRecall=false;},Qt::DirectConnection);
     engine.sequencer().setRecallRecorder([&](int cue,const Sequencer::RecallBefore &before){++recorded;correctThread=QThread::currentThread()==app.thread()&&cue==index&&!before.layers.isEmpty();});
     QTimer heartbeat;
     heartbeat.setTimerType(Qt::PreciseTimer);
-    heartbeat.setInterval(5); // leave ample time for the GUI event loop during the 120 ms cue-thread stall
+    heartbeat.setInterval(5); // leave ample time for the GUI event loop during the 400 ms cue-thread stall
     QObject::connect(&heartbeat, &QTimer::timeout, [&] { if (inSlowRecall) ++heartbeats; });
     heartbeat.start();
     const bool accepted=engine.sequencer().requestSnapshot(id);

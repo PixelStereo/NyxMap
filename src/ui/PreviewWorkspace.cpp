@@ -2,7 +2,8 @@
 #include "MappingView.h"
 #include "Scene3DView.h"
 #include "Engine.h"
-#include "GlDraw.h"
+#include "PaintOverlay.h"
+#include "RhiDraw.h"
 #include "FixtureOverlay.h"
 #include "ShowMenus.h"
 #include "Widgets.h"
@@ -13,8 +14,8 @@
 #include <QGridLayout>
 #include <QJsonArray>
 #include <QMenu>
-#include <QOpenGLContext>
-#include <QOpenGLWidget>
+#include <QRhiWidget>
+#include <rhi/qrhi.h>
 #include <QPainter>
 #include <QSettings>
 #include <QStackedWidget>
@@ -29,12 +30,13 @@
 // A layer, a viewport or the composition as rendered, with the bar every preview has: zoom (buttons, wheel or
 // pinch, around the cursor), Fit, and the shared magnet / auto-select switches. Pan: middle button, Alt/⌥ + drag,
 // or two fingers on a trackpad.
-class PreviewPicture : public QOpenGLWidget
+class PreviewPicture : public QRhiWidget
 {
 public:
     PreviewPicture(Engine *engine, int slot) : m_engine(engine), m_slot(slot)
     {
         setMinimumSize(100, 70);
+        m_overlay = new PaintOverlay(this, [this](QPainter &p) { if (fixturesShown()) paintFixtures(p); }); // under the bar
         m_bar = new ZoomBar(this, QStringLiteral("Whole picture in view\n"
                                                  "Pan: middle button, Alt/⌥ + drag, or two fingers on a trackpad"));
         m_bar->setObjectName(QStringLiteral("previewZoomBar%1").arg(slot));
@@ -61,9 +63,6 @@ public:
         update();
     }
     bool fixturesShown() const { return m_fixturesButton->isChecked() && showsComposition(); }
-    ~PreviewPicture() override {
-        if (context()) { makeCurrent(); m_draw.destroy(); doneCurrent(); }
-    }
     void fit()
     {
         m_zoom = 1.0;
@@ -87,31 +86,36 @@ public:
     }
 
 protected:
-    void initializeGL() override { m_draw.init(); }
-    void paintGL() override {
-        auto *f = context()->extraFunctions();
-        const qreal dpr = devicePixelRatioF();
-        f->glViewport(0, 0, int(width() * dpr), int(height() * dpr));
-        f->glClearColor(0.07f, 0.07f, 0.08f, 1);
-        f->glClear(GL_COLOR_BUFFER_BIT);
-        Engine::Lock lock(&m_engine->mutex());
-        m_engine->waitForFrame(f);
-        QSize size;
-        int buffer = 0;
-        const GLuint texture = m_engine->previewTexture(m_slot, &size, &buffer);
-        if (!texture || size.isEmpty()) return;
-        m_picture = size;
-        const QRectF r = viewRect();
-        // GL counts rows from the bottom
-        f->glViewport(int(std::lround(r.left() * dpr)), int(std::lround((height() - r.bottom()) * dpr)),
-                      int(std::lround(r.width() * dpr)), int(std::lround(r.height() * dpr)));
-        m_draw.drawTexture(texture);
-        m_engine->finishPreviewRead(m_slot, buffer, f);
-        if (fixturesShown()) paintFixtures();
-    }
-    // Lock held
-    void paintFixtures()
+    void initialize(QRhiCommandBuffer *) override { m_draw.initialize(rhi(), renderTarget()); }
+    void releaseResources() override { m_draw.release(); }
+    void resizeEvent(QResizeEvent *e) override
     {
+        QRhiWidget::resizeEvent(e);
+        m_overlay->follow();
+    }
+    void render(QRhiCommandBuffer *cb) override
+    {
+        m_draw.initialize(rhi(), renderTarget());
+        m_draw.begin(QColor::fromRgbF(0.07f, 0.07f, 0.08f));
+        const QImage image = m_engine->previewImage(m_slot);
+        if (!image.isNull()) {
+            if (image.cacheKey() != m_pictureKey) {
+                m_draw.setPicture(image);
+                m_pictureKey = image.cacheKey();
+            }
+            m_picture = image.size();
+            const QRectF r = viewRect();
+            const float w = float(std::max(1, width())), h = float(std::max(1, height()));
+            m_draw.drawPicture(float(r.left() / w * 2 - 1), float(1 - r.bottom() / h * 2), float(r.right() / w * 2 - 1),
+                               float(1 - r.top() / h * 2));
+        }
+        m_draw.render(cb, renderTarget());
+        m_overlay->update();
+    }
+    // Over the picture, with a QPainter
+    void paintFixtures(QPainter &p)
+    {
+        Engine::Lock lock(&m_engine->mutex());
         const FixturePatch patch = m_engine->fixturePatch();
         if (patch.fixtures.empty()) return;
         const int index = m_source ? m_engine->indexOfId(m_source) : -1;
@@ -122,7 +126,6 @@ protected:
             const QPointF uv = viewport ? viewport->mapping.unmap(n, n) : n;
             return QPointF(r.left() + uv.x() * r.width(), r.top() + uv.y() * r.height());
         };
-        QPainter p(this);
         fixtureview::paint(p, patch, m_engine->compositionSize(), toWidget, m_engine->fixtureLooks());
     }
     void wheelEvent(QWheelEvent *e) override
@@ -146,18 +149,18 @@ protected:
             e->accept();
             return;
         }
-        QOpenGLWidget::mousePressEvent(e);
+        QRhiWidget::mousePressEvent(e);
     }
     void mouseMoveEvent(QMouseEvent *e) override
     {
-        if (!m_panning) return QOpenGLWidget::mouseMoveEvent(e);
+        if (!m_panning) return QRhiWidget::mouseMoveEvent(e);
         m_pan += e->position() - m_panLast;
         m_panLast = e->position();
         update();
     }
     void mouseReleaseEvent(QMouseEvent *e) override
     {
-        if (!m_panning) return QOpenGLWidget::mouseReleaseEvent(e);
+        if (!m_panning) return QRhiWidget::mouseReleaseEvent(e);
         m_panning = false;
     }
     void mouseDoubleClickEvent(QMouseEvent *) override { fit(); }
@@ -202,7 +205,9 @@ private:
     int m_slot;
     quint64 m_source = 0;
     QToolButton *m_fixturesButton = nullptr;
-    GlDraw m_draw;
+    RhiDraw m_draw;
+    qint64 m_pictureKey = 0;
+    PaintOverlay *m_overlay = nullptr;
     ZoomBar *m_bar = nullptr;
     QSize m_picture;
     double m_zoom = 1.0;
