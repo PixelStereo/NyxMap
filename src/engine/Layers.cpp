@@ -2,6 +2,7 @@
 // layer), transport, effect chain, and the copy of parameters from one layer to another.
 #include "Naming.h"
 #include "EngineInternal.h"
+#include "ChangeFeed.h"
 #include "Midi.h"
 #include "ImageFile.h"
 #include "Psd.h"
@@ -2300,6 +2301,7 @@ void Engine::setLayerPlaying(int i, bool playing)
     if (playing && l->atEnd()) startMedia(*l); // played to the end: starts again
     l->playing = playing;
     if (playing) l->ended = false;
+    ChangeFeed::layer(l->id);
 }
 
 void Engine::setLayerPlayMode(int i, PlayMode mode)

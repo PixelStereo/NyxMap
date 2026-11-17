@@ -538,6 +538,7 @@ void Engine::updateMidiInputs()
 // at once. Either way, what was moving it (a snapshot's fade, another action's) lets go.
 void Engine::feedControlAction(const QString &path, double value)
 {
+    ChangeFeed::address(QLatin1Char('/') + path.section(QLatin1Char('/'), 0, 1)); // the control and what is under it: its feedback
     for (const auto &interaction : m_interactions) {
         if (!interaction.enabled || !interaction.isAction() || interaction.source != InteractionSource::Internal ||
             interaction.sourceLayer != 0 || interaction.sourceParam != path) continue;

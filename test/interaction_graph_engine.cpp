@@ -185,6 +185,30 @@ int main(int argc, char **argv)
     check(receivedControlFeedback(true), "a changed control is sent as OSC feedback");
     feedback.sendNow(false);
     check(!receivedControlFeedback(false), "feedback does not resend the control's unchanged value");
+    // A parameter that is written tells the feedback by itself: no read goes round, nothing is polled
+    {
+        const int layerIndex = engine.addLayer("Feedback layer");
+        const quint64 layerId = engine.layerId(layerIndex);
+        feedback.sendNow(false); // the layer is in the namespace: its values are the baseline
+        const auto sawOpacity = [&](bool expected) {
+            bool seen = false;
+            if (!receiver.hasPendingDatagrams()) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 50); // the queued read
+                receiver.waitForReadyRead(expected ? 1000 : 40);
+            }
+            while (receiver.hasPendingDatagrams()) {
+                messages.clear();
+                if (osc::decode(receiver.receiveDatagram().data(), messages))
+                    for (const auto &packet : messages) seen |= packet.address.endsWith(QLatin1String("/opacity"));
+            }
+            return seen;
+        };
+        while (receiver.hasPendingDatagrams()) receiver.receiveDatagram();
+        check(!sawOpacity(false), "nothing written: nothing sent");
+        engine.setParameter(layerId, "opacity", 0.3);
+        check(sawOpacity(true), "a parameter written is sent as OSC feedback, without a read going round");
+        check(!sawOpacity(false), "and not again");
+    }
     feedback.setEnabled(false);
     engine.shutdown();
     return failures ? 1 : 0;

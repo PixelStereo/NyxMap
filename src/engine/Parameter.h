@@ -103,7 +103,10 @@ public:
     double asNumber() const; // what an Internal interaction follows: a number, a switch 0 / 1, a choice's index
     // Written within its limits and its granularity (an Int to the nearest of its values, a Choice only to one of
     // its keys); false if it cannot be written or the value is not one it takes
-    bool setValue(const QVariant &v);
+    bool setValue(const QVariant &v); // tells ChangeFeed's listener when it was written
+    // Whose it is (a layer's id; 0: the composition's, an interaction's, the show's, a fixture's): said with a written value
+    Parameter &holder(quint64 id) { m_holder = id; return *this; }
+    quint64 holder() const { return m_holder; }
     bool setNumber(double v) { return setValue(v); }
     bool reset() { return setValue(info().defaultValue); }
 
@@ -117,6 +120,8 @@ private:
     std::function<QVariant()> m_default, m_get;
     std::function<void(const QVariant &)> m_set;
     bool m_transient = false;
+    quint64 m_holder = 0;
+    bool writeValue(const QVariant &v);
 };
 
 // The values of a holder's parameters in a file, by address; read back in their order (an address the holder no longer

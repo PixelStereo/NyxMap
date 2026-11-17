@@ -30,22 +30,25 @@
 #include <QHostAddress>
 #include <QHash>
 #include <QObject>
+#include <mutex>
 #include <QSet>
 #include <QStringList>
 #include <QTimer>
 #include <QVariant>
 #include <vector>
 
+#include "ChangeFeed.h"
 #include "Osc.h"
 
 class Engine;
 class QUdpSocket;
 
-class SequenceFeedback : public QObject
+class SequenceFeedback : public QObject, public ChangeFeed::Observer
 {
     Q_OBJECT
 public:
     explicit SequenceFeedback(Engine *engine, QObject *parent = nullptr);
+    ~SequenceFeedback() override;
 
     // "host:port" each ("localhost:11111", "192.168.1.20:9000"); names are resolved once, in the background
     void setTargets(const QStringList &targets);
@@ -60,15 +63,25 @@ public:
     // Every value of the state now (tests, and what is sent)
     std::vector<osc::Message> state() const;
     static std::vector<osc::Message> stateFor(Engine *engine, bool modified = false);
-    // Sends the values that changed (all of them: everything). slice of slices: only that share of the namespace is read,
-    // so the engine's lock is held a fraction of the time (the timer goes through the slices, a cycle every 100 ms)
-    void sendNow(bool everything, int slice = 0, int slices = 1);
+    // Sends what changed since the last time (all of it: everything): a read of the whole namespace, for a cue, a structure
+    // that changed, the first time. The values that change one by one come through ChangeFeed, as they are written.
+    void sendNow(bool everything);
 
 signals:
     void sent(int messages); // tests
 
+public:
+    // ChangeFeed::Observer: any thread, the engine's lock often held; they note it and return, the main thread reads it
+    void parameterWritten(quint64 holder, const QString &path) override;
+    void layerChanged(quint64 layer) override;
+    void addressChanged(const QString &address) override;
+
 private:
-    void tick();
+    void tick();                // the sequence's times, while a step is on its way
+    void updateTimer();         // on while a step's time goes by, off otherwise: nothing runs while nothing happens
+    void flushChanges();        // main thread: reads what was named, sends what differs
+    void queueFlush();          // (m_pendingMutex held)
+    void transmit(const osc::Message &message, bool known, bool everything, int *count);
     Engine *m_e;
     QUdpSocket *m_socket = nullptr;
     struct Target {
@@ -82,7 +95,11 @@ private:
     OscNamespace m_namespace;
     QHash<QString, QByteArray> m_sent; // last encoded value per address
     int m_namespaceGeneration = -1;
-    int m_slice = 0;
     QSet<QString> m_sequencePaths; // what state() gives
+    std::mutex m_pendingMutex; // what was written and not yet read
+    QSet<std::pair<quint64, QString>> m_pendingParams;
+    QSet<quint64> m_pendingLayers;
+    QSet<QString> m_pendingAddresses;
+    bool m_flushQueued = false;
     QHash<QString, QVariantList> m_lastValues; // last value read per namespace address (a value that did not change is not encoded again)
 };
