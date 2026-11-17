@@ -886,7 +886,12 @@ QRhiTexture *RhiScene::drawNow(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u
         size_t draws = 0;
         for (const Placed &p : all) draws += p.item->model->rhiDraws(rhi, u, &p.item->placement, p.item->pictureRhi != nullptr, false).size();
         const size_t passes = spots.size() + points.size() * 6 + 3; // the lights' maps, the depth, the lit and the blended
-        if (!d->ensureRing(quint32(std::min<size_t>(draws * passes + 16, size_t(1) << 17)))) return nullptr;
+        const size_t needed = draws * passes + 16;
+        if (needed > (size_t(256) << 20) / sizeof(Place)) { // more than 256 MB of blocks: nothing is drawn rather than drawn wrong
+            qWarning("RhiScene: %zu draws need a ring too large for the scene; it is not drawn", needed);
+            return nullptr;
+        }
+        if (!d->ensureRing(quint32(needed))) return nullptr;
     }
     if (wantsSeen) {
         if (!d->ensure(d->seen, w, h, 1, true, QRhiTexture::R32F)) return nullptr;
