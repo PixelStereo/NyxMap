@@ -26,6 +26,15 @@
 #include <tuple>
 
 namespace {
+// A device that rasterises on the processor (the macOS runners' paravirtual GPU, WARP, llvmpipe, lavapipe, SwiftShader):
+// the comparisons of two draws of the same picture are not reliable there
+bool softDevice(const QString &renderer)
+{
+    for (const char *name : {"paravirtual", "warp", "basic render", "llvmpipe", "software", "swiftshader", "lavapipe"})
+        if (renderer.contains(QLatin1String(name), Qt::CaseInsensitive)) return true;
+    return false;
+}
+
 // A scene drawn by RhiScene on a QRhi of the test's own, its pictures read back (premultiplied, the bottom row first)
 class SceneProbe
 {
@@ -775,7 +784,7 @@ int runScene3dTests(Engine &engine)
         engine.setParameter(box, "model/shading", QStringLiteral("smooth"));
         check(different(made, picture()) > 30, "smooth: the cube's edges are rounded");
         engine.setParameter(box, "model/shading", QStringLiteral("as made"));
-        check(Scene3D::lite(engine.gpuRenderer()) || different(made, picture()) < 6, "as made: as it was"); // not on a software device: its rasteriser differs between two draws
+        check(softDevice(engine.gpuRenderer()) || different(made, picture()) < 6, "as made: as it was"); // not on a software device: its rasteriser differs between two draws
         const int heightAt = engine.addLayer("Smooth shading height");
         const quint64 height = engine.layerId(heightAt);
         check(engine.setLayerIsf(heightAt, white, &err), "a constant height map for the sphere");
@@ -796,8 +805,8 @@ int runScene3dTests(Engine &engine)
         const int steady = changed(displacedFlat, picture());
         engine.setParameter(ball, "model/shading", QStringLiteral("smooth"));
         const int interpolated = changed(displacedFlat, picture());
-        check(Scene3D::lite(engine.gpuRenderer()) || steady < 20, "a displaced sphere drawn twice looks the same");
-        check(Scene3D::lite(engine.gpuRenderer()) || (interpolated > 300 && interpolated > 10 * steady), "smooth shading interpolates normals even with displacement");
+        check(softDevice(engine.gpuRenderer()) || steady < 20, "a displaced sphere drawn twice looks the same");
+        check(softDevice(engine.gpuRenderer()) || (interpolated > 300 && interpolated > 10 * steady), "smooth shading interpolates normals even with displacement");
         engine.setParameter(lamp, "light/intensity", 25.0);
         check(engine.setModelDisplace(engine.indexOfId(ball), 0, &err), "clear the live height input before testing the scene cache");
         engine.setParameter(ball, "model/shading", QStringLiteral("as made"));
