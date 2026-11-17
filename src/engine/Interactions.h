@@ -20,7 +20,7 @@
 // Pick-up (faders, knobs): once the target was moved by something else (a snapshot, the interface), the interaction
 // leaves it alone until its own value meets the target's (it is not made to jump). Jump: it sets it at once.
 //
-// A whole color (an OSC 'r', or 3 / 4 numbers) driving a color: each channel goes through the same chain — its
+// A whole color (an OSC 'r', or 3 / 4 numbers; or an Internal source that is a color, its address without /r /g /b) driving a color: each channel goes through the same chain — its
 // filters, the master (not the alpha's) — with a filter state of its own, the result kept within 0..1; a Toggle does
 // not apply. Pick-up waits for every channel to have met the target's (each within the tolerance, or crossed it) before
 // it takes the color over. Alpha only with Map alpha and a fourth channel. A single number driving a color: a gray.

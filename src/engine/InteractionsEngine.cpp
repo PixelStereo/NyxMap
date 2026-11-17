@@ -290,7 +290,10 @@ bool Engine::setInteraction(const Interaction &it)
         if (sourceChanged) m_interactionRun.erase(it.id); // starts again from what comes next
         else if (testChanged)
             if (auto run = m_interactionRun.find(it.id); run != m_interactionRun.end())
+            {
                 run->second.lastInternal = std::numeric_limits<double>::quiet_NaN();
+                run->second.lastColorValid = false;
+            }
     }
     updateMidiInputs();
     emit interactionsChanged();
@@ -861,6 +864,29 @@ void Engine::stepInteractions(double dt)
                     run.lastInternal = x;
                     feed(x);
                     fresh = true;
+                }
+            } else {
+                // A whole color followed (its address without /r /g /b, with an /a): as an OSC color, each channel goes through its
+                // own chain, one interaction for the three of them
+                std::array<const Parameter *, 4> channel{};
+                for (int c = 0; c < 4; ++c) channel[size_t(c)] = findParameter(it.sourceLayer, it.sourceParam + QLatin1Char('/') + QChar("rgba"[c]));
+                bool whole = true;
+                for (int c = 0; c < 3; ++c)
+                    whole &= channel[size_t(c)] && channel[size_t(c)]->isNumber() && (channel[size_t(c)]->info().access & ParamInfo::Read);
+                if (whole) {
+                    const int n = channel[3] && channel[3]->isNumber() ? 4 : 3;
+                    std::array<double, 4> now{{0, 0, 0, 1}};
+                    for (int c = 0; c < n; ++c) now[size_t(c)] = std::clamp(channel[size_t(c)]->number(), 0.0, 1.0);
+                    if (!run.lastColorValid || now != run.lastColor) {
+                        run.lastColorValid = true;
+                        run.lastColor = now;
+                        feed(now[0]); // what the scalar chain shows, as an OSC color gives its first channel
+                        run.color = now;
+                        run.colorComponents = n;
+                        const Interaction chain = colorChain(it);
+                        for (int c = 0; c < 4; ++c) run.channels[size_t(c)].input(chain, now[size_t(c)]);
+                        fresh = true;
+                    }
                 }
             }
         } else {
