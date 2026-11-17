@@ -818,7 +818,11 @@ Camera3D Camera3D::of(const SceneSettings &s, float aspect)
 
 bool Scene3D::lite(const QString &renderer)
 {
-    return renderer.contains(QLatin1String("Apple Software Renderer")) || qEnvironmentVariableIsSet("NYXMAP_3D_LITE");
+    // The renderers that run on the processor and are too slow for the costly passes: Apple's, Direct3D's WARP (the
+    // Windows runners: a frame of a lit scene takes tens of seconds there). Mesa's llvmpipe and lavapipe keep up.
+    for (const char *name : {"Apple Software Renderer", "Microsoft Basic Render", "WARP"})
+        if (renderer.contains(QLatin1String(name), Qt::CaseInsensitive)) return true;
+    return qEnvironmentVariableIsSet("NYXMAP_3D_LITE");
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

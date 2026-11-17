@@ -561,14 +561,15 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
     if (w <= 0 || h <= 0) return nullptr;
     const std::vector<Scene3D::Item> items = withMaterials(u, sourceItems);
     QRhi *rhi = d->rhi;
-    const int aaLevel = std::clamp(quality.antialiasing, 0, 2); // the supersampled level comes with the effects' passes
+    const bool lite = Scene3D::lite(rhi->driverInfo().deviceName); // on the processor: no antialiasing, shadows, contact shadows, reflections, glow or fog
+    const int aaLevel = lite ? 0 : std::clamp(quality.antialiasing, 0, 2); // the supersampled level comes with the effects' passes
     int samples = 1;
     for (int wanted = 1 << aaLevel; wanted > 1; wanted >>= 1)
         if (rhi->supportedSampleCounts().contains(wanted)) {
             samples = wanted;
             break;
         }
-    const bool wantsGlow = quality.glow > 0 && s.glow > 0;
+    const bool wantsGlow = !lite && quality.glow > 0 && s.glow > 0;
     Impl::Surface &main = wantsGlow ? d->litGlow : d->lit;
     if (!d->ensure(main, w, h, samples, true, QRhiTexture::RGBA8, wantsGlow)) return nullptr;
     d->nextUbuf = 0;
@@ -587,7 +588,7 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
     }
 
     // The shadows' share of the work, as the quality asks
-    const int shadowLevel = std::clamp(quality.shadows, 0, 3);
+    const int shadowLevel = lite ? 0 : std::clamp(quality.shadows, 0, 3);
     const int shadowSize = shadowLevel ? 512 << shadowLevel : 0, pointSize = shadowSize / 2;
     // The models that cast: all but screens (unlit) and what is far larger than the others (a floor, a wall only receive)
     QVector3D center;
@@ -618,10 +619,10 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
     sb.misc[1] = std::max(0.0f, s.studio);
     sb.shadowCfg[0] = shadowLevel >= 2 ? 1 : 0;
     sb.shadowCfg[1] = shadowLevel == 1 ? 4 : shadowLevel == 3 ? 24 : 12;
-    const int contactLevel = std::clamp(quality.contact, 0, 3), reflectLevel = std::clamp(quality.reflections, 0, 3);
+    const int contactLevel = lite ? 0 : std::clamp(quality.contact, 0, 3), reflectLevel = lite ? 0 : std::clamp(quality.reflections, 0, 3);
     const bool wantsAo = contactLevel > 0 && s.ao > 0;
     const float reflections = reflectLevel ? s.reflections : 0.0f;
-    const bool wantsFog = quality.atmosphere > 0 && s.fogDensity > 0;
+    const bool wantsFog = !lite && quality.atmosphere > 0 && s.fogDensity > 0;
     const bool wantsSeen = wantsAo || reflections > 0 || wantsFog;
     sb.screen[0] = float(w), sb.screen[1] = float(h);
     sb.screen[2] = wantsAo ? s.ao : 0.0f;
