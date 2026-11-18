@@ -908,6 +908,20 @@ QSize IntBox::sizeHint() const
     return boxHint(this, prefix() + (minimum() < 0 ? QStringLiteral("-") : QString()) + QString::number(big) + suffix());
 }
 
+QColor theme::foldArrowColor() { return QColor(238, 238, 244); }
+
+void theme::paintFoldArrow(QPainter &p, const QPointF &center, bool open)
+{
+    const QPolygonF points = open ? QPolygonF{center + QPointF(-6, -3.5), center + QPointF(6, -3.5), center + QPointF(0, 4.5)}
+                                  : QPolygonF{center + QPointF(-3.5, -6), center + QPointF(4.5, 0), center + QPointF(-3.5, 6)};
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(QColor(0, 0, 0, 110), 1)); // a dark edge: seen on a light row too
+    p.setBrush(foldArrowColor());
+    p.drawPolygon(points);
+    p.restore();
+}
+
 FlagBox::FlagBox(QWidget *parent) : FlagBox(QString(), parent) {}
 FlagBox::FlagBox(const QString &text, QWidget *parent) : QCheckBox(text, parent)
 {
