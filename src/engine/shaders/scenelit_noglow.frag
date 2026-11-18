@@ -234,7 +234,7 @@ vec4 reflected(vec3 R, float rough) {
         if (q.w <= 0.0) return vec4(0.0);
         vec3 s = q.xyz / q.w * 0.5 + 0.5;
         if (s.x <= 0.0 || s.x >= 1.0 || s.y <= 0.0 || s.y >= 1.0 || s.z >= 1.0) return vec4(0.0);
-        float seen = texture(u_seen, s.xy).r;
+        float seen = textureLod(u_seen, s.xy, 0.0).r;
         if (seen >= 1.0) continue; // the sky: nothing to meet
         float behind = eyeDepth(s.z) - eyeDepth(seen);
         if (behind > 0.0) {
@@ -244,9 +244,9 @@ vec4 reflected(vec3 R, float rough) {
                 p -= R * span * 0.5 * (behind > 0.0 ? 1.0 : -1.0);
                 q = u_viewProj * vec4(p, 1.0);
                 s = q.xyz / q.w * 0.5 + 0.5;
-                behind = eyeDepth(s.z) - eyeDepth(texture(u_seen, s.xy).r);
+                behind = eyeDepth(s.z) - eyeDepth(textureLod(u_seen, s.xy, 0.0).r);
             }
-            vec4 c = texture(u_last, s.xy);
+            vec4 c = textureLod(u_last, s.xy, 0.0);
             if (c.a <= 0.0) return vec4(0.0);
             vec2 edge = smoothstep(vec2(0.0), vec2(0.08), s.xy) * smoothstep(vec2(0.0), vec2(0.08), 1.0 - s.xy);
             float fade = away * edge.x * edge.y * (1.0 - float(k) / float(u_steps)) * smoothstep(0.65, 0.15, rough);
