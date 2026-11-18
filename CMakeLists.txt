@@ -456,8 +456,6 @@ set(UI_SOURCES
   src/ui/ParamAnimPanel.cpp
   src/ui/TimelinePanel.cpp
   src/ui/Widgets.cpp
-  src/ui/ColorPicker.cpp
-  src/ui/ColorPicker.h
   src/ui/InteractionPanel.cpp
   src/ui/AudioSpectrum.cpp
 )
@@ -473,7 +471,7 @@ qt_add_shaders(nyxmap_ui "nyxmap_ui_shaders"
   BASE src/ui/shaders
   FILES src/ui/shaders/uidraw.vert src/ui/shaders/uidraw_tex.frag src/ui/shaders/uidraw_color.frag)
 target_include_directories(nyxmap_ui PUBLIC src src/ui PRIVATE "${CMAKE_BINARY_DIR}/generated") # NyxMapVersion.h
-target_link_libraries(nyxmap_ui PUBLIC nyxmap_engine Qt6::Widgets pxs::theme)
+target_link_libraries(nyxmap_ui PUBLIC nyxmap_engine Qt6::Widgets pxs::theme pxs::widgets)
 target_compile_options(nyxmap_ui PRIVATE ${NYXMAP_WARNINGS})
 if(APPLE)
   target_link_libraries(nyxmap_ui PUBLIC "-framework AppKit")
