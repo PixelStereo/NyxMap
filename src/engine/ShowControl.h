@@ -39,6 +39,10 @@ struct ShowControl {
     // of its gesture (a Slider: 1 linear, above 1 fine at the low end, below 1 fine at the high end) and its accent color ("#rrggbb")
     QString widget, accent;
     double curve = 1;
+    // Added from a parameter (Add to Controls Page): the layer (0: the composition) and the address of what it drives. The control follows
+    // it, so that a change made anywhere (the inspector, OSC, a timeline) shows on the page too
+    quint64 boundLayer = 0;
+    QString boundParam;
     int columns = 2;   // Group: how many columns it lays its controls out in (1..4)
     double min = 0, max = 1, step = 0.01; // Slider, Pad (both axes)
     QString unit;                         // Slider: " %", " Hz", " s"
@@ -140,6 +144,7 @@ struct ShowControl {
         QJsonObject o{{"id", QString::number(id)}, {"name", name}, {"key", key}, {"kind", kindKey(kind)}};
         if (group) o["group"] = QString::number(group);
         if (span != 1) o["span"] = span;
+        if (!boundParam.isEmpty()) o["bind"] = QJsonObject{{"layer", QString::number(boundLayer)}, {"param", boundParam}};
         if (!widget.isEmpty()) o["widget"] = widget;
         if (!accent.isEmpty()) o["accent"] = accent;
         if (curve != 1) o["curve"] = curve;
@@ -210,6 +215,10 @@ struct ShowControl {
         c.kind = kindFromKey(o.value("kind").toString());
         c.group = o.value("group").toString().toULongLong();
         c.span = std::clamp(o.value("span").toInt(1), 1, 4);
+        if (const QJsonObject b = o.value("bind").toObject(); !b.value("param").toString().isEmpty()) {
+            c.boundLayer = b.value("layer").toString().toULongLong();
+            c.boundParam = b.value("param").toString();
+        }
         c.widget = cleanWidget(o.value("widget").toString());
         c.accent = cleanAccent(o.value("accent").toString());
         c.curve = std::isfinite(o.value("curve").toDouble(1)) ? std::clamp(o.value("curve").toDouble(1), 0.1, 10.0) : 1.0;

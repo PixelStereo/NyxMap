@@ -898,7 +898,7 @@ if(NYXMAP_TESTS)
   add_test(NAME audio_analysis_concurrency COMMAND nyxmap_audio_analysis_concurrency_test)
   # The Web Page generator: settings, parameters, persistence; a real page too when Qt WebEngine is there (it needs a
   # display: xvfb-run on Linux; Chromium's sandbox is turned off in the test only)
-  add_executable(nyxmap_web_page_test test/web_page.cpp src/ui/WebPageQt.cpp)
+  add_executable(nyxmap_web_page_test test/web_page.cpp src/ui/WebPageQt.cpp src/ui/ControlsWeb.cpp)
   target_include_directories(nyxmap_web_page_test PRIVATE src/ui)
   target_link_libraries(nyxmap_web_page_test PRIVATE nyxmap_engine Qt6::Widgets ${NYXMAP_WEB_LIBS})
   target_compile_options(nyxmap_web_page_test PRIVATE ${NYXMAP_WARNINGS})

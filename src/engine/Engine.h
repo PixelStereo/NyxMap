@@ -1295,6 +1295,8 @@ private:
     std::vector<ShowControl> m_controls;
     quint64 m_nextControlId = 1;
     std::atomic<quint64> m_controlsRevision{0}; // read by the remote's thread
+    QHash<quint64, QList<double>> m_boundSeen;   // a bound control's parameter, as it was last frame (the interaction thread)
+    void followBoundControls();                  // controls added from a parameter take its changes; lock held
     ShowControl *controlLocked(quint64 id);
     void remapControlKeys(const QHash<QString, QString> &keys); // lock held
     Sequencer *m_sequencer = nullptr; // a child QObject

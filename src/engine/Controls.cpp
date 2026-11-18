@@ -243,6 +243,52 @@ quint64 Engine::addControl(const ShowControl &control)
     return id;
 }
 
+// A control added from a parameter follows it: when the parameter changes (the inspector, OSC, a timeline, another interaction),
+// the control takes the value, so the page and the Controls panel show it. Only when the parameter has changed since the last frame:
+// a control just moved is not put back to the parameter's old value before its interaction has carried it there
+void Engine::followBoundControls()
+{
+    bool any = false;
+    for (const ShowControl &c : m_controls) any |= !c.boundParam.isEmpty();
+    if (!any) {
+        m_boundSeen.clear();
+        return;
+    }
+    for (ShowControl &c : m_controls) {
+        if (c.boundParam.isEmpty()) continue;
+        QList<double> now;
+        if (c.kind == ShowControl::Kind::Color) {
+            for (int k = 0; k < 3; ++k) {
+                const Parameter *p = findParameter(c.boundLayer, c.boundParam + QLatin1Char('/') + QLatin1Char("rgb"[k]));
+                if (!p || !p->isNumber()) {
+                    now.clear();
+                    break;
+                }
+                now << std::clamp(p->number(), 0.0, 1.0);
+            }
+        } else if (const Parameter *p = findParameter(c.boundLayer, c.boundParam)) {
+            if (c.kind == ShowControl::Kind::Slider && p->isNumber()) now << p->number();
+            else if (c.kind == ShowControl::Kind::Toggle) now << (p->json().toBool() ? 1.0 : 0.0);
+            else if (c.kind == ShowControl::Kind::Choice) now << double(std::max<qsizetype>(0, c.choices.indexOf(QRegularExpression(
+                                                                        QStringLiteral("^%1$").arg(QRegularExpression::escape(p->json().toString())),
+                                                                        QRegularExpression::CaseInsensitiveOption))));
+        }
+        if (now.isEmpty()) continue;
+        const auto seen = m_boundSeen.find(c.id);
+        if (seen == m_boundSeen.end()) { // the first time: where it is, not a change
+            m_boundSeen.insert(c.id, now);
+            continue;
+        }
+        if (seen.value() == now) continue;
+        seen.value() = now;
+        if (c.kind == ShowControl::Kind::Color) {
+            for (int k = 0; k < 3; ++k) c.rgb[size_t(k)] = now[k];
+        } else {
+            c.value = c.kind == ShowControl::Kind::Slider ? std::clamp(now[0], std::min(c.min, c.max), std::max(c.min, c.max)) : c.clamped(now[0]);
+        }
+    }
+}
+
 bool Engine::setControlLayouts(const QHash<quint64, std::array<int, 4>> &places)
 {
     bool changed = false;
@@ -303,6 +349,8 @@ quint64 Engine::addControlForParameter(quint64 layer, const QString &path, quint
         if (info.label.endsWith(QLatin1Char(')')) && unit.size() < 8) c.unit = QLatin1Char(' ') + unit.chopped(1); // "Rotation (°)" -> " °"
     }
     if (c.name.isEmpty()) c.name = info.name();
+    c.boundLayer = layer;
+    c.boundParam = target;
     const quint64 id = addControl(c);
     if (!id) return 0;
     const std::optional<ShowControl> made = control(id);

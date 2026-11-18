@@ -18,6 +18,9 @@ opens the page in a window of its own, large enough to lay it out; **+ New** mak
 server of its own on the loopback (127.0.0.1) with a code of its own: it needs neither the Remote setting nor its PIN, and nothing
 else on the network can reach it. Without a browser the tab is the list of rows.
 
+A control made with **Add to Controls Page** goes **both ways**: it drives the parameter, and it follows the parameter when something
+else changes it (the inspector, OSC, a timeline, another interaction), so the page and the panel always show where it is.
+
 A new project starts with an empty Controls panel; its controls belong to the project and are cleared when you create a new project. **Group** (also in **+ New**) is a titled frame that lays its controls out in 1 to 4 columns. **⋯ › Move to Group** puts a
 control or another group into one (or back on the page), **⋯ › Width** sets how many of the group's columns a control takes,
 **⋯ › Columns** the group's own, and **Move up / down** orders what is beside it. The remote's `/control` page shows the same

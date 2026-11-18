@@ -319,6 +319,26 @@ int runInteractionFilterTests(Engine &e)
         e.removeControl(control);
     }
 
+    // A control added from a parameter goes both ways: it drives the parameter, and follows it when it is changed elsewhere
+    {
+        const int layerIndex = e.addLayer("Bound");
+        const quint64 layerId = e.layerId(layerIndex);
+        const quint64 control = e.addControlForParameter(layerId, "opacity", 0);
+        check(control != 0 && e.control(control)->boundParam == "opacity" && e.control(control)->boundLayer == layerId, "a control added from a parameter knows it");
+        const ShowControl again = ShowControl::fromJson(e.control(control)->toJson());
+        check(again.boundParam == "opacity" && again.boundLayer == layerId, "and saved with it");
+        e.renderFrame();
+        e.setParameter(layerId, "opacity", 0.3);
+        e.renderFrame();
+        e.renderFrame();
+        check(near(e.control(control)->value, 0.3, 1e-3), "a change of the parameter elsewhere shows in the control");
+        e.setControlValue(control, 0.8);
+        for (int k = 0; k < 4; ++k) e.renderFrame();
+        check(near(e.parameterValue(layerId, "opacity").toDouble(), 0.8, 1e-3) && near(e.control(control)->value, 0.8, 1e-3), "the control still drives the parameter, and is not put back");
+        for (const Interaction &x : e.interactions()) e.removeInteraction(x.id);
+        e.removeControl(control);
+    }
+
     e.setFadesManual(false);
     if (!failures) std::printf("interaction_filters: OK\n");
     return failures;

@@ -701,6 +701,7 @@ void Engine::stepInteractions(double dt)
         if (bandCount < bands.size()) bands[bandCount++] = {input, low, high, value};
         return value;
     };
+    followBoundControls(); // the controls added from a parameter take its changes
     // An Envelope filter that takes its four numbers from an ADSR control (its Attack, Decay, Sustain, Release follow it)
     {
         auto follow = [this](std::vector<InteractionStage> &stages) {
