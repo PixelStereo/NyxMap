@@ -3,6 +3,7 @@
 // settings reached as values (presets, snapshots, OSC).
 // Standalone CTest area: nyxmap_tests --area interaction_filters.
 #include "EngineInternal.h"
+#include "ShowControl.h"
 
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -268,6 +269,80 @@ int runInteractionFilterTests(Engine &e)
     check(e.interactions().back().filters.size() == 1 && e.interactions().back().filters[0].kind == InteractionFilter::Steps &&
               near(e.interactions().back().filters[0].a, 5),
           "recalled: the list and its values");
+
+    // An Envelope filter that takes its four numbers from an ADSR control: they follow it, and the link is saved
+    {
+        ShowControl envelope;
+        envelope.name = "Hit shape";
+        envelope.kind = ShowControl::Kind::Adsr;
+        const quint64 control = e.addControl(envelope);
+        const QString key = e.control(control)->key;
+        Interaction it = Interaction::made(InteractionSource::Keyboard);
+        InteractionStage linked = InteractionStage::made(InteractionFilter::Envelope);
+        linked.adsrControl = key;
+        it.filters = {linked};
+        const quint64 id = e.addInteraction(it);
+        e.setControlAdsr(control, {0.25, 0.5, 0.4, 1.5});
+        e.renderFrame();
+        InteractionStage seen;
+        for (const Interaction &x : e.interactions())
+            if (x.id == id) seen = x.filters.front();
+        check(near(seen.a, 0.25) && near(seen.b, 0.5) && near(seen.c, 0.4) && near(seen.d, 1.5), "an Envelope takes Attack, Decay, Sustain and Release from its ADSR control");
+        const InteractionStage again = InteractionStage::fromJson(seen.toJson());
+        check(again.adsrControl == key, "and the link is saved");
+        e.setControlAdsr(control, {0.1, 0.2, 0.9, 0.3});
+        e.renderFrame();
+        for (const Interaction &x : e.interactions())
+            if (x.id == id) seen = x.filters.front();
+        check(near(seen.a, 0.1) && near(seen.c, 0.9), "and follows it when it moves");
+        e.removeInteraction(id);
+        e.removeControl(control);
+    }
+
+    // A parameter driven from one coordinate of a multi-point pad: the control's range remapped onto the parameter's
+    {
+        ShowControl swarm;
+        swarm.name = "Swarm";
+        swarm.kind = ShowControl::Kind::Points;
+        swarm.count = 2;
+        const quint64 control = e.addControl(swarm);
+        const int layerIndex = e.addLayer("Driven");
+        const quint64 layerId = e.layerId(layerIndex);
+        check(e.driveParameterFromControl(layerId, "rotation", control, "p2/y") != 0, "a parameter can follow a point's coordinate");
+        check(e.driveParameterFromControl(layerId, "rotation", control, "p9/y") == 0 && e.driveParameterFromControl(layerId, "nonsense", control, "p1/x") == 0,
+              "but not a point that is not there, nor a parameter that is not");
+        e.setControlPoints(control, {0, 0, 0, 0.75});
+        e.renderFrame();
+        e.renderFrame();
+        check(near(e.parameterValue(layerId, "rotation").toDouble(), 90, 0.5), "the control's 0..1 is remapped onto the parameter's -180..180");
+        for (const Interaction &x : e.interactions()) e.removeInteraction(x.id);
+        e.removeControl(control);
+    }
+
+    // A control added from a parameter is a view of it: it reads and sets that parameter, with no value or interaction of its own
+    {
+        const int layerIndex = e.addLayer("Bound");
+        const quint64 layerId = e.layerId(layerIndex);
+        const size_t interactionsBefore = e.interactions().size();
+        const quint64 control = e.addControlForParameter(layerId, "opacity", 0);
+        check(control != 0 && e.control(control)->boundParam == "opacity" && e.control(control)->boundLayer == layerId, "a control added from a parameter knows it");
+        check(e.interactions().size() == interactionsBefore, "and makes no interaction");
+        const ShowControl again = ShowControl::fromJson(e.control(control)->toJson());
+        check(again.boundParam == "opacity" && again.boundLayer == layerId, "saved with it");
+        e.setParameter(layerId, "opacity", 0.3);
+        check(near(e.control(control)->value, 0.3, 1e-6), "a change of the parameter anywhere shows in the control at once");
+        e.setControlValue(control, 0.8);
+        check(near(e.parameterValue(layerId, "opacity").toDouble(), 0.8, 1e-6) && near(e.control(control)->value, 0.8, 1e-6), "the control sets the parameter itself");
+        ParamInfo info;
+        check(e.parameterInfo(layerId, "opacity", &info) && near(e.control(control)->min, info.min) && near(e.control(control)->max, info.max), "its range is the parameter's");
+        check(!e.parameterInfo(0, "control/" + e.control(control)->key, &info), "it has no address of its own");
+        // several views of one parameter agree
+        const quint64 second = e.addControlForParameter(layerId, "opacity", 0);
+        e.setControlValue(second, 0.1);
+        check(near(e.control(control)->value, 0.1, 1e-6) && near(e.control(second)->value, 0.1, 1e-6), "two views of one parameter always agree");
+        e.removeControl(control);
+        e.removeControl(second);
+    }
 
     e.setFadesManual(false);
     if (!failures) std::printf("interaction_filters: OK\n");

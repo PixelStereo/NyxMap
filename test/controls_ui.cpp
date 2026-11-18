@@ -1,5 +1,7 @@
 // The Controls tab: new controls from the menu, played, moved by something else, shaped, deleted — each edit one undo step.
 #include "ControlsPanel.h"
+#include "ControlsWeb.h"
+#include <QStackedWidget>
 #include "PresetEditor.h"
 #include "Engine.h"
 #include "Widgets.h"
@@ -10,6 +12,7 @@
 #include <QLineEdit>
 #include <QMouseEvent>
 #include <QPushButton>
+#include <QSettings>
 #include <QToolButton>
 #include <QUndoStack>
 #include <cstdio>
@@ -34,7 +37,7 @@ int runControlsUiTests(Engine &engine)
     pump();
     check(engine.controls().empty() && panel.findChildren<QWidget *>("controlRow").isEmpty(), "no control yet");
     auto *add = panel.findChild<QToolButton *>("controlsAdd");
-    check(add && add->menu() && add->menu()->actions().size() == 7, "a menu of the seven kinds (a 2D slider and a group too)");
+    check(add && add->menu() && add->menu()->actions().size() == 10, "a menu of the ten kinds (a 2D slider, a group, an ADSR, a multi-slider and a multi-point pad too)");
     if (!add) return failures;
     for (int k = 0; k < 5; ++k) {
         add->menu()->actions().at(k)->trigger();
@@ -138,6 +141,35 @@ int runControlsUiTests(Engine &engine)
         engine.setControlsJson(before);
         pump();
         check(engine.controls().size() == 5 && std::abs(engine.controls().front().value - 0.6) < 1e-9, "restored with its value");
+    }
+    // With a browser, the panel shows the remote's page (here a stand-in view) and the rows stay one click away; without, nothing changes
+    {
+        check(!panel.findChild<QToolButton *>("controlsPageButton")->isVisible(), "without a browser there is no Page button");
+        controlsweb::setFactory([](const QString &url) -> QWidget * {
+            auto *view = new QLabel(url);
+            view->setObjectName("fakeControlsView");
+            return view;
+        });
+        controlsweb::setUrlProvider([] { return QStringLiteral("http://127.0.0.1:1/control?pin=abc"); });
+        QSettings().remove("controls/page");
+        ControlsPanel withBrowser(&engine, &undo);
+        withBrowser.resize(420, 520);
+        withBrowser.show();
+        pump();
+        auto *pageButton = withBrowser.findChild<QToolButton *>("controlsPageButton");
+        auto *stack = withBrowser.findChild<QStackedWidget *>();
+        auto *view = withBrowser.findChild<QLabel *>("fakeControlsView");
+        check(pageButton && pageButton->isVisible() && pageButton->isChecked(), "with a browser the panel is the page at first");
+        check(view && view->text().contains("/control?pin=") && stack && stack->currentWidget() == view, "the page is the remote's, at the server's address");
+        pageButton->setChecked(false);
+        pump();
+        check(stack && stack->currentIndex() == 0, "the rows are one click away");
+        pageButton->setChecked(true);
+        pump();
+        check(stack && stack->currentWidget() == view, "and the page comes back");
+        QSettings().remove("controls/page");
+        controlsweb::setFactory(nullptr);
+        controlsweb::setUrlProvider(nullptr);
     }
     if (const QByteArray shots = qgetenv("NYXMAP_TEST_SHOTS"); !shots.isEmpty()) panel.grab().save(QString::fromLocal8Bit(shots) + "/controls.png");
     return failures;

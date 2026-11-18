@@ -701,6 +701,27 @@ void Engine::stepInteractions(double dt)
         if (bandCount < bands.size()) bands[bandCount++] = {input, low, high, value};
         return value;
     };
+    // An Envelope filter that takes its four numbers from an ADSR control (its Attack, Decay, Sustain, Release follow it)
+    {
+        auto follow = [this](std::vector<InteractionStage> &stages) {
+            for (InteractionStage &stage : stages) {
+                if (stage.kind != InteractionFilter::Envelope || stage.adsrControl.isEmpty()) continue;
+                for (const ShowControl &control : m_controls)
+                    if (control.kind == ShowControl::Kind::Adsr && control.key == stage.adsrControl) {
+                        stage.a = std::max(0.001, control.adsr[0]);
+                        stage.b = std::max(0.001, control.adsr[1]);
+                        stage.c = control.adsr[2];
+                        stage.d = std::max(0.001, control.adsr[3]);
+                        break;
+                    }
+            }
+        };
+        for (Interaction &linked : m_interactions) {
+            follow(linked.filters);
+            follow(linked.sharedFilters);
+            for (Interaction &child : linked.xyInputs) follow(child.filters);
+        }
+    }
     std::vector<double> values; // reused from one Action to the next: no allocation each frame
     for (const Interaction &it : m_interactions) {
         if (it.enabled && it.isAction() && it.xyInputs.empty()) {

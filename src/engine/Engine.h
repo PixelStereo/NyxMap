@@ -42,6 +42,7 @@
 #include <QMutex>
 #include <QObject>
 #include <QRecursiveMutex>
+#include <QHash>
 #include "AnnotatedMutex.h"
 #include <limits>
 #include <QSet>
@@ -697,6 +698,15 @@ public:
     bool setControlsJson(const QJsonArray &a, QString *error = nullptr, bool remapKeys = false); // replaces them all (undo, project, a remote)
     quint64 controlsRevision() const { return m_controlsRevision; } // changes with the list or a definition, not a value
     quint64 addControl(const ShowControl &control); // its id (0: too many); its key is made from its name
+    // Where the controls are on the remote page (ShowControl::gx…): id -> {x, y, w, h}; unknown ids are ignored. True: something changed
+    bool setControlLayouts(const QHash<quint64, std::array<int, 4>> &places);
+    // A control that is a view of a parameter, on the page or in a Group (0: the page): a slider for a number, a switch, a selector, a
+    // button, a color (for a color's channel). It has no value of its own: it reads and sets the parameter, so every change shows, from
+    // wherever it comes. Its id (0: not a parameter a control can show)
+    quint64 addControlForParameter(quint64 layer, const QString &path, quint64 group);
+    // An interaction that makes a control's number (its `sub` path: "", "x", "p2/y", "3"…) drive a numeric parameter, the control's range
+    // remapped onto the parameter's. Its id (0: not possible)
+    quint64 driveParameterFromControl(quint64 layer, const QString &path, quint64 control, const QString &sub);
     bool updateControl(quint64 id, const ShowControl &change); // a new name also updates the OSC key
     bool removeControl(quint64 id);
     bool moveControl(quint64 id, int to);
@@ -705,6 +715,9 @@ public:
     // read by an interaction like any show value (an Internal source; both together, an XY input, for a pad)
     void setMousePosition(double x, double y);
     bool setControlPoint(quint64 id, double x, double y); // a 2D slider's two numbers; any thread
+    bool setControlPoints(quint64 id, const std::vector<double> &xy); // a Multi-point pad's points: x1, y1, x2, y2…
+    bool setControlMulti(quint64 id, const std::vector<double> &values); // a Multi-slider's numbers (as many as it has, kept within its range)
+    bool setControlAdsr(quint64 id, const std::array<double, 4> &adsr); // an ADSR control's four numbers (attack, decay, release within its range, sustain 0..1)
     bool setControlColor(quint64 id, double r, double g, double b);
     // The show's musical clock (tempo, bar, position in beats): steps counted in beats and quantized (Sequencer), OSC /clock
     BeatClock &beatClock() { return m_beatClock; }
@@ -1283,6 +1296,8 @@ private:
     std::vector<ShowControl> m_controls;
     quint64 m_nextControlId = 1;
     std::atomic<quint64> m_controlsRevision{0}; // read by the remote's thread
+    void fillBound(ShowControl &c);                    // a view of a parameter shows its value, range and choices; lock held
+    bool setBound(const ShowControl &c, double value); // and sets it; lock held
     ShowControl *controlLocked(quint64 id);
     void remapControlKeys(const QHash<QString, QString> &keys); // lock held
     Sequencer *m_sequencer = nullptr; // a child QObject

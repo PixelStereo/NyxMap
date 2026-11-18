@@ -93,7 +93,13 @@ struct Client {
         const char mask[4] = {0x12, 0x34, 0x56, 0x78};
         QByteArray f;
         f.append(char(0x81));
-        f.append(char(0x80 | payload.size()));
+        if (payload.size() < 126) {
+            f.append(char(0x80 | payload.size()));
+        } else { // a longer frame: its length in two more bytes, as a browser sends it
+            f.append(char(0x80 | 126));
+            f.append(char(payload.size() >> 8));
+            f.append(char(payload.size() & 0xFF));
+        }
         f.append(mask, 4);
         for (int i = 0; i < payload.size(); ++i) f.append(char(payload[i] ^ mask[i & 3]));
         socket.write(f);
@@ -204,6 +210,54 @@ int main(int argc, char **argv)
             choice.choices = {"Intro", "Verse", "Drop"};
             engine.addControl(toggle);
             engine.addControl(choice);
+            // More to look at: a pad, an encoder, a page of its own (a group) with a nested one
+            ShowControl pad, knob, vfader, page, lights, spot, envelope, bars, hbars, crowd;
+            crowd.name = "Crowd";
+            crowd.kind = ShowControl::Kind::Points;
+            crowd.count = 4;
+            crowd.points = {{0.2, 0.2}, {0.8, 0.2}, {0.2, 0.8}, {0.8, 0.8}};
+            crowd.def = 0.5;
+            engine.addControl(crowd);
+            bars.name = "EQ";
+            bars.kind = ShowControl::Kind::Multi;
+            bars.count = 10;
+            bars.accent = "#d36bd9";
+            hbars.name = "Sends";
+            hbars.kind = ShowControl::Kind::Multi;
+            hbars.count = 4;
+            hbars.widget = "hmulti";
+            engine.addControl(bars);
+            engine.addControl(hbars);
+            envelope.name = "Envelope";
+            envelope.kind = ShowControl::Kind::Adsr;
+            engine.addControl(envelope);
+            pad.name = "Position";
+            pad.kind = ShowControl::Kind::Pad;
+            knob.name = "Gain";
+            knob.min = -24;
+            knob.max = 12;
+            knob.step = 0.5;
+            knob.unit = " dB";
+            knob.widget = "knob";
+            knob.accent = "#46c46a";
+            vfader.name = "Master";
+            vfader.widget = "vfader";
+            vfader.accent = "#f0883e";
+            page.name = "Lights";
+            page.kind = ShowControl::Kind::Group;
+            engine.addControl(pad);
+            engine.addControl(knob);
+            engine.addControl(vfader);
+            const quint64 pageId = engine.addControl(page);
+            lights.name = "Dimmer";
+            lights.group = pageId;
+            lights.widget = "knob";
+            lights.accent = "#e5c14a";
+            spot.name = "Spot color";
+            spot.kind = ShowControl::Kind::Color;
+            spot.group = pageId;
+            engine.addControl(lights);
+            engine.addControl(spot);
             RemoteServer demo(&engine);
             demo.start(8799, qEnvironmentVariableIsSet("NYXMAP_REMOTE_NOCODE") ? QString() : QStringLiteral("482913"), "127.0.0.1");
             std::cerr << "DEMO http://127.0.0.1:8799/show?pin=482913\n";
@@ -238,7 +292,7 @@ int main(int argc, char **argv)
             require(!reply.contains("482913"), "the PIN is nowhere in the page");
             require(reply.contains("id=\"go\"") && reply.contains("Connect"), "the login has a button: a phone's keypad may have no Enter key");
             // The hash is that of the code served
-            const QByteArray scriptHash = "'sha256-" + QCryptographicHash::hash(QByteArray(remote_page::kScript), QCryptographicHash::Sha256).toBase64() + "'";
+            const QByteArray scriptHash = "'sha256-" + QCryptographicHash::hash(remote_page::script(), QCryptographicHash::Sha256).toBase64() + "'";
             require(reply.contains(scriptHash), "the policy's hash is the script's");
         }
         {
@@ -395,6 +449,106 @@ int main(int argc, char **argv)
         require(near(engine.control(a)->value, 10), "a value beyond the range is kept in it");
         require(server.isRunning(), "junk is ignored, nothing falls");
 
+        // The page laid out from the phone: where each tile is, its widget, its range and curve; kept by the show
+        {
+            ShowControl tileControl;
+            tileControl.name = "Tile";
+            tileControl.max = 10;
+            tileControl.step = 0.5;
+            const quint64 t = engine.addControl(tileControl);
+            const QString ida = QString::number(t), idb = QString::number(b);
+            phone.sendText(QJsonDocument(QJsonObject{{"t", "layout"}, {"items", QJsonObject{{ida, QJsonObject{{"x", 2}, {"y", 3}, {"w", 4}, {"h", 2}}},
+                                                                                           {idb, QJsonObject{{"x", 99}, {"y", 0}, {"w", 3}, {"h", 2}}}}}})
+                               .toJson(QJsonDocument::Compact));
+            phone.pumpUntil([&] { return engine.control(t)->gw == 4; });
+            const ShowControl placed = *engine.control(t), kept = *engine.control(b);
+            require(placed.gx == 2 && placed.gy == 3 && placed.gw == 4 && placed.gh == 2, "a tile placed from the phone is where it was put");
+            require(kept.gx + kept.gw <= ShowControl::kGridColumns && kept.gx >= 0, "a place beyond the grid is brought back into it");
+            const ShowControl again = ShowControl::fromJson(placed.toJson());
+            require(again.gx == 2 && again.gy == 3 && again.gw == 4 && again.gh == 2, "the layout is saved with the control");
+            phone.sendText(QJsonDocument(QJsonObject{{"t", "edit"}, {"id", ida},
+                                                     {"props", QJsonObject{{"widget", "knob"}, {"accent", "#E5564A"}, {"curve", 2.5}, {"min", -5}, {"max", 5}, {"step", 0.25}, {"unit", " dB"}, {"name", "Gain"}}}})
+                               .toJson(QJsonDocument::Compact));
+            phone.pumpUntil([&] { return engine.control(t)->widget == "knob"; });
+            const ShowControl edited = *engine.control(t);
+            require(edited.widget == "knob" && edited.accent == "#e5564a" && near(edited.curve, 2.5) && near(edited.min, -5) && near(edited.max, 5) &&
+                        edited.name == "Gain" && edited.unit == " dB" && edited.gw == 4,
+                    "a tile's widget, accent, curve, range and name set from the phone, its place kept");
+            phone.sendText(QJsonDocument(QJsonObject{{"t", "edit"}, {"id", ida}, {"props", QJsonObject{{"widget", "<script>"}, {"accent", "red"}, {"curve", 99}}}}).toJson(QJsonDocument::Compact));
+            phone.pumpUntil([&] { return engine.control(t)->widget.isEmpty(); });
+            const ShowControl cleaned = *engine.control(t);
+            require(cleaned.widget.isEmpty() && cleaned.accent.isEmpty() && cleaned.curve <= 10.0, "what is not a widget, a color or a sane curve is dropped");
+            // A multi-point pad: each point an X and a Y, all in one message, each a parameter, the count changed from the phone
+            ShowControl swarm;
+            swarm.name = "Swarm";
+            swarm.kind = ShowControl::Kind::Points;
+            swarm.count = 3;
+            const quint64 w = engine.addControl(swarm);
+            require(engine.control(w) && engine.control(w)->points.size() == 3, "a multi-point pad has a point for each of its points");
+            phone.sendText(QJsonDocument(QJsonObject{{"t", "points"}, {"id", QString::number(w)}, {"v", QJsonArray{0.1, 0.2, 0.3, 99, 0.5, -4}}}).toJson(QJsonDocument::Compact));
+            phone.pumpUntil([&] { return near(engine.control(w)->points[0][0], 0.1); });
+            const ShowControl swarmNow = *engine.control(w);
+            require(near(swarmNow.points[0][1], 0.2) && near(swarmNow.points[1][0], 0.3) && near(swarmNow.points[1][1], 1) && near(swarmNow.points[2][1], 0),
+                    "its points set from the phone, each coordinate within its range");
+            ParamInfo pointInfo;
+            require(engine.parameterInfo(0, "control/swarm/p1/x", &pointInfo) && pointInfo.pointComponent == 0 && engine.parameterInfo(0, "control/swarm/p3/y", &pointInfo) &&
+                        pointInfo.pointComponent == 1 && !engine.parameterInfo(0, "control/swarm/p4/x", &pointInfo),
+                    "each coordinate is a parameter of the show");
+            phone.sendText(QJsonDocument(QJsonObject{{"t", "edit"}, {"id", QString::number(w)}, {"props", QJsonObject{{"count", 5}}}}).toJson(QJsonDocument::Compact));
+            phone.pumpUntil([&] { return engine.control(w)->count == 5; });
+            require(engine.control(w)->points.size() == 5 && near(engine.control(w)->points[1][0], 0.3), "more points added, the others kept");
+            const ShowControl swarmAgain = ShowControl::fromJson(engine.control(w)->toJson());
+            require(swarmAgain.count == 5 && swarmAgain.points.size() == 5 && near(swarmAgain.points[1][0], 0.3), "and saved with the project");
+            engine.removeControl(w);
+            // A multi-slider: its numbers set in one message, each a parameter, the count changed from the phone
+            ShowControl eq;
+            eq.name = "Bands";
+            eq.kind = ShowControl::Kind::Multi;
+            eq.count = 4;
+            eq.max = 10;
+            const quint64 q = engine.addControl(eq);
+            require(engine.control(q) && engine.control(q)->multi.size() == 4, "a multi-slider has a number for each of its sliders");
+            phone.sendText(QJsonDocument(QJsonObject{{"t", "multi"}, {"id", QString::number(q)}, {"v", QJsonArray{1, 99, -5, 4.5}}}).toJson(QJsonDocument::Compact));
+            phone.pumpUntil([&] { return near(engine.control(q)->multi[0], 1); });
+            const ShowControl bandsNow = *engine.control(q);
+            require(near(bandsNow.multi[0], 1) && near(bandsNow.multi[1], 10) && near(bandsNow.multi[2], 0) && near(bandsNow.multi[3], 4.5), "set from the phone, each within its range");
+            ParamInfo bandInfo;
+            require(engine.parameterInfo(0, "control/bands/1", &bandInfo) && engine.parameterInfo(0, "control/bands/4", &bandInfo) && !engine.parameterInfo(0, "control/bands/5", &bandInfo), "and each is a parameter of the show");
+            phone.sendText(QJsonDocument(QJsonObject{{"t", "edit"}, {"id", QString::number(q)}, {"props", QJsonObject{{"count", 6}}}}).toJson(QJsonDocument::Compact));
+            phone.pumpUntil([&] { return engine.control(q)->count == 6; });
+            require(engine.control(q)->count == 6 && engine.control(q)->multi.size() == 6 && near(engine.control(q)->multi[1], 10), "more sliders added, the others kept");
+            const ShowControl bandsAgain = ShowControl::fromJson(engine.control(q)->toJson());
+            require(bandsAgain.count == 6 && bandsAgain.multi.size() == 6 && near(bandsAgain.multi[3], 4.5), "and saved with the project");
+            engine.removeControl(q);
+            // An ADSR: four numbers moved from the phone, kept within their ranges, saved, and a parameter each
+            ShowControl envelope;
+            envelope.name = "Env";
+            envelope.kind = ShowControl::Kind::Adsr;
+            const quint64 e = engine.addControl(envelope);
+            require(engine.control(e) && near(engine.control(e)->max, 2) && near(engine.control(e)->adsr[2], 0.7), "an ADSR control starts with a sane envelope");
+            phone.sendText(QJsonDocument(QJsonObject{{"t", "adsr"}, {"id", QString::number(e)}, {"v", QJsonArray{0.5, 99, 5, 1.25}}}).toJson(QJsonDocument::Compact));
+            phone.pumpUntil([&] { return near(engine.control(e)->adsr[0], 0.5); });
+            const ShowControl env = *engine.control(e);
+            require(near(env.adsr[0], 0.5) && near(env.adsr[1], 2) && near(env.adsr[2], 1) && near(env.adsr[3], 1.25), "its attack, decay, sustain and release set from the phone, within their ranges");
+            const ShowControl envAgain = ShowControl::fromJson(env.toJson());
+            require(envAgain.kind == ShowControl::Kind::Adsr && near(envAgain.adsr[3], 1.25) && near(envAgain.max, 2), "and saved with the project");
+            ParamInfo sustainInfo, releaseInfo;
+            require(engine.parameterInfo(0, "control/env/sustain", &sustainInfo) && near(sustainInfo.max, 1) &&
+                        engine.parameterInfo(0, "control/env/release", &releaseInfo) && near(releaseInfo.max, 2) &&
+                        engine.parameterInfo(0, "control/env/attack", &releaseInfo) && engine.parameterInfo(0, "control/env/decay", &releaseInfo),
+                    "each of its numbers is a parameter of the show, within its range");
+            engine.removeControl(e);
+            phone.sendText(QJsonDocument(QJsonObject{{"t", "remove"}, {"id", "424242"}}).toJson(QJsonDocument::Compact));
+            require(server.isRunning() && engine.control(t), "removing what is not there does nothing");
+            phone.sendText(QJsonDocument(QJsonObject{{"t", "remove"}, {"id", ida}}).toJson(QJsonDocument::Compact));
+            phone.pumpUntil([&] { return !engine.control(t); });
+            require(!engine.control(t), "a control removed from the phone is gone");
+            phone.pumpUntil([&] {
+                for (const QJsonObject &m : phone.messages())
+                    if (m.value("t").toString() == "controls" && m.value("list").toArray().size() == 3) return true;
+                return false;
+            });
+        }
         // From the show to the phone
         phone.in.clear();
         engine.setControlValue(a, 2.5);
@@ -403,6 +557,13 @@ int main(int argc, char **argv)
         phone.pumpUntil([&] {
             values = {};
             for (const QJsonObject &m : phone.messages()) {
+                if (m.value("t").toString() == "controls") { // the whole list again (the page was laid out meanwhile): its values too
+                    for (const QJsonValue &item : m.value("list").toArray()) {
+                        const QJsonObject o = item.toObject();
+                        values[o.value("id").toString()] = o.contains("rgb") ? o.value("rgb") : o.value("value");
+                    }
+                    continue;
+                }
                 if (m.value("t").toString() != "values") continue;
                 const QJsonObject v = m.value("v").toObject();
                 for (auto it = v.begin(); it != v.end(); ++it) values[it.key()] = it.value();

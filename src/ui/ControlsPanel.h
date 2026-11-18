@@ -13,6 +13,8 @@ class QGridLayout;
 class QToolButton;
 class QLabel;
 class QTimer;
+class QStackedWidget;
+class QShowEvent;
 
 // The Controls tab: the operator's own sliders, switches, selectors, buttons and colors (ShowControl.h), each a parameter
 // of the show that an interaction can follow (Internal source) or drive (target), a timeline animate and OSC reach. The
@@ -29,6 +31,9 @@ public:
 signals:
     void edited(); // the project is modified
 
+protected:
+    void showEvent(QShowEvent *e) override; // the page is made when the panel is first seen (its server is up by then)
+
 private:
     struct Row {
         quint64 id = 0;
@@ -43,8 +48,14 @@ private:
     void applyControl(quint64 id, const ShowControl &change, const QString &text);
     void editControl(quint64 id);
     void editList(const QString &text, const std::function<void(QJsonArray &)> &change);
+    void showPage(bool page); // the remote's page in a web view, or the list of rows
+    void openWindow();         // the page in a window of its own, large enough to lay it out
     Engine *m_engine;
     QUndoStack *m_undo;
+    QStackedWidget *m_stack = nullptr;
+    QWidget *m_web = nullptr;
+    bool m_pageTried = false;
+    QToolButton *m_pageButton = nullptr, *m_windowButton = nullptr;
     QVBoxLayout *m_list = nullptr;
     QLabel *m_empty = nullptr;
     QTimer *m_timer = nullptr;

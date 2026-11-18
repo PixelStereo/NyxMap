@@ -15,6 +15,8 @@
 #include <QCheckBox>
 #include <QUdpSocket>
 #include "Engine.h"
+#include <functional>
+#include "ShowControl.h"
 #include "ShowMenus.h"
 #include "Widgets.h"
 
@@ -1093,6 +1095,66 @@ void InteractionPanel::fillValueMenu(QMenu *menu, Engine *e, quint64 layer, cons
             }
         }
     }
+    // The controls page (the remote page, the Controls tab): the parameter as a control there, in the page or in a group
+    {
+        std::vector<ShowControl> groups;
+        for (const ShowControl &c : e->controls())
+            if (c.kind == ShowControl::Kind::Group) groups.push_back(c);
+        std::vector<ParamInfo> drivable;
+        for (const auto &param : params)
+            if ((param.access & ParamInfo::Write) && param.type != ParamInfo::Type::Text) drivable.push_back(param);
+        // A color is one control, whichever of its channels was asked for
+        if (!drivable.empty()) {
+            QMenu *toPage = menu->addMenu(QStringLiteral("Add to Controls Page"));
+            const auto fill = [&](QMenu *into, const ParamInfo &param) {
+                const auto add = [e, layer, path = param.path](quint64 group) { e->addControlForParameter(layer, path, group); };
+                into->addAction(QStringLiteral("Page"), into, [add] { add(0); });
+                if (groups.empty()) return;
+                into->addSeparator();
+                // The groups in the order of the list, a group inside another indented under it
+                std::function<void(quint64, int)> walk = [&](quint64 parent, int depth) {
+                    for (const ShowControl &g : groups)
+                        if (g.group == parent) {
+                            into->addAction(QString(depth * 2, QChar(0x2003)) + QStringLiteral("▦ ") + g.name, into, [add, id = g.id] { add(id); });
+                            walk(g.id, depth + 1);
+                        }
+                };
+                walk(0, 0);
+            };
+            if (drivable.size() == 1) {
+                fill(toPage, drivable.front());
+            } else {
+                for (const auto &param : drivable) fill(toPage->addMenu(param.name()), param);
+            }
+        }
+    }
+    // Driven from a control's number (a slider, a pad's X or Y, a multi-slider's bar, one coordinate of a multi-point pad, an ADSR's
+    // attack…): the parameter is made to follow it, its range remapped
+    {
+        std::vector<ShowControl> sources;
+        for (const ShowControl &c : e->controls())
+            if (!c.numberSources().empty()) sources.push_back(c);
+        std::vector<ParamInfo> numeric;
+        for (const auto &param : params)
+            if ((param.access & ParamInfo::Write) && param.isNumber()) numeric.push_back(param);
+        if (!sources.empty() && !numeric.empty()) {
+            QMenu *with = menu->addMenu(QStringLiteral("Control with"));
+            const auto fill = [&](QMenu *into, const ParamInfo &param) {
+                for (const ShowControl &c : sources) {
+                    const auto numbers = c.numberSources();
+                    QMenu *own = numbers.size() == 1 ? nullptr : into->addMenu(QStringLiteral("▦ ") + c.name);
+                    for (const auto &[label, sub] : numbers) {
+                        const auto drive = [e, layer, path = param.path, id = c.id, sub = sub] { e->driveParameterFromControl(layer, path, id, sub); };
+                        if (own) own->addAction(label, own, drive);
+                        else into->addAction(QStringLiteral("▦ ") + label, into, drive);
+                    }
+                }
+            };
+            if (numeric.size() == 1) fill(with, numeric.front());
+            else
+                for (const auto &param : numeric) fill(with->addMenu(param.name()), param);
+        }
+    }
     QMenu *addresses = params.size() > 1 ? menu->addMenu(QStringLiteral("Copy OSC Address")) : menu;
     for (const auto &param : params) {
         const QString addr = OscNamespace::addressOf(e, layer, param.path);
@@ -1751,6 +1813,23 @@ void InteractionPanel::rebuildSettings()
                     }, QStringLiteral("filter%1/curve").arg(k));
                 };
                 bf->addRow(curve);
+                // Its four numbers from an ADSR control (Controls › + New › ADSR): moved on a remote page, by a timeline, in a preset
+                auto *from = new QComboBox;
+                from->setObjectName(QStringLiteral("filterAdsrControl%1").arg(k));
+                from->addItem(QStringLiteral("This filter"), QString());
+                for (const ShowControl &c : m_engine->controls())
+                    if (c.kind == ShowControl::Kind::Adsr) from->addItem(QStringLiteral("ADSR · %1").arg(c.name), c.key);
+                if (const int at = from->findData(f.adsrControl); at >= 0) from->setCurrentIndex(at);
+                else if (!f.adsrControl.isEmpty()) {
+                    from->addItem(QStringLiteral("ADSR · %1 (gone)").arg(f.adsrControl), f.adsrControl);
+                    from->setCurrentIndex(from->count() - 1);
+                }
+                from->setToolTip(QStringLiteral("Where Attack, Decay, Sustain and Release come from: this filter's own fields, or an ADSR control"));
+                bf->addRow(QStringLiteral("Settings from"), from);
+                connect(from, qOverload<int>(&QComboBox::activated), this, [editStage, k, from](int) {
+                    const QString key = from->currentData().toString();
+                    editStage(k, QStringLiteral("Envelope Settings From"), [key](InteractionStage &s) { s.adsrControl = key; });
+                });
             }
             if (f.kind == InteractionFilter::Curve) {
                 // The animations' curve editor, its whole square shown (0..1 in, 0..1 out, a margin around); the first

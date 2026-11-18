@@ -230,6 +230,7 @@ const std::vector<std::unique_ptr<Parameter>> &Engine::showParams()
     // The operator's controls: control/<key>, a color as control/<key>/r, g, b. Their values live in the list; they are never
     // stored by a cue (the operator's, not the scene's) and saved with the project by their own (Controls.cpp)
     for (const ShowControl &control : m_controls) {
+        if (!control.boundParam.isEmpty()) continue; // a view of a parameter: its address is the parameter's own
         const quint64 id = control.id;
         const QString path = QStringLiteral("control/") + control.key;
         const QString label = QStringLiteral("Controls › ") + control.name;
@@ -280,6 +281,49 @@ const std::vector<std::unique_ptr<Parameter>> &Engine::showParams()
             break;
         }
         case ShowControl::Kind::Group: break; // a frame of the page, not a value
+        case ShowControl::Kind::Points:
+            for (int i = 0; i < control.count; ++i)
+                for (int axis = 0; axis < 2; ++axis)
+                    add(path + QStringLiteral("/p%1/%2").arg(i + 1).arg(axis == 0 ? 'x' : 'y'),
+                        label + QStringLiteral(" %1 %2").arg(i + 1).arg(axis == 0 ? 'X' : 'Y'), T::Float)
+                        .range(control.min, control.max)
+                        .step(control.step)
+                        .byDefault(control.def)
+                        .animatable()
+                        .transient()
+                        .pointComponent(axis)
+                        .bind(read([i, axis](const ShowControl &c) { return QVariant(i < int(c.points.size()) ? c.points[size_t(i)][size_t(axis)] : c.def); }, 0.0),
+                              write([i, axis](ShowControl &c, const QVariant &v) {
+                                  if (i < int(c.points.size())) c.points[size_t(i)][size_t(axis)] = std::clamp(v.toDouble(), std::min(c.min, c.max), std::max(c.min, c.max));
+                              }));
+            break;
+        case ShowControl::Kind::Multi:
+            for (int i = 0; i < control.count; ++i)
+                add(path + QLatin1Char('/') + QString::number(i + 1), label + QStringLiteral(" ") + QString::number(i + 1), T::Float)
+                    .range(control.min, control.max)
+                    .step(control.step)
+                    .byDefault(control.def)
+                    .animatable()
+                    .transient()
+                    .bind(read([i](const ShowControl &c) { return QVariant(i < int(c.multi.size()) ? c.multi[size_t(i)] : c.def); }, 0.0),
+                          write([i](ShowControl &c, const QVariant &v) {
+                              if (i < int(c.multi.size())) c.multi[size_t(i)] = std::clamp(v.toDouble(), std::min(c.min, c.max), std::max(c.min, c.max));
+                          }));
+            break;
+        case ShowControl::Kind::Adsr:
+            for (int i = 0; i < 4; ++i) {
+                static const double fallback[4] = {0.05, 0.2, 0.7, 0.4};
+                static const char *const names[4] = {" Attack", " Decay", " Sustain", " Release"};
+                add(path + QLatin1Char('/') + QLatin1String(ShowControl::kAdsrKeys[i]), label + QLatin1String(names[i]), T::Float)
+                    .range(0, i == 2 ? 1.0 : std::max(0.1, control.max))
+                    .step(0.01)
+                    .byDefault(fallback[i])
+                    .animatable()
+                    .transient()
+                    .bind(read([i](const ShowControl &c) { return QVariant(c.adsr[size_t(i)]); }, 0.0),
+                          write([i](ShowControl &c, const QVariant &v) { c.adsr[size_t(i)] = std::clamp(v.toDouble(), 0.0, i == 2 ? 1.0 : std::max(0.1, c.max)); }));
+            }
+            break;
         case ShowControl::Kind::Pad:
             for (int axis = 0; axis < 2; ++axis)
                 add(path + (axis == 0 ? "/x" : "/y"), label + (axis == 0 ? " X" : " Y"), T::Float)

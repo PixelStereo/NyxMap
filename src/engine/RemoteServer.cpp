@@ -53,12 +53,22 @@ QList<double> valuesOf(const ShowControl &c)
 {
     if (c.kind == ShowControl::Kind::Color) return {c.rgb[0], c.rgb[1], c.rgb[2]};
     if (c.kind == ShowControl::Kind::Pad) return {c.value, c.value2};
+    if (c.kind == ShowControl::Kind::Adsr) return {c.adsr[0], c.adsr[1], c.adsr[2], c.adsr[3]};
+    if (c.kind == ShowControl::Kind::Multi) return QList<double>(c.multi.begin(), c.multi.end());
+    if (c.kind == ShowControl::Kind::Points) {
+        QList<double> flat;
+        for (const auto &q : c.points) flat << q[0] << q[1];
+        return flat;
+    }
     return {c.value};
 }
 QJsonValue jsonOf(const QList<double> &v)
 {
-    if (v.size() == 3) return QJsonArray{v[0], v[1], v[2]};
-    if (v.size() == 2) return QJsonArray{v[0], v[1]};
+    if (v.size() > 1) {
+        QJsonArray a;
+        for (double x : v) a.append(x);
+        return a;
+    }
     return v.value(0);
 }
 } // namespace
@@ -68,7 +78,7 @@ QByteArray RemoteServer::page()
     return QByteArray("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
                       "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1,viewport-fit=cover\">"
                       "<title>NyxMap remote</title><style>") +
-           remote_page::kStyle + "</style></head><body>" + remote_page::kBody + "<script>" + remote_page::kScript + "</script></body></html>";
+           remote_page::style() + "</style></head><body>" + remote_page::kBody + "<script>" + remote_page::script() + "</script></body></html>";
 }
 
 QByteArray RemoteServer::showPage()
@@ -85,7 +95,7 @@ RemoteServer::RemoteServer(Engine *engine, QObject *parent) : QObject(parent), m
         return "default-src 'none'; script-src " + hash(script) + "; style-src " + hash(style) +
                "; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
     };
-    m_csp = policy(remote_page::kScript, remote_page::kStyle);
+    m_csp = policy(remote_page::script().constData(), remote_page::style().constData());
     m_cspShow = policy(show_page::kScript, show_page::kStyle);
     m_timer.setInterval(50);
     connect(&m_timer, &QTimer::timeout, this, &RemoteServer::push);
@@ -214,8 +224,35 @@ QByteArray RemoteServer::controlsMessage() const
         QJsonObject o{{"id", QString::number(c.id)}, {"name", c.name}, {"key", c.key}, {"kind", ShowControl::kindKey(c.kind)}};
         if (c.group) o["group"] = QString::number(c.group);
         o["span"] = c.span;
+        if (!c.widget.isEmpty()) o["widget"] = c.widget;
+        if (!c.accent.isEmpty()) o["accent"] = c.accent;
+        if (c.curve != 1) o["curve"] = c.curve;
+        if (c.gw > 0 && c.gh > 0) o["layout"] = QJsonObject{{"x", c.gx}, {"y", c.gy}, {"w", c.gw}, {"h", c.gh}};
         switch (c.kind) {
         case ShowControl::Kind::Group: o["columns"] = c.columns; break;
+        case ShowControl::Kind::Points: {
+            o["count"] = c.count;
+            o["min"] = c.min;
+            o["max"] = c.max;
+            QJsonArray list;
+            for (const auto &q : c.points) list.append(QJsonArray{q[0], q[1]});
+            o["points"] = list;
+            break;
+        }
+        case ShowControl::Kind::Multi: {
+            o["count"] = c.count;
+            o["min"] = c.min;
+            o["max"] = c.max;
+            o["step"] = c.step;
+            QJsonArray list;
+            for (double v : c.multi) list.append(v);
+            o["values"] = list;
+            break;
+        }
+        case ShowControl::Kind::Adsr:
+            o["max"] = c.max;
+            o["adsr"] = QJsonArray{c.adsr[0], c.adsr[1], c.adsr[2], c.adsr[3]};
+            break;
         case ShowControl::Kind::Pad:
             o["min"] = c.min;
             o["max"] = c.max;
@@ -346,7 +383,64 @@ void RemoteServer::onFrame(Client &c, int opcode, const QByteArray &payload)
         if (--c.budget < 0) return; // faster than any hand: dropped
         const QJsonObject o = QJsonDocument::fromJson(payload).object();
         const QString type = o.value("t").toString();
-        if (type != QLatin1String("set") && type != QLatin1String("color") && type != QLatin1String("point")) {
+        if (type == QLatin1String("layout")) { // the page laid out again: where each control is, for every device
+            QHash<quint64, std::array<int, 4>> places;
+            const QJsonObject items = o.value("items").toObject();
+            for (auto it = items.begin(); it != items.end() && places.size() < 512; ++it) {
+                const QJsonObject p = it.value().toObject();
+                places.insert(it.key().toULongLong(), {p.value("x").toInt(), p.value("y").toInt(), p.value("w").toInt(1), p.value("h").toInt(1)});
+            }
+            if (m_e->setControlLayouts(places)) emit layoutEdited();
+            return;
+        }
+        if (type == QLatin1String("edit") || type == QLatin1String("remove")) { // a tile's settings changed on the page, or the control removed
+            const quint64 target = o.value("id").toString().toULongLong();
+            if (!target) return;
+            if (type == QLatin1String("remove")) {
+                if (m_e->removeControl(target)) emit layoutEdited();
+                return;
+            }
+            std::optional<ShowControl> found = m_e->control(target);
+            if (!found) return;
+            ShowControl c = *found;
+            const QJsonObject p = o.value("props").toObject();
+            auto number = [&](const char *key, double &into) {
+                if (p.value(key).isDouble() && std::isfinite(p.value(key).toDouble())) into = p.value(key).toDouble();
+            };
+            if (p.value("name").isString()) c.name = p.value("name").toString().left(60);
+            if (p.contains("widget")) c.widget = ShowControl::cleanWidget(p.value("widget").toString());
+            if (p.contains("accent")) c.accent = ShowControl::cleanAccent(p.value("accent").toString());
+            if (c.kind == ShowControl::Kind::Adsr) {
+                number("max", c.max);
+                c.max = std::clamp(c.max, 0.1, 60.0);
+            }
+            if (c.kind == ShowControl::Kind::Multi) {
+                double n = c.count;
+                number("count", n);
+                c.count = std::clamp(int(n), 2, ShowControl::kMultiMax);
+            }
+            if (c.kind == ShowControl::Kind::Points) {
+                double n = c.count;
+                number("count", n);
+                c.count = std::clamp(int(n), 1, ShowControl::kPointsMax);
+                number("min", c.min);
+                number("max", c.max);
+                if (!(c.max > c.min)) c.max = c.min + 1;
+            }
+            if (c.kind == ShowControl::Kind::Slider || c.kind == ShowControl::Kind::Multi) {
+                number("min", c.min);
+                number("max", c.max);
+                number("step", c.step);
+                number("default", c.def);
+                if (p.value("unit").isString()) c.unit = p.value("unit").toString().left(8);
+                number("curve", c.curve);
+                c.curve = std::clamp(c.curve, 0.1, 10.0);
+                c.step = std::clamp(c.step, 1e-6, std::max(1e-6, std::abs(c.max - c.min)));
+            }
+            if (m_e->updateControl(target, c)) emit layoutEdited();
+            return;
+        }
+        if (type != QLatin1String("set") && type != QLatin1String("color") && type != QLatin1String("point") && type != QLatin1String("adsr") && type != QLatin1String("multi") && type != QLatin1String("points")) {
             onDesk(c, type, o);
             return;
         }
@@ -357,6 +451,19 @@ void RemoteServer::onFrame(Client &c, int opcode, const QByteArray &payload)
         } else if (type == QLatin1String("point")) {
             const QJsonArray xy = o.value("xy").toArray();
             if (xy.size() == 2 && m_e->setControlPoint(id, xy[0].toDouble(), xy[1].toDouble())) emit controlMoved();
+        } else if (type == QLatin1String("points")) {
+            const QJsonArray v = o.value("v").toArray();
+            std::vector<double> values;
+            for (int i = 0; i < v.size() && i < ShowControl::kPointsMax * 2; ++i) values.push_back(v[i].toDouble());
+            if (!values.empty() && m_e->setControlPoints(id, values)) emit controlMoved();
+        } else if (type == QLatin1String("multi")) {
+            const QJsonArray v = o.value("v").toArray();
+            std::vector<double> values;
+            for (int i = 0; i < v.size() && i < ShowControl::kMultiMax; ++i) values.push_back(v[i].toDouble());
+            if (!values.empty() && m_e->setControlMulti(id, values)) emit controlMoved();
+        } else if (type == QLatin1String("adsr")) {
+            const QJsonArray v = o.value("v").toArray();
+            if (v.size() == 4 && m_e->setControlAdsr(id, {v[0].toDouble(), v[1].toDouble(), v[2].toDouble(), v[3].toDouble()})) emit controlMoved();
         } else if (type == QLatin1String("color")) {
             const QJsonArray rgb = o.value("rgb").toArray();
             if (rgb.size() == 3 && m_e->setControlColor(id, rgb[0].toDouble(), rgb[1].toDouble(), rgb[2].toDouble())) emit controlMoved();

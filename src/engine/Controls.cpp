@@ -12,7 +12,10 @@ constexpr int kMaxControls = 256;
 std::vector<ShowControl> Engine::controls() const
 {
     Lock lk(&m_mutex);
-    return m_controls;
+    std::vector<ShowControl> list = m_controls;
+    for (ShowControl &c : list)
+        if (!c.boundParam.isEmpty()) const_cast<Engine *>(this)->fillBound(c);
+    return list;
 }
 
 QJsonArray Engine::controlsJson() const
@@ -215,6 +218,24 @@ quint64 Engine::addControl(const ShowControl &control)
             c.def = std::clamp(c.def, c.min, c.max);
         }
         if (c.kind == ShowControl::Kind::Choice && c.choices.isEmpty()) c.choices = {QStringLiteral("A"), QStringLiteral("B")};
+        if (c.kind == ShowControl::Kind::Adsr) {
+            c.min = 0;
+            c.max = std::clamp(c.max > 1 ? c.max : 2.0, 0.1, 60.0); // the longest of its times
+        }
+        if (c.kind == ShowControl::Kind::Points) {
+            c.count = std::clamp(c.count, 1, ShowControl::kPointsMax);
+            if (!(c.max > c.min)) c.max = c.min + 1;
+            c.def = std::clamp(c.def, c.min, c.max);
+            c.points.resize(size_t(c.count), {c.def, c.def});
+            for (auto &q : c.points) q = {std::clamp(q[0], c.min, c.max), std::clamp(q[1], c.min, c.max)};
+        }
+        if (c.kind == ShowControl::Kind::Multi) {
+            c.count = std::clamp(c.count, 2, ShowControl::kMultiMax);
+            if (!(c.max > c.min)) c.max = c.min + 1;
+            c.def = std::clamp(c.def, c.min, c.max);
+            c.multi.resize(size_t(c.count), c.def);
+            for (double &v : c.multi) v = std::clamp(v, c.min, c.max);
+        }
         id = c.id;
         m_controls.push_back(std::move(c));
         keyAll(m_controls);
@@ -223,6 +244,94 @@ quint64 Engine::addControl(const ShowControl &control)
     }
     emit controlsChanged();
     return id;
+}
+
+bool Engine::setControlLayouts(const QHash<quint64, std::array<int, 4>> &places)
+{
+    bool changed = false;
+    {
+        Lock lk(&m_mutex);
+        for (ShowControl &c : m_controls) {
+            const auto it = places.constFind(c.id);
+            if (it == places.cend()) continue;
+            const int w = std::clamp(it.value()[2], 1, ShowControl::kGridColumns), h = std::clamp(it.value()[3], 1, ShowControl::kGridRowsMax);
+            const int x = std::clamp(it.value()[0], 0, ShowControl::kGridColumns - w), y = std::clamp(it.value()[1], 0, ShowControl::kGridRowsMax);
+            if (c.gx == x && c.gy == y && c.gw == w && c.gh == h) continue;
+            c.gx = x;
+            c.gy = y;
+            c.gw = w;
+            c.gh = h;
+            changed = true;
+        }
+        if (changed) ++m_controlsRevision;
+    }
+    if (changed) emit controlsChanged();
+    return changed;
+}
+
+quint64 Engine::addControlForParameter(quint64 layer, const QString &path, quint64 group)
+{
+    ParamInfo info;
+    if (!parameterInfo(layer, path, &info) || !(info.access & ParamInfo::Write) || info.type == ParamInfo::Type::Text) return 0;
+    QString target = path; // what the control drives: the parameter, or a whole color
+    ShowControl c;
+    c.group = group;
+    c.name = info.name();
+    const QJsonValue now = parameterValue(layer, path);
+    if (info.colorComponent >= 0 && path.size() > 2 && path[path.size() - 2] == QLatin1Char('/')) { // a color's channel: the color
+        target = path.left(path.size() - 2);
+        c.kind = ShowControl::Kind::Color;
+        c.name = info.label.section(QStringLiteral(" › "), -1).section(QLatin1Char(' '), 0, -2).trimmed();
+        for (int k = 0; k < 3; ++k) {
+            const QJsonValue v = parameterValue(layer, target + QLatin1Char('/') + QLatin1Char("rgb"[k]));
+            if (v.isDouble()) c.rgb[size_t(k)] = std::clamp(v.toDouble(), 0.0, 1.0);
+        }
+    } else if (info.type == ParamInfo::Type::Bool) {
+        c.kind = ShowControl::Kind::Toggle;
+        c.value = now.toBool() ? 1 : 0;
+    } else if (info.type == ParamInfo::Type::Choice) {
+        c.kind = ShowControl::Kind::Choice;
+        c.choices = info.choices;
+        c.value = std::max(0, int(info.choices.indexOf(now.toString())));
+    } else if (info.type == ParamInfo::Type::Trigger) {
+        c.kind = ShowControl::Kind::Button;
+    } else {
+        c.kind = ShowControl::Kind::Slider;
+        c.min = info.min;
+        c.max = info.max > info.min ? info.max : info.min + 1;
+        c.step = info.type == ParamInfo::Type::Int ? std::max(1.0, info.step) : std::max(1e-6, info.step);
+        c.def = std::clamp(info.defaultValue.isValid() ? info.defaultValue.toDouble() : c.min, c.min, c.max);
+        c.value = std::clamp(now.toDouble(c.def), c.min, c.max);
+        const QString unit = info.label.section(QLatin1Char('('), -1);
+        if (info.label.endsWith(QLatin1Char(')')) && unit.size() < 8) c.unit = QLatin1Char(' ') + unit.chopped(1); // "Rotation (°)" -> " °"
+    }
+    if (c.name.isEmpty()) c.name = info.name();
+    c.boundLayer = layer;
+    c.boundParam = target;
+    const quint64 id = addControl(c);
+    if (!id) return 0;
+    return id;
+}
+
+quint64 Engine::driveParameterFromControl(quint64 layer, const QString &path, quint64 controlId, const QString &sub)
+{
+    ParamInfo info;
+    if (!parameterInfo(layer, path, &info) || !(info.access & ParamInfo::Write) || !info.isNumber()) return 0;
+    const std::optional<ShowControl> control = this->control(controlId);
+    if (!control) return 0;
+    const auto sources = control->numberSources();
+    if (std::none_of(sources.begin(), sources.end(), [&](const auto &s) { return s.second == sub; })) return 0;
+    Interaction it = Interaction::made(InteractionSource::Internal);
+    it.sourceLayer = 0;
+    it.sourceParam = QStringLiteral("control/") + control->key + (sub.isEmpty() ? QString() : QLatin1Char('/') + sub);
+    it.layer = layer;
+    it.param = path;
+    it.takeover = Takeover::Jump;
+    const double lo = control->kind == ShowControl::Kind::Adsr ? 0.0 : control->min, hi = control->kind == ShowControl::Kind::Adsr
+                                                                                                ? (sub == QLatin1String("sustain") ? 1.0 : control->max)
+                                                                                                : control->max;
+    if (lo != info.min || hi != info.max) it.filters = {InteractionStage::remap(lo, hi, info.min, info.max)};
+    return addInteraction(it);
 }
 
 bool Engine::updateControl(quint64 id, const ShowControl &change)
@@ -252,6 +361,25 @@ bool Engine::updateControl(quint64 id, const ShowControl &change)
         if (c.kind == ShowControl::Kind::Choice && c.choices.isEmpty()) c.choices = it->choices;
         c.value = c.kind == it->kind ? c.clamped(c.value) : (c.kind == ShowControl::Kind::Slider || c.kind == ShowControl::Kind::Pad ? c.def : 0.0);
         c.value2 = c.kind == ShowControl::Kind::Pad ? (c.kind == it->kind ? c.clamped(c.value2) : c.def) : 0.0;
+        if (c.kind == ShowControl::Kind::Points) {
+            c.count = std::clamp(c.count, 1, ShowControl::kPointsMax);
+            if (!(c.max > c.min)) c.max = c.min + 1;
+            c.def = std::clamp(c.def, c.min, c.max);
+            c.points.resize(size_t(c.count), {c.def, c.def});
+            for (auto &q : c.points) q = {std::clamp(q[0], c.min, c.max), std::clamp(q[1], c.min, c.max)};
+        }
+        if (c.kind == ShowControl::Kind::Multi) {
+            c.count = std::clamp(c.count, 2, ShowControl::kMultiMax);
+            if (!(c.max > c.min)) c.max = c.min + 1;
+            c.def = std::clamp(c.def, c.min, c.max);
+            c.multi.resize(size_t(c.count), c.def);
+            for (double &v : c.multi) v = std::clamp(v, c.min, c.max);
+        }
+        if (c.kind == ShowControl::Kind::Adsr) {
+            c.min = 0;
+            c.max = std::clamp(c.max, 0.1, 60.0);
+            for (int i = 0; i < 4; ++i) c.adsr[size_t(i)] = std::clamp(c.adsr[size_t(i)], 0.0, i == 2 ? 1.0 : c.max);
+        }
         *it = c;
         tidyGroups(m_controls);
         ++m_controlsRevision;
@@ -305,6 +433,7 @@ bool Engine::setControlValue(quint64 id, double value)
     Lock lk(&m_mutex);
     auto it = std::find_if(m_controls.begin(), m_controls.end(), [id](const ShowControl &c) { return c.id == id; });
     if (it == m_controls.end() || it->kind == ShowControl::Kind::Color || it->kind == ShowControl::Kind::Group || !std::isfinite(value)) return false;
+    if (!it->boundParam.isEmpty()) return setBound(*it, value); // a view of a parameter: the parameter is what is set
     const double next = it->clamped(value);
     if (it->value != next) {
         it->value = next;
@@ -338,11 +467,70 @@ bool Engine::setControlPoint(quint64 id, double x, double y)
     return true;
 }
 
+bool Engine::setControlPoints(quint64 id, const std::vector<double> &xy)
+{
+    Lock lk(&m_mutex);
+    auto it = std::find_if(m_controls.begin(), m_controls.end(), [id](const ShowControl &c) { return c.id == id; });
+    if (it == m_controls.end() || it->kind != ShowControl::Kind::Points) return false;
+    if (int(it->points.size()) != it->count) it->points.resize(size_t(it->count), {it->def, it->def});
+    for (size_t i = 0; i < xy.size() && i < it->points.size() * 2; ++i) {
+        if (!std::isfinite(xy[i])) continue;
+        const double next = std::clamp(xy[i], std::min(it->min, it->max), std::max(it->min, it->max));
+        double &field = it->points[i / 2][i % 2];
+        if (field == next) continue;
+        field = next;
+        feedControlAction(QStringLiteral("control/") + it->key + QStringLiteral("/p%1/%2").arg(i / 2 + 1).arg(i % 2 == 0 ? 'x' : 'y'), next);
+    }
+    return true;
+}
+
+bool Engine::setControlMulti(quint64 id, const std::vector<double> &values)
+{
+    Lock lk(&m_mutex);
+    auto it = std::find_if(m_controls.begin(), m_controls.end(), [id](const ShowControl &c) { return c.id == id; });
+    if (it == m_controls.end() || it->kind != ShowControl::Kind::Multi) return false;
+    if (int(it->multi.size()) != it->count) it->multi.resize(size_t(it->count), it->def);
+    for (size_t i = 0; i < values.size() && i < it->multi.size(); ++i) {
+        if (!std::isfinite(values[i])) continue;
+        const double next = std::clamp(values[i], std::min(it->min, it->max), std::max(it->min, it->max));
+        if (it->multi[i] == next) continue;
+        it->multi[i] = next;
+        feedControlAction(QStringLiteral("control/") + it->key + QLatin1Char('/') + QString::number(i + 1), next);
+    }
+    return true;
+}
+
+bool Engine::setControlAdsr(quint64 id, const std::array<double, 4> &adsr)
+{
+    Lock lk(&m_mutex);
+    auto it = std::find_if(m_controls.begin(), m_controls.end(), [id](const ShowControl &c) { return c.id == id; });
+    if (it == m_controls.end() || it->kind != ShowControl::Kind::Adsr) return false;
+    for (int i = 0; i < 4; ++i) {
+        if (!std::isfinite(adsr[size_t(i)])) continue;
+        const double next = std::clamp(adsr[size_t(i)], 0.0, i == 2 ? 1.0 : std::max(0.1, it->max));
+        double &field = it->adsr[size_t(i)];
+        if (field == next) continue;
+        field = next;
+        feedControlAction(QStringLiteral("control/") + it->key + QLatin1Char('/') + QLatin1String(ShowControl::kAdsrKeys[i]), next);
+    }
+    return true;
+}
+
 bool Engine::setControlColor(quint64 id, double r, double g, double b)
 {
     Lock lk(&m_mutex);
     auto it = std::find_if(m_controls.begin(), m_controls.end(), [id](const ShowControl &c) { return c.id == id; });
     if (it == m_controls.end() || it->kind != ShowControl::Kind::Color) return false;
+    if (!it->boundParam.isEmpty()) { // a view of a color: its three channels
+        const double v[3] = {r, g, b};
+        bool any = false;
+        for (int k = 0; k < 3; ++k)
+            if (Parameter *p = findParameter(it->boundLayer, it->boundParam + QLatin1Char('/') + QLatin1Char("rgb"[k])); p && std::isfinite(v[k])) {
+                any |= p->setNumber(std::clamp(v[k], 0.0, 1.0));
+                if (it->boundLayer) releaseFromFades(it->boundLayer, it->boundParam + QLatin1Char('/') + QLatin1Char("rgb"[k]));
+            }
+        return any;
+    }
     const double c[3] = {r, g, b};
     for (int i = 0; i < 3; ++i) {
         if (!std::isfinite(c[i])) continue;
@@ -358,8 +546,63 @@ std::optional<ShowControl> Engine::control(quint64 id) const
 {
     Lock lk(&m_mutex);
     for (const ShowControl &c : m_controls)
-        if (c.id == id) return c;
+        if (c.id == id) {
+            ShowControl out = c;
+            if (!out.boundParam.isEmpty()) const_cast<Engine *>(this)->fillBound(out);
+            return out;
+        }
     return std::nullopt;
+}
+
+// A control that is a view of a parameter shows what the parameter is now: its value, and its range, step and choices (lock held)
+void Engine::fillBound(ShowControl &c)
+{
+    if (c.kind == ShowControl::Kind::Color) {
+        for (int k = 0; k < 3; ++k)
+            if (const Parameter *p = findParameter(c.boundLayer, c.boundParam + QLatin1Char('/') + QLatin1Char("rgb"[k])); p && p->isNumber())
+                c.rgb[size_t(k)] = std::clamp(p->number(), 0.0, 1.0);
+        return;
+    }
+    const Parameter *p = findParameter(c.boundLayer, c.boundParam);
+    if (!p) return;
+    const ParamInfo &info = p->info();
+    switch (c.kind) {
+    case ShowControl::Kind::Slider:
+        if (!p->isNumber()) return;
+        c.min = info.min;
+        c.max = info.max > info.min ? info.max : info.min + 1;
+        c.step = info.type == ParamInfo::Type::Int ? std::max(1.0, info.step) : std::max(1e-6, info.step);
+        c.value = std::clamp(p->number(), std::min(c.min, c.max), std::max(c.min, c.max));
+        break;
+    case ShowControl::Kind::Toggle: c.value = p->json().toBool() ? 1.0 : 0.0; break;
+    case ShowControl::Kind::Choice:
+        if (!info.choices.isEmpty()) c.choices = info.choices;
+        c.value = std::max<qsizetype>(0, c.choices.indexOf(p->json().toString()));
+        break;
+    default: break;
+    }
+}
+
+// What a view of a parameter sets: the parameter itself (lock held). False: it is not there, or does not take it
+bool Engine::setBound(const ShowControl &c, double value)
+{
+    Parameter *p = findParameter(c.boundLayer, c.boundParam);
+    if (!p || !(p->info().access & ParamInfo::Write)) return false;
+    bool ok = false;
+    switch (c.kind) {
+    case ShowControl::Kind::Slider: ok = p->isNumber() && p->setNumber(value); break;
+    case ShowControl::Kind::Toggle: ok = p->setJson(value >= 0.5); break;
+    case ShowControl::Kind::Choice: {
+        const QStringList &keys = p->info().choices;
+        const int k = std::clamp(int(std::lround(value)), 0, int(keys.size()) - 1);
+        ok = !keys.isEmpty() && p->setJson(keys[k]);
+        break;
+    }
+    case ShowControl::Kind::Button: ok = value >= 0.5 && p->setJson(true); break; // a trigger: sent when it is pressed
+    default: break;
+    }
+    if (ok && c.boundLayer) releaseFromFades(c.boundLayer, c.boundParam);
+    return ok;
 }
 
 // A control's parameters, by its id (the lookups of the bindings: its place in the list changes)

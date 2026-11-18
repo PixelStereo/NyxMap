@@ -1,14 +1,14 @@
 {
   "Windows": {
     "url": "https://downloads.ndi.tv/SDK/NDI_SDK/NDI%206%20SDK.exe",
-    "sha256": "4d5dd36a1c7c7634f408bf459b068787cce6f5310a3efe832d76b1ddeb54e499"
+    "sha256": "f37604ee01cb788ccb954b5b4e5888328ea391d9610e9a8eab65ac68191784ba"
   },
   "Darwin": {
     "url": "https://downloads.ndi.tv/SDK/NDI_SDK_Mac/Install_NDI_SDK_v6_Apple.pkg",
-    "sha256": "5aa101a01b00494724c60b7e1e15b5d1743bf9c68b61739c22ac54932dde95fb"
+    "sha256": "4e0781be36a46d50224e2af6c483db8e26c1606870d18e80b906ab3b0f6fbb30"
   },
   "Linux": {
     "url": "https://downloads.ndi.tv/SDK/NDI_SDK_Linux/Install_NDI_SDK_v6_Linux.tar.gz",
-    "sha256": "f0314f245446defc488b63ceb4689acf1a965aeefdadacb70571bb216a8cc183"
+    "sha256": "1b066cca076d3e8b49a5f1dc7fbf77065967256807e3cb5ea387c574176eace6"
   }
 }

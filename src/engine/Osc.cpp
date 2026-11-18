@@ -410,6 +410,7 @@ void OscNamespace::build()
     {
         const std::vector<ShowControl> list = e->controls();
         for (const ShowControl &c : list) {
+            if (!c.boundParam.isEmpty()) continue; // a view of a parameter: it has the parameter's own address
             const quint64 id = c.id;
             const QString path = QStringLiteral("/control/") + c.key;
             switch (c.kind) {
@@ -449,6 +450,58 @@ void OscNamespace::build()
                     return QVariantList{v ? v->value : 0.0, v ? v->value2 : 0.0};
                 };
                 n.set = [e, id](const QVariantList &a) { return a.size() >= 2 && e->setControlPoint(id, num(a[0]), num(a[1])); };
+                break;
+            }
+            case ShowControl::Kind::Points: {
+                // Every point's X and Y in one message: two floats each, within the range
+                OscNode &n = add(path, QByteArray(c.count * 2, 'f'), 3, c.name + QStringLiteral(" (x1, y1, x2, y2…)"));
+                for (int i = 0; i < c.count * 2; ++i) n.range.push_back(minMax(c.min, c.max));
+                n.clip = "both";
+                n.get = [e, id] {
+                    const auto v = e->control(id);
+                    QVariantList out;
+                    if (v)
+                        for (const auto &q : v->points) out << q[0] << q[1];
+                    return out;
+                };
+                n.set = [e, id](const QVariantList &a) {
+                    std::vector<double> values;
+                    for (const QVariant &x : a) values.push_back(num(x));
+                    return !values.empty() && e->setControlPoints(id, values);
+                };
+                break;
+            }
+            case ShowControl::Kind::Multi: {
+                // A row of sliders in one message: a float each, within its range
+                OscNode &n = add(path, QByteArray(c.count, 'f'), 3, c.name);
+                for (int i = 0; i < c.count; ++i) n.range.push_back(minMax(c.min, c.max));
+                n.clip = "both";
+                n.get = [e, id] {
+                    const auto v = e->control(id);
+                    QVariantList out;
+                    if (v)
+                        for (double x : v->multi) out << x;
+                    return out;
+                };
+                n.set = [e, id](const QVariantList &a) {
+                    std::vector<double> values;
+                    for (const QVariant &x : a) values.push_back(num(x));
+                    return !values.empty() && e->setControlMulti(id, values);
+                };
+                break;
+            }
+            case ShowControl::Kind::Adsr: {
+                // An envelope: attack, decay, sustain, release in one message (the times in seconds up to its range, the sustain 0..1)
+                OscNode &n = add(path, "ffff", 3, c.name + QStringLiteral(" (attack, decay, sustain, release)"));
+                n.range = {minMax(0, c.max), minMax(0, c.max), minMax(0, 1), minMax(0, c.max)};
+                n.clip = "both";
+                n.get = [e, id] {
+                    const auto v = e->control(id);
+                    return QVariantList{v ? v->adsr[0] : 0.0, v ? v->adsr[1] : 0.0, v ? v->adsr[2] : 0.0, v ? v->adsr[3] : 0.0};
+                };
+                n.set = [e, id](const QVariantList &a) {
+                    return a.size() >= 4 && e->setControlAdsr(id, {num(a[0]), num(a[1]), num(a[2]), num(a[3])});
+                };
                 break;
             }
             case ShowControl::Kind::Color: {

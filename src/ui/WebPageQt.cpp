@@ -14,6 +14,7 @@
 // The engine creates, changes and destroys its pages from any thread with its lock held: everything here is passed
 // to the application's thread (queued to the application object), and each page's state shared with a mutex.
 #include "WebPageQt.h"
+#include "ControlsWeb.h"
 
 #ifdef NYXMAP_HAS_WEB
 
@@ -222,9 +223,20 @@ private:
 
 } // namespace
 
+// The remote's Controls page in a view of the application (ControlsWeb.h)
+static QWidget *makeControlsView(const QString &url)
+{
+    auto *view = new QWebEngineView;
+    view->setContextMenuPolicy(Qt::NoContextMenu);
+    view->page()->setBackgroundColor(QColor(18, 18, 21));
+    view->setUrl(QUrl(url));
+    return view;
+}
+
 bool registerWebPages()
 {
     if (!qobject_cast<QApplication *>(QCoreApplication::instance())) return false; // Qt WebEngine's view is a widget
+    controlsweb::setFactory(&makeControlsView);
     // Pages left when the application quits go first, while Qt WebEngine is still there
     QObject::connect(qApp, &QCoreApplication::aboutToQuit, qApp, [] {
         while (!hosts().empty()) delete *hosts().begin();
