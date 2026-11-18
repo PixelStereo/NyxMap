@@ -62,7 +62,6 @@ signals:
     void selectionChanged(); // the rows selected (selectedRows) changed
     void addClicked();
     void groupClicked();
-    void viewportClicked();
     void scene3dClicked(QWidget *anchor); // the 3D button: New 3D Scene, Add Light (a menu below it)
     void filesDropped(int row, const QStringList &paths); // row -1: below the last layer
     void visibilityToggled(int row, bool visible);

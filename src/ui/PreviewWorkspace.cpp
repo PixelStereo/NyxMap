@@ -1,5 +1,6 @@
 #include "PreviewWorkspace.h"
 #include "MappingView.h"
+#include "MaskEditor.h"
 #include "Scene3DView.h"
 #include "Engine.h"
 #include "PaintOverlay.h"
@@ -7,6 +8,8 @@
 #include "FixtureOverlay.h"
 #include "ShowMenus.h"
 #include "Widgets.h"
+#include "Commands.h"
+#include <QUndoStack>
 #include <QComboBox>
 #include <QFontMetrics>
 #include <QHBoxLayout>
@@ -23,6 +26,7 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QMouseEvent>
+#include <QKeyEvent>
 #include <QWheelEvent>
 #include <algorithm>
 #include <cmath>
@@ -30,13 +34,23 @@
 // A layer, a viewport or the composition as rendered, with the bar every preview has: zoom (buttons, wheel or
 // pinch, around the cursor), Fit, and the shared magnet / auto-select switches. Pan: middle button, Alt/⌥ + drag,
 // or two fingers on a trackpad.
-class PreviewPicture : public QRhiWidget
+class PreviewPicture : public QRhiWidget, public MaskEditorHost
 {
 public:
     PreviewPicture(Engine *engine, int slot) : m_engine(engine), m_slot(slot)
     {
         setMinimumSize(100, 70);
-        m_overlay = new PaintOverlay(this, [this](QPainter &p) { if (fixturesShown()) paintFixtures(p); }); // under the bar
+        setMouseTracking(true);
+        m_overlay = new PaintOverlay(this, [this](QPainter &p) {
+            if (!m_source) paintViewportFrames(p); // the composition: where each viewport looks
+            else if (m_masks->active() || m_masks->drawing()) {
+                paintMasks(p); // the masks of what is shown
+            } else {
+                paintWarpHandles(p); // a viewport: the points of its warp, then the ramps of its soft edge, to drag
+                paintEdgeHandles(p);
+            }
+            if (fixturesShown()) paintFixtures(p);
+        }); // under the bar
         m_bar = new ZoomBar(this, QStringLiteral("Whole picture in view\n"
                                                  "Pan: middle button, Alt/⌥ + drag, or two fingers on a trackpad"));
         m_bar->setObjectName(QStringLiteral("previewZoomBar%1").arg(slot));
@@ -54,12 +68,38 @@ public:
             update();
         });
         connect(engine, &Engine::fixturesChanged, this, qOverload<>(&QWidget::update));
+        // The same two tools as the composition's view, from the same editor (MaskEditor.h)
+        m_masks = new MaskEditor(engine, this, this);
+        m_maskButton = m_masks->makeButton(m_bar, QStringLiteral("previewSelectionMode"));
+        connect(m_masks, &MaskEditor::masksEdited, this, [this] {
+            if (onMasksEdited) onMasksEdited();
+        });
+        connect(m_masks, &MaskEditor::maskPicked, this, [this](int index) {
+            if (onMaskPicked) onMaskPicked(index);
+        });
+        connect(m_masks, &MaskEditor::changed, this, [this] {
+            m_overlay->update();
+            update();
+        });
+        connect(m_masks, &MaskEditor::activeChanged, this, [this](bool on) {
+            m_hover = m_warpHover = -1;
+            setFocusPolicy(on ? Qt::StrongFocus : Qt::NoFocus);
+            setCursor(Qt::ArrowCursor);
+        });
+        m_channelButton = m_bar->addChannelButton([this](int channel) {
+            m_channel = channel;
+            update();
+        });
     }
     // The source shown (0: the composition): fixtures are drawn over the composition and the viewports only
     void setSource(quint64 id)
     {
+        clearProbe();
         m_source = id;
         m_fixturesButton->setVisible(showsComposition());
+        m_maskButton->setVisible(id != 0);
+        if (!id) m_masks->setActive(false);
+        m_masks->reset();
         update();
     }
     bool fixturesShown() const { return m_fixturesButton->isChecked() && showsComposition(); }
@@ -71,9 +111,48 @@ public:
         update();
     }
     double zoom() const { return m_zoom; }
+    ~PreviewPicture() override { clearProbe(); }
+    // A viewport's soft edge is dragged here: its change is one step of the undo stack, and the inspector is told
+    void setUndoStack(QUndoStack *undo)
+    {
+        m_undo = undo;
+        m_masks->setUndoStack(undo);
+    }
+    std::function<void()> onEdited;
+    std::function<void()> onMasksEdited;
+    std::function<void(int)> onMaskPicked;
+    // The mask picked elsewhere (the inspector's list) is the one edited here, when this view shows that layer
+    void selectMask(quint64 layer, int index)
+    {
+        if (layer && layer == m_source) m_masks->setIndex(index);
+    }
+    void startMaskDrawing()
+    {
+        m_masks->startDrawing();
+    }
+    bool maskToolOn() const { return m_masks->active(); }
+    quint64 source() const { return m_source; }
+    // The cross on the output of the viewport shown, where the pointer is (the workspace's switch)
+    void setCross(bool on)
+    {
+        m_cross = on;
+        if (!on) clearProbe();
+    }
+    void clearProbe()
+    {
+        if (!m_probed) return;
+        m_engine->setViewportProbe(m_probed, QPointF(-1, -1));
+        m_probed = 0;
+    }
+    bool inViewport() const
+    {
+        QSize size;
+        Engine::Lock lock(&m_engine->mutex());
+        return viewportShown(&size) != nullptr;
+    }
     QJsonObject viewState() const
     {
-        return {{"zoom", m_zoom}, {"pan", QJsonArray{m_pan.x(), m_pan.y()}}, {"fixtures", m_fixturesButton->isChecked()}};
+        return {{"zoom", m_zoom}, {"pan", QJsonArray{m_pan.x(), m_pan.y()}}, {"fixtures", m_fixturesButton->isChecked()}, {"channel", m_channel}};
     }
     void setViewState(const QJsonObject &o)
     {
@@ -81,6 +160,8 @@ public:
         const QJsonArray pan = o.value("pan").toArray();
         if (pan.size() == 2) m_pan = QPointF(pan[0].toDouble(), pan[1].toDouble());
         if (o.contains("fixtures")) m_fixturesButton->setChecked(o.value("fixtures").toBool());
+        m_channel = std::clamp(o.value("channel").toInt(0), 0, 4);
+        ZoomBar::showChannel(m_channelButton, m_channel);
         m_bar->setZoom(m_zoom);
         update();
     }
@@ -106,11 +187,270 @@ protected:
             m_picture = image.size();
             const QRectF r = viewRect();
             const float w = float(std::max(1, width())), h = float(std::max(1, height()));
+            m_draw.setChannel(m_channel);
             m_draw.drawPicture(float(r.left() / w * 2 - 1), float(1 - r.bottom() / h * 2), float(r.right() / w * 2 - 1),
                                float(1 - r.top() / h * 2));
         }
         m_draw.render(cb, renderTarget());
         m_overlay->update();
+    }
+    // ---- Masks: the editor is MaskEditor's; this view gives it its layer and where its picture is ----------------------------
+    quint64 maskLayerId() const override { return m_source; }
+    QWidget *maskWidget() override { return this; }
+    bool maskShown(const Mask &k) const override { return k.attach == Mask::Attach::Surface; } // those of this picture
+    QPointF maskToWidget(bool, QPointF n) const override
+    {
+        const QRectF r = viewRect();
+        return QPointF(r.left() + n.x() * r.width(), r.top() + n.y() * r.height());
+    }
+    QPointF maskFromWidget(bool, QPointF w, QPointF) const override
+    {
+        const QRectF r = viewRect();
+        return QPointF((w.x() - r.left()) / std::max(1.0, r.width()), (w.y() - r.top()) / std::max(1.0, r.height()));
+    }
+    QSize maskFrameSize(const Mask &) const override { return m_engine->maskFrame(m_source); }
+    void paintMasks(QPainter &p)
+    {
+        if (!m_source) return;
+        p.save();
+        p.setRenderHint(QPainter::Antialiasing);
+        for (const MaskPaint &part : m_masks->paint()) {
+            if (part.kind == MaskPaint::Kind::Lines) {
+                p.setPen(QPen(part.color, 1.3));
+                for (size_t i = 0; i + 1 < part.points.size(); i += 2) p.drawLine(part.points[i], part.points[i + 1]);
+            } else {
+                p.setPen(Qt::NoPen);
+                p.setBrush(part.color);
+                for (const QPointF &q : part.points) p.drawRect(QRectF(q.x() - part.half, q.y() - part.half, 2 * part.half, 2 * part.half));
+            }
+        }
+        p.restore();
+    }
+
+    // The composition: the frame of each viewport, with its name (the mapping view draws them too, to edit them)
+    void paintViewportFrames(QPainter &p)
+    {
+        Engine::Lock lock(&m_engine->mutex());
+        const QRectF r = viewRect();
+        auto toWidget = [&](QPointF n) { return QPointF(r.left() + n.x() * r.width(), r.top() + n.y() * r.height()); };
+        p.save();
+        p.setRenderHint(QPainter::Antialiasing);
+        const QColor color(120, 190, 255, 230);
+        p.setPen(QPen(color, 1.5));
+        p.setBrush(Qt::NoBrush);
+        for (int i : m_engine->viewports()) {
+            const Layer *v = m_engine->layer(i);
+            if (!v || !v->enabled) continue;
+            QPolygonF frame;
+            for (int k = 0; k < 4; ++k) frame << toWidget(v->mapping.corner(k));
+            p.drawPolygon(frame);
+            p.drawText(frame.first() + QPointF(5, 14), v->name);
+        }
+        p.restore();
+    }
+    // The viewport shown (null: not a viewport), its size in pixels
+    const Layer *viewportShown(QSize *size) const
+    {
+        const int index = m_source ? m_engine->indexOfId(m_source) : -1;
+        const Layer *l = index >= 0 ? m_engine->layer(index) : nullptr;
+        if (!l || !l->isViewport) return nullptr;
+        *size = l->viewportSize();
+        return size->isEmpty() ? nullptr : l;
+    }
+    // Where the ramp of a side ends in the widget (pixels of the output -> widget), and its grip: a small bar on the line
+    struct Handle {
+        QLineF line;
+        QRectF grip;
+        QRectF band;
+    };
+    Handle handleOf(int side, double width, const QRectF &r, double scale) const
+    {
+        const double d = width * scale;
+        Handle h;
+        switch (side) {
+        case 0: h.line = QLineF(r.left() + d, r.top(), r.left() + d, r.bottom()); h.band = QRectF(r.left(), r.top(), d, r.height()); break;
+        case 1: h.line = QLineF(r.right() - d, r.top(), r.right() - d, r.bottom()); h.band = QRectF(r.right() - d, r.top(), d, r.height()); break;
+        case 2: h.line = QLineF(r.left(), r.top() + d, r.right(), r.top() + d); h.band = QRectF(r.left(), r.top(), r.width(), d); break;
+        default: h.line = QLineF(r.left(), r.bottom() - d, r.right(), r.bottom() - d); h.band = QRectF(r.left(), r.bottom() - d, r.width(), d); break;
+        }
+        const QPointF c = h.line.pointAt(0.5);
+        h.grip = side < 2 ? QRectF(c.x() - 4, c.y() - 16, 8, 32) : QRectF(c.x() - 16, c.y() - 4, 32, 8);
+        return h;
+    }
+    void paintEdgeHandles(QPainter &p)
+    {
+        QSize size;
+        double widths[4];
+        {
+            Engine::Lock lock(&m_engine->mutex());
+            const Layer *v = viewportShown(&size);
+            if (!v || m_engine->isLocked(m_engine->indexOfId(m_source))) return;
+            for (int k = 0; k < 4; ++k) widths[k] = m_dragging == k ? m_dragWidth : v->softWidth[k];
+        }
+        const QRectF r = viewRect();
+        const double scale = r.width() / size.width();
+        p.save();
+        p.setRenderHint(QPainter::Antialiasing);
+        const QColor accent(255, 170, 40);
+        for (int k = 0; k < 4; ++k) {
+            const Handle h = handleOf(k, widths[k], r, scale);
+            if (widths[k] > 0) {
+                p.fillRect(h.band, QColor(accent.red(), accent.green(), accent.blue(), 55));
+                p.setPen(QPen(accent, 1, Qt::DashLine));
+                p.drawLine(h.line);
+            }
+            p.setPen(QPen(Qt::black, 1));
+            p.setBrush(m_dragging == k || m_hover == k ? accent : QColor(accent.red(), accent.green(), accent.blue(), 200));
+            p.drawRoundedRect(h.grip, 3, 3);
+            if (m_dragging == k || m_hover == k) {
+                p.setPen(Qt::white);
+                const QString text = QStringLiteral("%1 px").arg(qRound(widths[k]));
+                const QRectF box(h.grip.center() + QPointF(k == 1 ? -70 : 10, k == 2 ? 6 : k == 3 ? -22 : -9), QSizeF(60, 16));
+                p.drawText(box, k == 1 ? Qt::AlignRight : Qt::AlignLeft, text);
+            }
+        }
+        p.restore();
+    }
+    int gripAt(QPointF at) const
+    {
+        QSize size;
+        double widths[4];
+        {
+            Engine::Lock lock(&m_engine->mutex());
+            const Layer *v = viewportShown(&size);
+            if (!v || m_engine->isLocked(m_engine->indexOfId(m_source))) return -1;
+            for (int k = 0; k < 4; ++k) widths[k] = v->softWidth[k];
+        }
+        const QRectF r = viewRect();
+        for (int k = 0; k < 4; ++k)
+            if (handleOf(k, widths[k], r, r.width() / size.width()).grip.adjusted(-4, -4, 4, 4).contains(at)) return k;
+        return -1;
+    }
+    // The warp's points in the widget: its four corners, or the points of its mesh (the picture is the output: a point's
+    // position on the output is its place in the picture)
+    struct WarpPoint {
+        QPointF at;
+        int corner = -1, i = 0, j = 0;
+    };
+    std::vector<WarpPoint> warpPoints(const Layer &v, const QRectF &r, int *cols = nullptr, int *rows = nullptr) const
+    {
+        std::vector<WarpPoint> out;
+        auto toWidget = [&](QPointF n) { return QPointF(r.left() + n.x() * r.width(), r.top() + n.y() * r.height()); };
+        if (v.warpEdit == 1) {
+            for (int k = 0; k < 4; ++k) out.push_back({toWidget(v.warp.corner(k)), k, 0, 0});
+        } else if (v.warpEdit == 2) {
+            if (cols) *cols = v.warp.cols;
+            if (rows) *rows = v.warp.rows;
+            for (int j = 0; j < v.warp.rows; ++j)
+                for (int i = 0; i < v.warp.cols; ++i) out.push_back({toWidget(v.warp.controlPoint(i, j)), -1, i, j});
+        }
+        return out;
+    }
+    void paintWarpHandles(QPainter &p)
+    {
+        std::vector<WarpPoint> points;
+        int cols = 0, rows = 0;
+        {
+            Engine::Lock lock(&m_engine->mutex());
+            QSize size;
+            const Layer *v = viewportShown(&size);
+            if (!v || m_engine->isLocked(m_engine->indexOfId(m_source))) return;
+            points = warpPoints(*v, viewRect(), &cols, &rows);
+        }
+        if (points.empty()) return;
+        p.save();
+        p.setRenderHint(QPainter::Antialiasing);
+        const QColor line(80, 200, 255);
+        if (cols > 1 && rows > 1) { // the mesh's lines
+            p.setPen(QPen(QColor(line.red(), line.green(), line.blue(), 170), 1));
+            for (int j = 0; j < rows; ++j)
+                for (int i = 0; i < cols; ++i) {
+                    const QPointF a = points[size_t(j) * cols + i].at;
+                    if (i + 1 < cols) p.drawLine(a, points[size_t(j) * cols + i + 1].at);
+                    if (j + 1 < rows) p.drawLine(a, points[size_t(j + 1) * cols + i].at);
+                }
+        } else if (points.size() == 4) { // the corners' quad
+            p.setPen(QPen(QColor(line.red(), line.green(), line.blue(), 170), 1));
+            for (int k = 0; k < 4; ++k) p.drawLine(points[size_t(k)].at, points[size_t((k + 1) % 4)].at);
+        }
+        for (size_t k = 0; k < points.size(); ++k) {
+            const bool hot = m_warpDrag ? int(k) == m_warpDragIndex : int(k) == m_warpHover;
+            p.setPen(QPen(Qt::black, 1));
+            p.setBrush(hot ? QColor(255, 255, 255) : line);
+            const double h = hot ? 6 : 5;
+            p.drawRect(QRectF(points[k].at.x() - h, points[k].at.y() - h, 2 * h, 2 * h));
+        }
+        p.restore();
+    }
+    // The warp point under `at` (its index), or -1
+    int warpPointAt(QPointF at) const
+    {
+        Engine::Lock lock(&m_engine->mutex());
+        QSize size;
+        const Layer *v = viewportShown(&size);
+        if (!v || m_engine->isLocked(m_engine->indexOfId(m_source))) return -1;
+        const std::vector<WarpPoint> points = warpPoints(*v, viewRect());
+        int best = -1;
+        double nearest = 10 * 10; // within 10 pixels
+        for (size_t k = 0; k < points.size(); ++k) {
+            const QPointF d = points[k].at - at;
+            const double q = d.x() * d.x() + d.y() * d.y();
+            if (q <= nearest) {
+                nearest = q;
+                best = int(k);
+            }
+        }
+        return best;
+    }
+    void dragWarpPoint(QPointF at)
+    {
+        const QRectF r = viewRect();
+        const QPointF n(std::clamp((at.x() - r.left()) / r.width(), -0.5, 1.5), std::clamp((at.y() - r.top()) / r.height(), -0.5, 1.5));
+        {
+            Engine::Lock lock(&m_engine->mutex());
+            Layer *l = m_engine->layer(m_engine->indexOfId(m_source));
+            if (!l || !l->isViewport) return;
+            if (l->warpEdit == 1) l->warp.setCorner(m_warpDragIndex, n);
+            else if (l->warpEdit == 2) l->warp.setControlPoint(m_warpDragIndex % l->warp.cols, m_warpDragIndex / l->warp.cols, n);
+        }
+        update();
+        m_overlay->update();
+        if (onEdited) onEdited();
+    }
+    // The cross on the output follows the pointer over the picture
+    void followPointer(QPointF at)
+    {
+        if (!m_cross || !m_source || !inViewport()) return;
+        const QRectF r = viewRect();
+        const QPointF n((at.x() - r.left()) / r.width(), (at.y() - r.top()) / r.height());
+        if (n.x() < 0 || n.y() < 0 || n.x() > 1 || n.y() > 1) return clearProbe();
+        m_probed = m_source;
+        m_engine->setViewportProbe(m_source, n);
+    }
+    static QString softPath(int side)
+    {
+        static const char *const kSides[] = {"left", "right", "top", "bottom"};
+        return QStringLiteral("soft_edge/%1/width").arg(QLatin1String(kSides[side]));
+    }
+    void dragEdge(QPointF at)
+    {
+        QSize size;
+        {
+            Engine::Lock lock(&m_engine->mutex());
+            if (!viewportShown(&size)) return;
+        }
+        const QRectF r = viewRect();
+        const double scale = r.width() / size.width();
+        const double from = m_dragging == 0 ? at.x() - r.left()
+                            : m_dragging == 1 ? r.right() - at.x()
+                            : m_dragging == 2 ? at.y() - r.top()
+                                              : r.bottom() - at.y();
+        const double limit = m_dragging < 2 ? size.width() : size.height();
+        m_dragWidth = std::round(std::clamp(from / scale, 0.0, limit));
+        m_engine->setParameter(m_source, softPath(m_dragging), m_dragWidth); // live; one undo step at the release
+        update();
+        m_overlay->update();
+        if (onEdited) onEdited();
     }
     // Over the picture, with a QPainter
     void paintFixtures(QPainter &p)
@@ -143,6 +483,31 @@ protected:
     }
     void mousePressEvent(QMouseEvent *e) override
     {
+        const bool panning = e->button() == Qt::MiddleButton || (e->button() == Qt::LeftButton && (e->modifiers() & Qt::AltModifier));
+        if (!panning && m_masks->mousePress(e)) {
+            setFocus();
+            e->accept();
+            return;
+        }
+        if (e->button() == Qt::LeftButton && !(e->modifiers() & Qt::AltModifier)) {
+            if (const int w = warpPointAt(e->position()); w >= 0) {
+                m_warpDrag = true;
+                m_warpDragIndex = w;
+                m_warpBefore = cmd::SetMapping::read(m_engine, m_engine->indexOfId(m_source), true);
+                e->accept();
+                return;
+            }
+            if (const int k = gripAt(e->position()); k >= 0) {
+                m_dragging = k;
+                {
+                    Engine::Lock lock(&m_engine->mutex());
+                    m_dragStart = m_engine->parameterValue(m_source, softPath(k)).toDouble();
+                }
+                m_dragWidth = m_dragStart;
+                e->accept();
+                return;
+            }
+        }
         if (e->button() == Qt::MiddleButton || (e->button() == Qt::LeftButton && (e->modifiers() & Qt::AltModifier))) {
             m_panning = true;
             m_panLast = e->position();
@@ -153,17 +518,98 @@ protected:
     }
     void mouseMoveEvent(QMouseEvent *e) override
     {
-        if (!m_panning) return QRhiWidget::mouseMoveEvent(e);
+        if (!m_panning && m_masks->mouseMove(e)) {
+            e->accept();
+            return;
+        }
+        if (m_masks->active()) { // the mask tool has no hover handles
+            if (!m_panning) {
+                e->accept();
+                return;
+            }
+        }
+        if (m_warpDrag) {
+            dragWarpPoint(e->position());
+            e->accept();
+            return;
+        }
+        if (m_dragging >= 0) {
+            dragEdge(e->position());
+            e->accept();
+            return;
+        }
+        if (!m_panning) {
+            followPointer(e->position());
+            const int w = m_source ? warpPointAt(e->position()) : -1;
+            const int k = m_source && w < 0 ? gripAt(e->position()) : -1;
+            if (k != m_hover || w != m_warpHover) {
+                m_hover = k;
+                m_warpHover = w;
+                setCursor(w >= 0 ? Qt::CrossCursor : k < 0 ? Qt::ArrowCursor : k < 2 ? Qt::SizeHorCursor : Qt::SizeVerCursor);
+                m_overlay->update();
+            }
+            return QRhiWidget::mouseMoveEvent(e);
+        }
         m_pan += e->position() - m_panLast;
         m_panLast = e->position();
         update();
     }
     void mouseReleaseEvent(QMouseEvent *e) override
     {
+        if (!m_panning && m_masks->mouseRelease(e)) {
+            e->accept();
+            return;
+        }
+        if (m_warpDrag) { // the point is where it was dropped: the move is one step
+            m_warpDrag = false;
+            const int index = m_engine->indexOfId(m_source);
+            const Mapping after = cmd::SetMapping::read(m_engine, index, true);
+            if (m_undo && after != m_warpBefore)
+                m_undo->push(new cmd::SetMapping(m_engine, index, m_warpBefore, after, QStringLiteral("Move Warp Point"), false, true));
+            if (onEdited) onEdited();
+            m_overlay->update();
+            e->accept();
+            return;
+        }
+        if (m_dragging >= 0) { // the width as it was before, then the change as one step
+            const int side = m_dragging;
+            m_dragging = -1;
+            m_engine->setParameter(m_source, softPath(side), m_dragStart);
+            if (m_undo) cmd::setValue(m_undo, m_engine, m_source, softPath(side), m_dragWidth, QStringLiteral("Soft Edge"));
+            else m_engine->setParameter(m_source, softPath(side), m_dragWidth);
+            if (onEdited) onEdited();
+            m_overlay->update();
+            e->accept();
+            return;
+        }
         if (!m_panning) return QRhiWidget::mouseReleaseEvent(e);
         m_panning = false;
     }
-    void mouseDoubleClickEvent(QMouseEvent *) override { fit(); }
+    void mouseDoubleClickEvent(QMouseEvent *e) override
+    {
+        if (m_masks->mouseDoubleClick(e)) {
+            e->accept();
+            return;
+        }
+        fit();
+    }
+    void keyPressEvent(QKeyEvent *e) override
+    {
+        if (m_masks->keyPress(e)) {
+            e->accept();
+            return;
+        }
+        QRhiWidget::keyPressEvent(e);
+    }
+    void contextMenuEvent(QContextMenuEvent *e) override
+    {
+        if (!m_masks->contextMenu(e)) QRhiWidget::contextMenuEvent(e);
+    }
+    void leaveEvent(QEvent *e) override
+    {
+        clearProbe();
+        QRhiWidget::leaveEvent(e);
+    }
 
 private:
     QRectF fitRect() const
@@ -204,7 +650,8 @@ private:
     Engine *m_engine;
     int m_slot;
     quint64 m_source = 0;
-    QToolButton *m_fixturesButton = nullptr;
+    QToolButton *m_fixturesButton = nullptr, *m_channelButton = nullptr;
+    int m_channel = 0; // RGB, R, G, B, A
     RhiDraw m_draw;
     qint64 m_pictureKey = 0;
     PaintOverlay *m_overlay = nullptr;
@@ -213,6 +660,16 @@ private:
     double m_zoom = 1.0;
     QPointF m_pan, m_panLast;
     bool m_panning = false;
+    int m_dragging = -1, m_hover = -1; // the side of the soft edge being dragged, or under the cursor
+    double m_dragWidth = 0, m_dragStart = 0;
+    QUndoStack *m_undo = nullptr;
+    bool m_cross = false;
+    MaskEditor *m_masks = nullptr;
+    QToolButton *m_maskButton = nullptr;
+    bool m_warpDrag = false;
+    int m_warpDragIndex = -1, m_warpHover = -1;
+    Mapping m_warpBefore;
+    quint64 m_probed = 0; // the viewport that has the cross from this view
 };
 
 PreviewWorkspace::PreviewWorkspace(Engine *engine, MappingView *mapping, QWidget *parent)
@@ -230,6 +687,32 @@ PreviewWorkspace::PreviewWorkspace(Engine *engine, MappingView *mapping, QWidget
     m_fpsLabel->setToolTip(QStringLiteral("Rendering frame rate"));
     m_fpsLabel->setMinimumWidth(m_fpsLabel->fontMetrics().horizontalAdvance(QStringLiteral("000.0 fps")));
     controls->addWidget(m_fpsLabel);
+    // A cross over a viewport's output, where the pointer is in its view: where to click to put a warp point
+    auto *cross = new QToolButton;
+    cross->setObjectName(QStringLiteral("previewCross"));
+    cross->setText(QStringLiteral("✛ Cross"));
+    cross->setCheckable(true);
+    cross->setToolTip(QStringLiteral("Draw a cross on the output of a viewport where the pointer is in its view, "
+                                     "to see where a warp point would go. It shows on the real output: switch it off for the show."));
+    cross->setStyleSheet(QStringLiteral("QToolButton:checked { background:%1; color:%2; }").arg(theme::css(), theme::onAccent().name()));
+    connect(cross, &QToolButton::toggled, this, [this](bool on) {
+        for (Cell &c : m_cells) c.picture->setCross(on);
+    });
+    controls->addWidget(cross);
+    // The blend guide on every viewport's output: a pattern that shows each overlap, to line the projectors up
+    auto *guide = new QToolButton;
+    guide->setObjectName(QStringLiteral("previewGuide"));
+    guide->setText(QStringLiteral("▦ Guide"));
+    guide->setCheckable(true);
+    guide->setToolTip(QStringLiteral("Blend guide on every viewport's output: the overlap of each soft edge in the viewport's color, a grid, the ends "
+                                     "of the ramps. For one viewport, or a white / grey / black field: Soft Edge in its Spatial tab. "
+                                     "It shows on the real outputs: switch it off for the show."));
+    guide->setStyleSheet(cross->styleSheet());
+    connect(guide, &QToolButton::toggled, this, [this](bool on) {
+        m_engine->setBlendGuide(0, on ? 1 : 0, false, true);
+        emit softEdgeEdited(); // the inspectors show it
+    });
+    controls->addWidget(guide);
     controls->addStretch();
     layout->addLayout(controls);
     m_fpsTimer = new QTimer(this);
@@ -286,6 +769,9 @@ PreviewWorkspace::PreviewWorkspace(Engine *engine, MappingView *mapping, QWidget
         column->addWidget(cell.source);
         cell.pages = new QStackedWidget;
         cell.picture = new PreviewPicture(engine, slot);
+        cell.picture->onEdited = [this] { emit softEdgeEdited(); };
+        cell.picture->onMasksEdited = [this] { emit masksEdited(); };
+        cell.picture->onMaskPicked = [this](int index) { emit maskPicked(index); };
         cell.pages->addWidget(cell.picture);
         cell.scene3d = new Scene3DView(engine, slot);
         cell.pages->addWidget(cell.scene3d);
@@ -356,7 +842,25 @@ void PreviewWorkspace::setShowFps(bool visible)
 
 void PreviewWorkspace::setUndoStack(QUndoStack *undo)
 {
-    for (Cell &c : m_cells) c.scene3d->setUndoStack(undo);
+    for (Cell &c : m_cells) {
+        c.scene3d->setUndoStack(undo);
+        c.picture->setUndoStack(undo);
+    }
+}
+
+void PreviewWorkspace::selectMask(quint64 layer, int index)
+{
+    for (Cell &c : m_cells) c.picture->selectMask(layer, index);
+}
+
+bool PreviewWorkspace::startMaskDrawing(quint64 layer)
+{
+    for (Cell &c : m_cells)
+        if (c.picture->isVisible() && c.picture->maskToolOn() && c.picture->source() == layer) {
+            c.picture->startMaskDrawing();
+            return true;
+        }
+    return false;
 }
 
 void PreviewWorkspace::setCurrentLayer(quint64 id)

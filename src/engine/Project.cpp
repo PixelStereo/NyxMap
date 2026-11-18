@@ -323,6 +323,7 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
     for (const auto &e : l.effects) fx.append(e->save(projectDir, false));
     o["fx"] = fx;
     if (!l.isViewport) o["mesh"] = l.mapping.meshJson();
+    else o["warp"] = l.warp.meshJson(); // the points of its output's mesh (its corners are parameters)
 
     QJsonObject params = parametersToJson(l.parameters());
     for (auto it = l.extraParams.constBegin(); it != l.extraParams.constEnd(); ++it)
@@ -608,6 +609,7 @@ void Engine::layerFromJson(int index, const QJsonObject &stored, const QString &
     Lock lk(&m_mutex);
     Layer *l = layer(index);
     if (o.contains("mesh")) l->mapping.setMeshJson(o.value("mesh").toObject());
+    if (l->isViewport && o.contains("warp")) l->warp.setMeshJson(o.value("warp").toObject());
     l->fx3d.clear(); // its 3D FX, in the order they apply (once its source is there: loading a model resets them)
     for (const QJsonValue &v : o.value("fx3d").toArray()) {
         const QJsonObject entry = v.toObject();
@@ -861,7 +863,7 @@ static QString projectPreflightError(const QJsonObject &root)
         const QString where = QStringLiteral("$/layers/%1").arg(i);
         const QJsonObject l = layers[i].toObject();
         for (const QString &key : {QStringLiteral("source"), QStringLiteral("params"),
-                                   QStringLiteral("mesh"), QStringLiteral("output"),
+                                   QStringLiteral("mesh"), QStringLiteral("warp"), QStringLiteral("output"),
                                    QStringLiteral("publish"), QStringLiteral("viewports")}) {
             const QString error = optionalObject(l, key, where);
             if (!error.isEmpty()) return error;

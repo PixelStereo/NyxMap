@@ -1,0 +1,500 @@
+{
+    "app": "NyxMap",
+    "audio": {
+        "volume": 1
+    },
+    "audio_channel_outputs": [],
+    "clock": {
+        "beats_per_bar": 4,
+        "bpm": 120
+    },
+    "composition": {
+        "fps": -1,
+        "height": 1080,
+        "quality_3d": [
+            2,
+            2,
+            2,
+            2,
+            2,
+            2
+        ],
+        "speed": 1,
+        "width": 3520
+    },
+    "current_sequence": 0,
+    "format_version": 1,
+    "interaction_graph": {
+        "edges": [],
+        "nodes": [],
+        "version": 1
+    },
+    "interactions": [],
+    "layers": [
+        {
+            "enable": true,
+            "fx": [],
+            "id": "910",
+            "locked": false,
+            "name": "Viewport 1",
+            "output": {
+                "height": 1080,
+                "mode": 0,
+                "screen": "",
+                "width": 1920
+            },
+            "params": {
+                "add/b": 0,
+                "add/enable": true,
+                "add/g": 0,
+                "add/r": 0,
+                "color/enable": true,
+                "fx/enable": true,
+                "height": 1080,
+                "mask/invert": false,
+                "opacity": 1,
+                "output/exposure": 0,
+                "output/input_space": "srgb",
+                "output/space": "same",
+                "pivot/x": 50,
+                "pivot/y": 50,
+                "position/x": 959.9999999999999,
+                "position/y": 540,
+                "remove/b": 0,
+                "remove/enable": true,
+                "remove/g": 0,
+                "remove/r": 0,
+                "roi/bottom": 1,
+                "roi/left": 0,
+                "roi/mode": "rectangle",
+                "roi/point/1/x": 0,
+                "roi/point/1/y": 0,
+                "roi/point/2/x": 1,
+                "roi/point/2/y": 0,
+                "roi/point/3/x": 1,
+                "roi/point/3/y": 1,
+                "roi/point/4/x": 0,
+                "roi/point/4/y": 1,
+                "roi/right": 1,
+                "roi/top": 0,
+                "rotation": 0,
+                "soft_edge/black": 0,
+                "soft_edge/gamma": 2.2,
+                "soft_edge/guide/b": 0.2,
+                "soft_edge/guide/g": 0.2,
+                "soft_edge/guide/r": 1.0,
+                "soft_edge/right/curve": 2.0,
+                "soft_edge/right/width": 320,
+                "temp": 0,
+                "temp/enable": true,
+                "tint": 0,
+                "tint/enable": true,
+                "width": 1919.9999999999998
+            },
+            "publish": {
+                "decklink": {
+                    "enable": false,
+                    "name": "NyxMap Viewport 1"
+                },
+                "ndi": {
+                    "enable": false,
+                    "name": "NyxMap Viewport 1"
+                },
+                "omt": {
+                    "enable": false,
+                    "name": "NyxMap Viewport 1"
+                },
+                "omt_quality": 0,
+                "spout": {
+                    "enable": false,
+                    "name": "NyxMap Viewport 1"
+                },
+                "syphon": {
+                    "enable": false,
+                    "name": "NyxMap Viewport 1"
+                }
+            },
+            "source": {
+                "type": "none"
+            },
+            "viewport": true,
+            "viewports": {}
+        },
+        {
+            "enable": true,
+            "fx": [],
+            "id": "912",
+            "locked": false,
+            "name": "Viewport 2",
+            "output": {
+                "height": 1080,
+                "mode": 0,
+                "screen": "",
+                "width": 1920
+            },
+            "params": {
+                "add/b": 0,
+                "add/enable": true,
+                "add/g": 0,
+                "add/r": 0,
+                "color/enable": true,
+                "fx/enable": true,
+                "height": 1080,
+                "mask/invert": false,
+                "opacity": 1,
+                "output/exposure": 0,
+                "output/input_space": "srgb",
+                "output/space": "same",
+                "pivot/x": 50,
+                "pivot/y": 50,
+                "position/x": 2560,
+                "position/y": 540,
+                "remove/b": 0,
+                "remove/enable": true,
+                "remove/g": 0,
+                "remove/r": 0,
+                "roi/bottom": 1,
+                "roi/left": 0,
+                "roi/mode": "rectangle",
+                "roi/point/1/x": 0,
+                "roi/point/1/y": 0,
+                "roi/point/2/x": 1,
+                "roi/point/2/y": 0,
+                "roi/point/3/x": 1,
+                "roi/point/3/y": 1,
+                "roi/point/4/x": 0,
+                "roi/point/4/y": 1,
+                "roi/right": 1,
+                "roi/top": 0,
+                "rotation": 0,
+                "soft_edge/black": 0,
+                "soft_edge/gamma": 2.2,
+                "soft_edge/guide/b": 1.0,
+                "soft_edge/guide/g": 0.9,
+                "soft_edge/guide/r": 0.2,
+                "soft_edge/left/curve": 2.0,
+                "soft_edge/left/width": 320,
+                "temp": 0,
+                "temp/enable": true,
+                "tint": 0,
+                "tint/enable": true,
+                "width": 1919.9999999999998
+            },
+            "publish": {
+                "decklink": {
+                    "enable": false,
+                    "name": "NyxMap Viewport 2"
+                },
+                "ndi": {
+                    "enable": false,
+                    "name": "NyxMap Viewport 2"
+                },
+                "omt": {
+                    "enable": false,
+                    "name": "NyxMap Viewport 2"
+                },
+                "omt_quality": 0,
+                "spout": {
+                    "enable": false,
+                    "name": "NyxMap Viewport 2"
+                },
+                "syphon": {
+                    "enable": false,
+                    "name": "NyxMap Viewport 2"
+                }
+            },
+            "source": {
+                "type": "none"
+            },
+            "viewport": true,
+            "viewports": {}
+        },
+        {
+            "enable": true,
+            "fx": [],
+            "id": "911",
+            "locked": false,
+            "mesh": {
+                "cols": 4,
+                "edit": false,
+                "offsets": [
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ]
+                ],
+                "rows": 4
+            },
+            "name": "TestPattern",
+            "params": {
+                "add/b": 0,
+                "add/enable": true,
+                "add/g": 0,
+                "add/r": 0,
+                "blend_mode": "normal",
+                "color/enable": true,
+                "corner/bottom_left/x": 0,
+                "corner/bottom_left/y": 0,
+                "corner/bottom_right/x": 0,
+                "corner/bottom_right/y": 0,
+                "corner/top_left/x": 0,
+                "corner/top_left/y": 0,
+                "corner/top_right/x": 0,
+                "corner/top_right/y": 0,
+                "fx/enable": true,
+                "mask/invert": false,
+                "opacity": 1,
+                "param/background/a": 1,
+                "param/background/b": 0.05000000074505806,
+                "param/background/g": 0.03999999910593033,
+                "param/background/r": 0.03999999910593033,
+                "param/colorCorners": true,
+                "param/divisions": 12,
+                "param/lineColor/a": 1,
+                "param/lineColor/b": 1,
+                "param/lineColor/g": 1,
+                "param/lineColor/r": 1,
+                "param/lineWidth": 2,
+                "param/showCircles": true,
+                "param/showDiagonals": true,
+                "pivot/x": 50,
+                "pivot/y": 50,
+                "position/x": 1760,
+                "position/y": 540,
+                "remove/b": 0,
+                "remove/enable": true,
+                "remove/g": 0,
+                "remove/r": 0,
+                "roi/bottom": 1,
+                "roi/left": 0,
+                "roi/mode": "rectangle",
+                "roi/point/1/x": 0,
+                "roi/point/1/y": 0,
+                "roi/point/2/x": 1,
+                "roi/point/2/y": 0,
+                "roi/point/3/x": 1,
+                "roi/point/3/y": 1,
+                "roi/point/4/x": 0,
+                "roi/point/4/y": 1,
+                "roi/right": 1,
+                "roi/top": 0,
+                "rotation": 0,
+                "scale/x": 100,
+                "scale/y": 100,
+                "source/color_space": "auto",
+                "speed": 1,
+                "temp": 0,
+                "temp/enable": true,
+                "tint": 0,
+                "tint/enable": true
+            },
+            "source": {
+                "height": 1080,
+                "media": "1",
+                "type": "isf",
+                "width": 3520
+            },
+            "viewports": {}
+        }
+    ],
+    "materials": [],
+    "media": [
+        {
+            "id": "1",
+            "path": "TestPattern.fs",
+            "relative_path": "../../isf/generators/TestPattern.fs"
+        }
+    ],
+    "midi_outputs": [],
+    "preset_tree": [],
+    "presets": [],
+    "sequences": [
+        {
+            "beats": false,
+            "edit_mode": false,
+            "id": "2",
+            "loop": false,
+            "name": "Sequence 1",
+            "steps": [],
+            "tracking": true
+        }
+    ],
+    "snapshot_tree": [],
+    "snapshots": [],
+    "startup_go": true,
+    "startup_sequence": -1,
+    "startup_step": 0,
+    "timecode_outputs": [],
+    "timeline_tree": [],
+    "timelines": [],
+    "ui": {
+        "selected_layer": 0,
+        "views": {
+            "cells": [
+                {
+                    "source": "910",
+                    "view": {
+                        "fixtures": false,
+                        "pan": [
+                            0,
+                            0
+                        ],
+                        "zoom": 1
+                    },
+                    "view3d": {
+                        "distance": 91.48335266113281,
+                        "fov": 45,
+                        "look": "simple",
+                        "pitch": 24.260478973388672,
+                        "target": [
+                            0,
+                            0,
+                            -1
+                        ],
+                        "yaw": 19.722131729125977
+                    }
+                },
+                {
+                    "source": "912",
+                    "view": {
+                        "fixtures": false,
+                        "pan": [
+                            0,
+                            0
+                        ],
+                        "zoom": 1
+                    },
+                    "view3d": {
+                        "distance": 4,
+                        "fov": 45,
+                        "look": "simple",
+                        "pitch": 25,
+                        "target": [
+                            0,
+                            0,
+                            0
+                        ],
+                        "yaw": 35
+                    }
+                },
+                {
+                    "source": "911",
+                    "view": {
+                        "fixtures": false,
+                        "pan": [
+                            0,
+                            0
+                        ],
+                        "zoom": 1
+                    },
+                    "view3d": {
+                        "distance": 4,
+                        "fov": 45,
+                        "look": "simple",
+                        "pitch": 25,
+                        "target": [
+                            0,
+                            0,
+                            0
+                        ],
+                        "yaw": 35
+                    }
+                },
+                {
+                    "source": "0",
+                    "view": {
+                        "fixtures": false,
+                        "pan": [
+                            0,
+                            0
+                        ],
+                        "zoom": 1
+                    },
+                    "view3d": {
+                        "distance": 4,
+                        "fov": 45,
+                        "look": "simple",
+                        "pitch": 25,
+                        "target": [
+                            0,
+                            0,
+                            0
+                        ],
+                        "yaw": 35
+                    }
+                }
+            ],
+            "count": 4,
+            "layer": "910",
+            "mapping": {
+                "fixtures": true,
+                "mask_edit": false,
+                "pan": [
+                    0,
+                    0
+                ],
+                "zoom": 1
+            }
+        }
+    }
+}

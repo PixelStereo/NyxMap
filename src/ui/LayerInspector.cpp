@@ -21,6 +21,7 @@
 #include "Widgets.h"
 #include <QFileDialog>
 #include <QGroupBox>
+#include <QColorDialog>
 #include <QTabBar>
 
 #include <QApplication>
@@ -442,11 +443,11 @@ LayerInspector::LayerInspector(Engine *engine, QUndoStack *undo, QWidget *parent
     rebuild();
 }
 
-// The menu at the top of the inspector: every layer, group and viewport of the composition, in the order of the Layers list, a group's
+// The menu at the top of the inspector: every layer and group of the composition (the viewports have their own tab), in the order of the Layers list, a group's
 // members indented under it; picking one inspects it (the Layers list and the preview follow). ◀ ▶ step to the one before / after.
 void LayerInspector::buildPicker()
 {
-    auto *row = new QWidget;
+    auto *row = m_pickerRow = new QWidget;
     row->setObjectName(QStringLiteral("layerPickerRow"));
     auto *h = new QHBoxLayout(row);
     h->setContentsMargins(0, 0, 0, 0);
@@ -461,7 +462,7 @@ void LayerInspector::buildPicker()
     m_picker->setMinimumContentsLength(12);
     m_picker->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     m_picker->setMaxVisibleItems(24);
-    m_picker->setToolTip(QStringLiteral("The layer, group or viewport inspected: pick another (the Layers list follows)"));
+    m_picker->setToolTip(QStringLiteral("The layer or group inspected: pick another (the Layers list follows)"));
     m_picker->setProperty("allowLocked", true);
     h->addWidget(m_pickerPrev);
     h->addWidget(m_picker, 1);
@@ -483,6 +484,12 @@ void LayerInspector::buildPicker()
     refreshPicker();
 }
 
+// The inspector of the Viewports tab: its list picks the viewport, so no menu
+void LayerInspector::hidePicker()
+{
+    if (m_pickerRow) m_pickerRow->hide();
+}
+
 void LayerInspector::refreshPicker()
 {
     if (!m_picker) return;
@@ -490,7 +497,7 @@ void LayerInspector::refreshPicker()
         quint64 id;
         QString text;
     };
-    std::vector<Entry> entries, viewports;
+    std::vector<Entry> entries;
     QString key = QString::number(m_layerId) + QLatin1Char('|');
     {
         Engine::Lock lk(&m_engine->mutex());
@@ -519,12 +526,12 @@ void LayerInspector::refreshPicker()
                 p = up == byId.end() ? 0 : up->second->parent;
             }
             const QString indent = QString(depth * 2, QChar(0x2003)); // em spaces: a menu does not trim them
-            const Entry e{l->id, indent + (l->isViewport ? QStringLiteral("◫ ") : glyph(*l)) + (l->name.isEmpty() ? QStringLiteral("Untitled") : l->name)};
-            (l->isViewport ? viewports : entries).push_back(e);
+            if (l->isViewport) continue; // in the Viewports tab
+            const Entry e{l->id, indent + glyph(*l) + (l->name.isEmpty() ? QStringLiteral("Untitled") : l->name)};
+            entries.push_back(e);
             key += QStringLiteral("%1:%2:%3;").arg(l->id).arg(depth).arg(e.text);
         }
     }
-    entries.insert(entries.begin(), viewports.begin(), viewports.end()); // the viewports first: handy with many layers
     if (key == m_pickerKey) return;
     m_pickerKey = key;
     const QSignalBlocker block(m_picker);
@@ -647,6 +654,16 @@ void LayerInspector::editMapping(const QString &text, const std::function<void(M
     fn(after);
     // merge: successive changes of the same field (spin box arrows, typing) form one undo step
     m_undo->push(new cmd::SetMapping(m_engine, m_layer, before, after, text, merge));
+    emit mappingChanged();
+}
+
+void LayerInspector::editWarp(const QString &text, const std::function<void(Mapping &)> &fn)
+{
+    if (m_engine->isLocked(m_layer)) return;
+    const Mapping before = cmd::SetMapping::read(m_engine, m_layer, true);
+    Mapping after = before;
+    fn(after);
+    m_undo->push(new cmd::SetMapping(m_engine, m_layer, before, after, text, false, true));
     emit mappingChanged();
 }
 
@@ -3925,6 +3942,210 @@ QWidget *LayerInspector::buildMapping(const LayerValues &s)
             editMapping(QStringLiteral("Whole Composition"), [](Mapping &m) { m.resetCorners(); });
             refreshSpatial();
         });
+
+        // What the projector shows: flipped across (flip) or upside down (flop)
+        auto *flips = new QHBoxLayout;
+        flips->addWidget(new QLabel(QStringLiteral("Output")));
+        auto flipButton = [&](const QString &text, const QString &tip, const QString &path, bool on) {
+            auto *b = new QToolButton;
+            b->setText(text);
+            b->setToolTip(tip);
+            b->setCheckable(true);
+            b->setChecked(on);
+            b->setStyleSheet(QStringLiteral("QToolButton:checked { background:%1; color:%2; }")
+                                 .arg(theme::css(), theme::onAccent().name()));
+            m_animate->attach(b, {path});
+            connect(b, &QToolButton::toggled, this, [this, path, text](bool checked) {
+                cmd::setValue(m_undo, m_engine, m_layerId, path, checked, text);
+            });
+            flips->addWidget(b);
+            return b;
+        };
+        {
+            Engine::Lock lock(&m_engine->mutex());
+            const Layer *l = m_engine->layer(m_layer);
+            m_flipX = flipButton(QStringLiteral("Flip ↔"), QStringLiteral("Mirror the output left to right (a projector seen from behind)"),
+                                 QStringLiteral("flip/x"), l && l->flipX);
+            m_flipY = flipButton(QStringLiteral("Flop ↕"), QStringLiteral("Turn the output upside down (a projector hung from the ceiling)"),
+                                 QStringLiteral("flip/y"), l && l->flipY);
+        }
+        flips->addStretch();
+        v->addLayout(flips);
+
+        // Warp: the output's picture pulled by its corners or by a mesh of points, dragged in a view of the viewport
+        auto *warp = new QGroupBox(QStringLiteral("Warp"));
+        auto *wl = new QVBoxLayout(warp);
+        auto *wmode = new QHBoxLayout;
+        auto *off = new QRadioButton(QStringLiteral("Off"));
+        auto *wcorners = new QRadioButton(QStringLiteral("Corners"));
+        auto *wmesh = new QRadioButton(QStringLiteral("Mesh"));
+        auto *wgroup = new QButtonGroup(warp);
+        wgroup->addButton(off, 0);
+        wgroup->addButton(wcorners, 1);
+        wgroup->addButton(wmesh, 2);
+        int editing = 0, wc = 4, wr = 4;
+        {
+            Engine::Lock lock(&m_engine->mutex());
+            if (const Layer *l = m_engine->layer(m_layer)) {
+                editing = l->warpEdit;
+                wc = l->warp.cols;
+                wr = l->warp.rows;
+            }
+        }
+        (editing == 2 ? wmesh : editing == 1 ? wcorners : off)->setChecked(true);
+        off->setToolTip(QStringLiteral("The warp is applied but not draggable in the views"));
+        wcorners->setToolTip(QStringLiteral("Drag the four corners of the output in a view of this viewport"));
+        wmesh->setToolTip(QStringLiteral("Drag the points of a mesh over the output in a view of this viewport"));
+        wmode->addWidget(off);
+        wmode->addWidget(wcorners);
+        wmode->addWidget(wmesh);
+        wmode->addStretch();
+        auto *wcols = new IntBox, *wrows = new IntBox;
+        wcols->setRange(2, 32);
+        wrows->setRange(2, 32);
+        wcols->setValue(wc);
+        wrows->setValue(wr);
+        wcols->setToolTip(QStringLiteral("Point columns"));
+        wrows->setToolTip(QStringLiteral("Point rows"));
+        auto *wapply = new QPushButton(QStringLiteral("Apply"));
+        wapply->setToolTip(QStringLiteral("Change the mesh density (clears the mesh)"));
+        auto *wflat = new QPushButton(QStringLiteral("Flatten"));
+        wflat->setToolTip(QStringLiteral("Corners and mesh back to the whole, upright frame"));
+        wmode->addWidget(wcols);
+        wmode->addWidget(new QLabel(QStringLiteral("×")));
+        wmode->addWidget(wrows);
+        wmode->addWidget(wapply);
+        wmode->addWidget(wflat);
+        wl->addLayout(wmode);
+        auto *whint = new QLabel(QStringLiteral("In a view of this viewport: drag a point. The ✛ Cross over the views shows on the "
+                                                "output where the pointer is."));
+        whint->setWordWrap(true);
+        whint->setStyleSheet("color:#888; font-size:11px;");
+        wl->addWidget(whint);
+        v->addWidget(warp);
+        connect(wgroup, &QButtonGroup::idClicked, this, [this](int id) {
+            {
+                Engine::Lock lock(&m_engine->mutex());
+                if (Layer *l = m_engine->layer(m_layer)) l->warpEdit = id;
+            }
+            emit mappingChanged();
+        });
+        connect(wapply, &QPushButton::clicked, this, [this, wcols, wrows] {
+            const int c = wcols->value(), r = wrows->value();
+            editWarp(QStringLiteral("Warp Mesh Density"), [c, r](Mapping &m) { m.resetMesh(c, r); });
+        });
+        connect(wflat, &QPushButton::clicked, this, [this] {
+            editWarp(QStringLiteral("Flatten Warp"), [](Mapping &m) {
+                m.resetCorners();
+                m.resetMesh(m.cols, m.rows);
+            });
+        });
+
+        // Soft edge: the ramp that blends this output into its neighbour's, in pixels of this output, and its curve
+        auto *soft = new QGroupBox(QStringLiteral("Soft Edge"));
+        auto *sg = new QGridLayout(soft);
+        sg->setHorizontalSpacing(6);
+        sg->addWidget(new QLabel(QStringLiteral("Width")), 0, 1);
+        sg->addWidget(new QLabel(QStringLiteral("Curve")), 0, 2);
+        static const char *const kSides[] = {"left", "right", "top", "bottom"};
+        static const char *const kNames[] = {"Left", "Right", "Top", "Bottom"};
+        auto numberOf = [&](const QString &path, const QString &suffix, int decimals, double step, const QString &tip) {
+            auto *b = new NumberBox;
+            const auto [lo, hi] = limitsOf(path, 0, 100000);
+            b->setRange(path.endsWith("width") ? 0 : lo, path.endsWith("width") ? 100000 : hi);
+            b->setDecimals(decimals);
+            b->setSingleStep(step);
+            b->setSuffix(suffix);
+            b->setKeyboardTracking(false);
+            b->setAccelerated(true);
+            b->setToolTip(tip);
+            b->setValue(m_engine->parameterValue(m_layerId, path).toDouble());
+            m_animate->attach(b, {path});
+            connect(b, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this, path](double value) {
+                cmd::setValue(m_undo, m_engine, m_layerId, path, value, QStringLiteral("Soft Edge"));
+            });
+            return b;
+        };
+        for (int k = 0; k < 4; ++k) {
+            const QString base = QStringLiteral("soft_edge/%1/").arg(QLatin1String(kSides[k]));
+            sg->addWidget(new QLabel(QLatin1String(kNames[k])), k + 1, 0);
+            m_softWidth[k] = numberOf(base + QStringLiteral("width"), QStringLiteral(" px"), 0, 1,
+                                      QStringLiteral("Length of the ramp from this side, in pixels of the output (0: none). "
+                                                     "Set it to the overlap with the next projector."));
+            m_softCurve[k] = numberOf(base + QStringLiteral("curve"), QString(), 2, 0.05,
+                                      QStringLiteral("How the ramp bends, in linear light: 2 is Bourke's (two overlapping ramps "
+                                                     "with the same curve add up to one); lower is lighter, higher darker."));
+            sg->addWidget(m_softWidth[k], k + 1, 1);
+            sg->addWidget(m_softCurve[k], k + 1, 2);
+        }
+        sg->addWidget(new QLabel(QStringLiteral("Gamma")), 5, 0);
+        m_softGamma = numberOf(QStringLiteral("soft_edge/gamma"), QString(), 2, 0.05,
+                               QStringLiteral("The projectors' gamma (2.2 for most): the ramp is made in linear light, then encoded with it."));
+        sg->addWidget(m_softGamma, 5, 1);
+        sg->addWidget(new QLabel(QStringLiteral("Black")), 6, 0);
+        m_softBlack = numberOf(QStringLiteral("soft_edge/black"), QStringLiteral(" %"), 1, 0.1,
+                               QStringLiteral("Black level: the overlap, lit by two projectors, has a brighter black. The black outside it "
+                                              "is lifted by this much (in % of white) to match. Set it with the Black guide."));
+        sg->addWidget(m_softBlack, 6, 1);
+        // The blend guide: what the output shows to line the projectors up (never saved)
+        sg->addWidget(new QLabel(QStringLiteral("Guide")), 7, 0);
+        m_guideMode = new QComboBox;
+        m_guideMode->addItems({QStringLiteral("Off"), QStringLiteral("Pattern"), QStringLiteral("White"), QStringLiteral("Grey"),
+                               QStringLiteral("Black")});
+        m_guideMode->setToolTip(QStringLiteral("Replaces the output with a guide to line up this projector with its neighbours (not saved).\n"
+                                               "Pattern: the overlap in this viewport's color, a grid, the ends of the ramps, the diagonals: where two "
+                                               "projectors line up their colors make one white band and the grid runs through both.\n"
+                                               "White, Grey, Black: uniform fields to judge the curve, the gamma and the black level."));
+        auto *guideColor = new QPushButton(QStringLiteral("Color"));
+        guideColor->setToolTip(QStringLiteral("This viewport's color in the Pattern: give neighbours colors that complete each other (red and cyan)"));
+        auto paintColor = [guideColor](double r, double g, double b) {
+            const QColor c = QColor::fromRgbF(r, g, b);
+            guideColor->setStyleSheet(QStringLiteral("QPushButton { background:%1; color:%2; }")
+                                          .arg(c.name(), c.lightnessF() > 0.55 ? QStringLiteral("#000") : QStringLiteral("#fff")));
+        };
+        m_guideOnly = new QCheckBox(QStringLiteral("Overlap only"));
+        m_guideOnly->setToolTip(QStringLiteral("Black everywhere but the overlap: set one projector at a time"));
+        m_guideRamp = new QCheckBox(QStringLiteral("Ramp"));
+        m_guideRamp->setToolTip(QStringLiteral("The guide through the soft edge's ramp, as the projector throws it. Off: the guide whole"));
+        {
+            Engine::Lock lock(&m_engine->mutex());
+            if (const Layer *l = m_engine->layer(m_layer)) {
+                m_guideMode->setCurrentIndex(l->guideMode);
+                m_guideOnly->setChecked(l->guideOnly);
+                m_guideRamp->setChecked(l->guideRamp);
+                paintColor(l->guideColor[0], l->guideColor[1], l->guideColor[2]);
+            }
+        }
+        sg->addWidget(m_guideMode, 7, 1);
+        sg->addWidget(guideColor, 7, 2);
+        sg->addWidget(m_guideOnly, 8, 1);
+        sg->addWidget(m_guideRamp, 8, 2);
+        auto applyGuide = [this] {
+            m_engine->setBlendGuide(m_layerId, m_guideMode->currentIndex(), m_guideOnly->isChecked(), m_guideRamp->isChecked());
+            emit mappingChanged();
+        };
+        connect(m_guideMode, qOverload<int>(&QComboBox::activated), this, [applyGuide](int) { applyGuide(); });
+        connect(m_guideOnly, &QCheckBox::toggled, this, [applyGuide](bool) { applyGuide(); });
+        connect(m_guideRamp, &QCheckBox::toggled, this, [applyGuide](bool) { applyGuide(); });
+        connect(guideColor, &QPushButton::clicked, this, [this, paintColor] {
+            QColor was;
+            {
+                Engine::Lock lock(&m_engine->mutex());
+                const Layer *l = m_engine->layer(m_layer);
+                if (!l) return;
+                was = QColor::fromRgbF(l->guideColor[0], l->guideColor[1], l->guideColor[2]);
+            }
+            const QColor picked = QColorDialog::getColor(was, this, QStringLiteral("Guide color"));
+            if (!picked.isValid()) return;
+            cmd::setValues(m_undo, m_engine, m_layerId,
+                           {{"soft_edge/guide/r", picked.redF()}, {"soft_edge/guide/g", picked.greenF()}, {"soft_edge/guide/b", picked.blueF()}},
+                           QStringLiteral("Guide Color"));
+            paintColor(picked.redF(), picked.greenF(), picked.blueF());
+        });
+        sg->setColumnStretch(1, 1);
+        sg->setColumnStretch(2, 1);
+        v->addWidget(soft);
+        v->addStretch();
         return g;
     }
 
@@ -4402,6 +4623,38 @@ void LayerInspector::refreshSpatial()
         Layer *l = m_engine->layer(m_layer);
         if (!l) return;
         m = l->mapping;
+        if (l->isViewport) {
+            for (int k = 0; k < 4; ++k) {
+                if (m_softWidth[k] && !m_softWidth[k]->hasFocus() && m_softWidth[k]->value() != l->softWidth[k]) {
+                    QSignalBlocker blk(m_softWidth[k]);
+                    m_softWidth[k]->setValue(l->softWidth[k]);
+                }
+                if (m_softCurve[k] && !m_softCurve[k]->hasFocus() && m_softCurve[k]->value() != l->softCurve[k]) {
+                    QSignalBlocker blk(m_softCurve[k]);
+                    m_softCurve[k]->setValue(l->softCurve[k]);
+                }
+            }
+            if (m_guideMode && m_guideMode->currentIndex() != l->guideMode) {
+                QSignalBlocker blk(m_guideMode);
+                m_guideMode->setCurrentIndex(l->guideMode);
+            }
+            if (m_softBlack && !m_softBlack->hasFocus() && m_softBlack->value() != l->softBlack) {
+                QSignalBlocker blk(m_softBlack);
+                m_softBlack->setValue(l->softBlack);
+            }
+            if (m_softGamma && !m_softGamma->hasFocus() && m_softGamma->value() != l->softGamma) {
+                QSignalBlocker blk(m_softGamma);
+                m_softGamma->setValue(l->softGamma);
+            }
+            if (m_flipX && m_flipX->isChecked() != l->flipX) {
+                QSignalBlocker blk(m_flipX);
+                m_flipX->setChecked(l->flipX);
+            }
+            if (m_flipY && m_flipY->isChecked() != l->flipY) {
+                QSignalBlocker blk(m_flipY);
+                m_flipY->setChecked(l->flipY);
+            }
+        }
     }
     const double unitX = m_sizePx ? comp.width() : 100.0, unitY = m_sizePx ? comp.height() : 100.0;
     QDoubleSpinBox *boxes[7] = {m_posX, m_posY, m_scaleX, m_scaleY, m_pivotX, m_pivotY, m_rotation};

@@ -52,20 +52,27 @@ MappingView::MappingView(Engine *engine, QWidget *parent) : QRhiWidget(parent), 
     m_magnetButton->setObjectName(QStringLiteral("mappingMagnet"));
     m_autoSelectButton = m_zoomBar->autoSelectButton();
     auto button = [this](const QString &text, const QString &tip) { return m_zoomBar->addButton(text, tip); };
-    // The same canvas supports two deliberate tools: layer mapping or mask node editing.
-    // Mask nodes never accidentally move while the layer tool is active.
-    m_maskModeButton = button(QStringLiteral("Layer"), QStringLiteral("Layer mode: select and move layers. "
-                                                      "Press to switch to Mask mode. Hold Shift while dragging a node to align it with another point. "
-                                                      "In Mask mode: double-click the contour to add a point; right-click a point for Bézier, corner or deletion."));
-    m_maskModeButton->setObjectName(QStringLiteral("mappingSelectionMode"));
-    m_maskModeButton->setCheckable(true);
-    connect(m_maskModeButton, &QToolButton::toggled, this, &MappingView::setMaskEditMode);
+    // The same canvas supports two deliberate tools: layer mapping or mask node editing (MaskEditor.h: the same in every view)
+    m_masks = new MaskEditor(m_engine, this, this);
+    m_maskModeButton = m_masks->makeButton(m_zoomBar, QStringLiteral("mappingSelectionMode"));
+    connect(m_masks, &MaskEditor::masksEdited, this, &MappingView::masksEdited);
+    connect(m_masks, &MaskEditor::maskPicked, this, &MappingView::maskPicked);
+    connect(m_masks, &MaskEditor::changed, this, qOverload<>(&QWidget::update));
+    connect(m_masks, &MaskEditor::activeChanged, this, [this](bool) { // the layer tool lets go of what it had
+        m_selection.clear();
+        m_dragLayer = m_dragHandle = m_dragScale = m_dragRotate = false;
+        update();
+    });
     m_fixturesButton = button(QStringLiteral("Fixtures"), QStringLiteral("Show the pixel mapping fixtures in this view: "
                                                          "click one to select it, drag it to move it, its square to "
                                                          "resize it, its circle to turn it (Shift: by 15°)"));
     m_fixturesButton->setObjectName(QStringLiteral("mappingFixtures"));
     m_fixturesButton->setCheckable(true);
     connect(m_fixturesButton, &QToolButton::toggled, this, &MappingView::setShowFixtures);
+    m_channelButton = m_zoomBar->addChannelButton([this](int channel) {
+        m_channel = channel;
+        update();
+    });
     connect(m_engine, &Engine::fixturesChanged, this, qOverload<>(&QWidget::update));
     setShowFixtures(QSettings().value(QStringLiteral("view/fixtures/mapping"), false).toBool());
     connect(m_zoomBar, &ZoomBar::zoomOutClicked, this, [this] { zoomBy(1 / 1.25); });
@@ -130,12 +137,12 @@ void MappingView::paintFixtures(QPainter &p)
     const bool locked = std::any_of(patch.fixtures.begin(), patch.fixtures.end(),
                                     [&](const Fixture &f) { return f.id == m_fixture && f.locked; });
     fixtureview::paint(p, patch, m_engine->compositionSize(), [this](QPointF n) { return toWidget(n); },
-                       m_engine->fixtureLooks(), m_fixture, !m_maskEditMode && !locked);
+                       m_engine->fixtureLooks(), m_fixture, !m_masks->active() && !locked);
 }
 
 bool MappingView::pressFixture(QMouseEvent *e)
 {
-    if (!m_showFixtures || m_maskEditMode || m_drawing || e->button() != Qt::LeftButton) return false;
+    if (!m_showFixtures || m_masks->active() || m_masks->drawing() || e->button() != Qt::LeftButton) return false;
     const FixturePatch patch = m_engine->fixturePatch();
     const QSize comp = m_engine->compositionSize();
     const auto toW = [this](QPointF n) { return toWidget(n); };
@@ -206,22 +213,7 @@ bool MappingView::releaseFixture()
     return true;
 }
 
-void MappingView::setMaskEditMode(bool on)
-{
-    if (m_maskEditMode == on) return;
-    m_maskEditMode = on;
-    m_maskDrag = MaskDrag::None;
-    m_maskSelection.clear();
-    m_maskNode = -1;
-    m_selection.clear();
-    m_dragLayer = m_dragHandle = m_dragScale = m_dragRotate = false;
-    if (m_maskModeButton) {
-        QSignalBlocker block(m_maskModeButton);
-        m_maskModeButton->setChecked(on);
-        m_maskModeButton->setText(on ? QStringLiteral("Mask") : QStringLiteral("Layer"));
-    }
-    update();
-}
+void MappingView::setMaskEditMode(bool on) { m_masks->setActive(on); }
 
 void MappingView::refreshCoordinateBar()
 {
@@ -231,18 +223,9 @@ void MappingView::refreshCoordinateBar()
     bool mask = false;
     {
         Engine::Lock lk(&m_engine->mutex());
-        if (m_maskEditMode) {
-            Mask *k = editedMask();
-            mask = k && m_maskNode >= 0 && m_maskNode < int(k->nodes.size()) &&
-                   !m_engine->isLocked(m_layer);
-            if (mask) {
-                const QSize frame = maskInComposition(k) ? m_engine->compositionSize()
-                                       : m_engine->maskFrame(m_engine->layerId(m_layer));
-                const QPointF p = k->nodes[size_t(m_maskNode)].p;
-                out = QPointF(p.x() * frame.width(), p.y() * frame.height());
-                name = QStringLiteral("Mask node %1").arg(m_maskNode + 1);
-                show = true;
-            }
+        if (m_masks->active()) {
+            mask = m_masks->nodePixels(&out, &name);
+            show = mask;
         } else {
             Mapping *m = mapping();
             show = m && !isViewport(m_layer) && !mappingLocked() &&
@@ -275,35 +258,8 @@ void MappingView::refreshCoordinateBar()
 
 void MappingView::typeCoordinate()
 {
-    if (m_maskEditMode) {
-        quint64 id = 0;
-        std::vector<Mask> before, after;
-        {
-            Engine::Lock lk(&m_engine->mutex());
-            Mask *k = editedMask();
-            Layer *l = m_engine->layer(m_layer);
-            if (!k || !l || m_maskNode < 0 || m_maskNode >= int(k->nodes.size()) ||
-                m_engine->isLocked(m_layer)) return;
-            id = l->id;
-            before = after = l->masks;
-            const QSize frame = maskInComposition(k) ? m_engine->compositionSize() : m_engine->maskFrame(id);
-            if (frame.width() <= 0 || frame.height() <= 0) return;
-            MaskNode &n = after[size_t(m_maskIndex)].nodes[size_t(m_maskNode)];
-            const QPointF delta(m_coordX->value() / frame.width() - n.p.x(),
-                                m_coordY->value() / frame.height() - n.p.y());
-            n.p += delta;
-            n.in += delta;
-            n.out += delta;
-        }
-        if (before != after) {
-            if (m_undo) {
-                m_undo->push(new cmd::SetMasks(m_engine, id, before, after, QStringLiteral("Move Mask Node")));
-            } else {
-                m_engine->setLayerMasks(id, after);
-            }
-            emit masksEdited();
-            update();
-        }
+    if (m_masks->active()) {
+        m_masks->moveNodeToPixels(QPointF(m_coordX->value(), m_coordY->value()));
         return;
     }
     Mapping before, after;
@@ -354,7 +310,7 @@ void MappingView::zoomBy(double factor) { zoomAt(QPointF(width() / 2.0, height()
 QJsonObject MappingView::viewState() const
 {
     return {{"zoom", m_zoom}, {"pan", QJsonArray{m_pan.x(), m_pan.y()}}, {"fixtures", m_showFixtures},
-            {"mask_edit", m_maskEditMode}};
+            {"mask_edit", m_masks->active()}, {"channel", m_channel}};
 }
 
 void MappingView::setViewState(const QJsonObject &o)
@@ -364,6 +320,8 @@ void MappingView::setViewState(const QJsonObject &o)
     if (pan.size() == 2) m_pan = QPointF(pan[0].toDouble(), pan[1].toDouble());
     if (o.contains("fixtures")) setShowFixtures(o.value("fixtures").toBool());
     if (o.contains("mask_edit")) setMaskEditMode(o.value("mask_edit").toBool());
+    m_channel = std::clamp(o.value("channel").toInt(0), 0, 4);
+    ZoomBar::showChannel(m_channelButton, m_channel);
     updateZoomLabel();
     update();
 }
@@ -417,9 +375,7 @@ void MappingView::setLayer(int index)
     if (index != m_layer) {
         m_selection.clear();
         m_primary = Handle{};
-        m_maskIndex = -1;
-        m_maskDrag = MaskDrag::None;
-        if (m_drawing) cancelDrawing();
+        m_masks->reset();
         if (m_lineDrawing) cancelLineDrawing();
         m_lineSel = {};
         m_lineDragging = false;
@@ -589,7 +545,7 @@ void MappingView::paintOverlay(QPainter &p)
 // Next to each selected point (a few at most), its position in composition pixels
 void MappingView::paintCoordinates(QPainter &p)
 {
-    if (m_maskEditMode) return;
+    if (m_masks->active()) return;
     std::vector<std::pair<QPointF, QString>> labels;
     {
         Engine::Lock lk(&m_engine->mutex());
@@ -686,6 +642,7 @@ void MappingView::paintScene()
             m_pictureKey = image.cacheKey();
         }
         const float w = float(std::max(1, width())), h = float(std::max(1, height()));
+        m_draw.setChannel(m_channel);
         m_draw.drawPicture(float(r.left() / w * 2 - 1), float(1 - r.bottom() / h * 2), float(r.right() / w * 2 - 1),
                            float(1 - r.top() / h * 2));
     }
@@ -1077,28 +1034,11 @@ void MappingView::mousePressEvent(QMouseEvent *e)
     Engine::Lock lk(&m_engine->mutex());
     const QPointF p = e->position();
     m_lastNorm = toNorm(p);
-    if (m_maskEditMode && !m_drawing && e->button() == Qt::LeftButton && !m_engine->isLocked(m_layer)) {
-        // The mode button is sufficient to pick a mask: no inspector selection is required first.
-        if (const Layer *layer = m_engine->layer(m_layer)) {
-            for (int i = int(layer->masks.size()) - 1; i >= 0; --i) {
-                const Mask &mask = layer->masks[size_t(i)];
-                if (!mask.enabled) continue;
-                const QPolygonF outline = maskOutline(mask);
-                bool hit = outline.containsPoint(p, Qt::OddEvenFill);
-                for (const auto &node : mask.nodes)
-                    hit |= QLineF(frameToWidget(maskInComposition(&mask), node.p), p).length() <= 8;
-                if (hit) {
-                    if (i != m_maskIndex) { setMaskIndex(i); emit maskPicked(i); }
-                    break;
-                }
-            }
-        }
-    }
-    if ((m_drawing || m_maskEditMode) && pressMask(e)) { // a mask's point, handle or inside, or one being drawn
+    if (m_masks->mousePress(e)) { // a mask's point, handle or inside, or one being drawn: in Mask mode a press never moves a layer
+        lk.unlock();
         update();
         return;
     }
-    if (m_maskEditMode) return; // never begin a layer move in explicit Mask selection mode
     const bool locked = mappingLocked();
     // The grips of the layer (not for a viewport, a locked or a warped layer)
     const Mapping *gm = mapping();
@@ -1193,72 +1133,7 @@ void MappingView::mouseMoveEvent(QMouseEvent *e)
     }
     if (dragFixture(e)) return;
     if (dragLine(e)) return;
-    if (m_drawing) { // the line to the cursor; pressed: the last point's handles follow it
-        m_cursor = e->position();
-        if (m_drawPressing && !m_drawNodes.empty()) {
-            Engine::Lock lk(&m_engine->mutex());
-            MaskNode &n = m_drawNodes.back();
-            const QPointF w = frameToWidget(false, n.p);
-            if (std::hypot(m_cursor.x() - w.x(), m_cursor.y() - w.y()) > 3) {
-                n.out = widgetToFrame(false, m_cursor, n.p);
-                n.in = 2 * n.p - n.out;
-            }
-        }
-        update();
-        return;
-    }
-    if (m_maskDrag != MaskDrag::None) {
-        Engine::Lock lk(&m_engine->mutex());
-        Mask *k = editedMask();
-        Layer *l = m_engine->layer(m_layer);
-        if (!k || !l || m_maskNode >= int(k->nodes.size())) return;
-        const bool comp = maskInComposition(k);
-        const QPointF w = e->position();
-        if (m_maskDrag == MaskDrag::Body) {
-            const QPointF q = widgetToFrame(comp, w, m_maskLast);
-            k->translate(q - m_maskLast);
-            m_maskLast = q;
-        } else {
-            MaskNode &n = k->nodes[size_t(m_maskNode)];
-            // Magnetism works in composition space even when a surface mask is warped by mapping.
-            // Shift aligns against stationary anchors, in screen axes even on a warped surface.
-            auto snapMask = [&](QPointF raw) {
-                if (!snapping(e->modifiers())) { clearGuides(); return raw; }
-                SnapTargets targets;
-                for (const Mask &other : l->masks)
-                    for (size_t j = 0; j < other.nodes.size(); ++j) {
-                        if (&other == k && m_maskDrag == MaskDrag::Node &&
-                            (int(j) == m_maskNode || std::find(m_maskSelection.begin(), m_maskSelection.end(), int(j)) != m_maskSelection.end())) continue;
-                        const QPointF p = toNorm(frameToWidget(maskInComposition(&other), other.nodes[j].p));
-                        targets.points.push_back(p);
-                        targets.xs.push_back(p.x());
-                        targets.ys.push_back(p.y());
-                    }
-                const QPointF snapped = snapPoint(toNorm(frameToWidget(comp, raw)), targets);
-                return widgetToFrame(comp, toWidget(snapped), raw);
-            };
-            if (m_maskDrag == MaskDrag::Node) {
-                const QPointF d = snapMask(widgetToFrame(comp, w, n.p)) - n.p;
-                if (m_maskSelection.empty()) m_maskSelection = {m_maskNode};
-                for (int j : m_maskSelection) {
-                    if (j < 0 || j >= int(k->nodes.size())) continue;
-                    MaskNode &node = k->nodes[size_t(j)];
-                    node.p += d;
-                    node.in += d;
-                    node.out += d;
-                }
-            } else { // a handle: the other one mirrors it (Shift: on its own)
-                QPointF &h = m_maskDrag == MaskDrag::Out ? n.out : n.in;
-                QPointF &o = m_maskDrag == MaskDrag::Out ? n.in : n.out;
-                h = snapMask(widgetToFrame(comp, w, h));
-                if (!(e->modifiers() & Qt::ShiftModifier) && o != n.p) o = 2 * n.p - h;
-            }
-        }
-        ++l->masksRevision;
-        emit masksEdited();
-        update();
-        return;
-    }
+    if (m_masks->mouseMove(e)) return;
     Engine::Lock lk(&m_engine->mutex());
     if ((m_dragHandle || m_dragLayer || m_dragScale || m_dragRotate) && mappingLocked()) {
         m_dragHandle = m_dragLayer = m_dragScale = m_dragRotate = false;
@@ -1318,7 +1193,7 @@ void MappingView::mouseMoveEvent(QMouseEvent *e)
     update();
 }
 
-void MappingView::mouseReleaseEvent(QMouseEvent *)
+void MappingView::mouseReleaseEvent(QMouseEvent *e)
 {
     if (m_panning) {
         m_panning = false;
@@ -1327,28 +1202,8 @@ void MappingView::mouseReleaseEvent(QMouseEvent *)
     }
     if (releaseFixture()) return;
     if (releaseLine()) return;
-    if (m_drawing) {
-        m_drawPressing = false;
-        return;
-    }
-    if (m_maskDrag != MaskDrag::None) {
-        const bool whole = m_maskDrag == MaskDrag::Body;
-        m_maskDrag = MaskDrag::None;
-        quint64 id = 0;
-        std::vector<Mask> after;
-        {
-            Engine::Lock lk(&m_engine->mutex());
-            if (Layer *l = m_engine->layer(m_layer)) {
-                id = l->id;
-                after = l->masks;
-            }
-        }
-        if (id && m_undo && after != m_masksBefore)
-            m_undo->push(new cmd::SetMasks(m_engine, id, m_masksBefore, after,
-                                           whole ? QStringLiteral("Move Mask") : QStringLiteral("Move Mask Point")));
-        emit masksEdited();
+    if (m_masks->mouseRelease(e)) {
         clearGuides();
-        update();
         return;
     }
     if (m_rubber) { // adds the points inside the rectangle to the selection
@@ -1380,17 +1235,16 @@ void MappingView::mouseReleaseEvent(QMouseEvent *)
 void MappingView::keyPressEvent(QKeyEvent *e)
 {
     if (keyLine(e)) return;
-    if (m_drawing) {
-        if (e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) finishDrawing();
-        else if (e->key() == Qt::Key_Escape) cancelDrawing();
+    if (m_masks->drawing()) {
+        m_masks->keyPress(e);
         return;
     }
     // The selected fixture (not locked): arrows move it by a composition pixel (Shift: ten), Delete removes it
     const FixturePatch current = m_showFixtures && m_fixture ? m_engine->fixturePatch() : FixturePatch();
     const bool fixtureLocked = std::any_of(current.fixtures.begin(), current.fixtures.end(),
                                            [&](const Fixture &f) { return f.id == m_fixture && f.locked; });
-    if (m_showFixtures && m_fixture && !m_maskEditMode && fixtureLocked) return;
-    if (m_showFixtures && m_fixture && !m_maskEditMode) {
+    if (m_showFixtures && m_fixture && !m_masks->active() && fixtureLocked) return;
+    if (m_showFixtures && m_fixture && !m_masks->active()) {
         const int key = e->key();
         const QSize comp = m_engine->compositionSize();
         const double step = e->modifiers() & Qt::ShiftModifier ? 10 : 1;
@@ -1420,73 +1274,7 @@ void MappingView::keyPressEvent(QKeyEvent *e)
             return;
         }
     }
-    // In Mask mode the arrow keys nudge selected mask nodes, not the layer geometry.
-    if (m_maskEditMode && (e->key() == Qt::Key_Left || e->key() == Qt::Key_Right ||
-                           e->key() == Qt::Key_Up || e->key() == Qt::Key_Down)) {
-        quint64 id = 0;
-        std::vector<Mask> before, after;
-        {
-            Engine::Lock lk(&m_engine->mutex());
-            Layer *l = m_engine->layer(m_layer);
-            Mask *k = editedMask();
-            if (!l || !k || m_engine->isLocked(m_layer) || m_maskSelection.empty()) return;
-            id = l->id;
-            before = after = l->masks;
-            const QSize frame = maskInComposition(k) ? m_engine->compositionSize() : m_engine->maskFrame(id);
-            if (frame.width() <= 0 || frame.height() <= 0) return;
-            const double amount = e->modifiers() & Qt::ShiftModifier ? 10.0 : 1.0;
-            const QPointF delta((e->key() == Qt::Key_Right ? amount : e->key() == Qt::Key_Left ? -amount : 0) / frame.width(),
-                                (e->key() == Qt::Key_Down ? amount : e->key() == Qt::Key_Up ? -amount : 0) / frame.height());
-            Mask &target = after[size_t(m_maskIndex)];
-            for (int i : m_maskSelection) {
-                if (i < 0 || i >= int(target.nodes.size())) continue;
-                MaskNode &n = target.nodes[size_t(i)];
-                n.p += delta;
-                n.in += delta;
-                n.out += delta;
-            }
-            target.shape = Mask::Shape::Path;
-        }
-        if (before != after) {
-            if (m_undo) {
-                m_undo->push(new cmd::SetMasks(m_engine, id, before, after, QStringLiteral("Nudge Mask Nodes")));
-            } else {
-                m_engine->setLayerMasks(id, after);
-            }
-            emit masksEdited();
-            update();
-        }
-        return;
-    }
-    // Mask deletion is confined to Mask mode.
-    if (m_maskEditMode && m_maskIndex >= 0 && m_maskNode >= 0 && (e->key() == Qt::Key_Delete || e->key() == Qt::Key_Backspace)) {
-        quint64 id = 0;
-        std::vector<Mask> before, after;
-        {
-            Engine::Lock lk(&m_engine->mutex());
-            Layer *l = m_engine->layer(m_layer);
-            Mask *k = editedMask();
-            if (l && k && !m_engine->isLocked(m_layer) && k->nodes.size() > 3 && m_maskNode < int(k->nodes.size())) {
-                id = l->id;
-                before = after = l->masks;
-                Mask &a = after[size_t(m_maskIndex)];
-                a.nodes.erase(a.nodes.begin() + m_maskNode);
-                a.shape = Mask::Shape::Path;
-            }
-        }
-        if (id) {
-            m_maskNode = -1;
-            m_maskSelection.clear();
-            if (m_undo) {
-                m_undo->push(new cmd::SetMasks(m_engine, id, before, after, QStringLiteral("Delete Mask Point")));
-            } else {
-                m_engine->setLayerMasks(id, after);
-            }
-            emit masksEdited();
-            update();
-            return;
-        }
-    }
+    if (m_masks->keyPress(e)) return; // in Mask mode the arrows nudge the points picked, Delete removes one
     Engine::Lock lk(&m_engine->mutex());
     Mapping *m = mapping();
     QPointF d;
@@ -1544,95 +1332,35 @@ void MappingView::keyPressEvent(QKeyEvent *e)
 bool MappingView::focusNextPrevChild(bool) { return false; }
 
 // ---------------------------------------------------------------------------
-// Masks
+// Masks (MaskEditor.cpp: the same editor in every view; here, what the composition's view gives it)
 // ---------------------------------------------------------------------------
-static const QColor kMask(41, 199, 224), kMaskFaint(41, 199, 224, 90);
+void MappingView::setMaskIndex(int index) { m_masks->setIndex(index); }
+void MappingView::startMaskDrawing() { m_masks->startDrawing(); }
 
-void MappingView::setMaskIndex(int index)
-{
-    m_maskIndex = index;
-    m_maskSelection.clear();
-    if (index >= 0) setMaskEditMode(true);
-    m_maskNode = -1;
-    m_maskDrag = MaskDrag::None;
-    update();
-}
-
-void MappingView::startMaskDrawing()
-{
-    setMaskEditMode(true);
-    {
-        Engine::Lock lk(&m_engine->mutex());
-        if (!mapping() || m_engine->isLocked(m_layer)) return;
-    }
-    m_drawing = true;
-    m_drawPressing = false;
-    m_drawNodes.clear();
-    setMouseTracking(true);
-    setCursor(Qt::CrossCursor);
-    setFocus();
-    update();
-}
-
-void MappingView::cancelDrawing()
-{
-    m_drawing = m_drawPressing = false;
-    m_drawNodes.clear();
-    setMouseTracking(false);
-    unsetCursor();
-    update();
-}
-
-void MappingView::finishDrawing()
-{
-    const std::vector<MaskNode> nodes = m_drawNodes;
-    cancelDrawing();
-    if (nodes.size() < 3) return;
-    quint64 id = 0;
-    std::vector<Mask> before, after;
-    {
-        Engine::Lock lk(&m_engine->mutex());
-        Layer *l = m_engine->layer(m_layer);
-        if (!l) return;
-        id = l->id;
-        before = after = l->masks;
-        Mask k;
-        k.shape = Mask::Shape::Path;
-        k.nodes = nodes;
-        k.name = masks::uniqueName(after);
-        after.push_back(k);
-    }
-    if (m_undo) m_undo->push(new cmd::SetMasks(m_engine, id, before, after, QStringLiteral("Draw Mask")));
-    else m_engine->setLayerMasks(id, after);
-    m_maskIndex = int(after.size()) - 1;
-    emit masksEdited();
-    emit maskPicked(m_maskIndex);
-    update();
-}
-
-Mask *MappingView::editedMask()
-{
-    Layer *l = m_engine->layer(m_layer);
-    if (!l || m_maskIndex < 0 || m_maskIndex >= int(l->masks.size())) return nullptr;
-    return &l->masks[size_t(m_maskIndex)];
-}
+quint64 MappingView::maskLayerId() const { return m_engine->layerId(m_layer); }
+bool MappingView::maskEditable() const { return mapping() != nullptr; }
 
 // A viewport's masks are always in its own picture
-bool MappingView::maskInComposition(const Mask *k) const
+bool MappingView::maskInComposition(const Mask &k) const
 {
-    return k && k->attach == Mask::Attach::Composition && !isViewport(m_layer);
+    return k.attach == Mask::Attach::Composition && !isViewport(m_layer);
+}
+
+QSize MappingView::maskFrameSize(const Mask &k) const
+{
+    return maskInComposition(k) ? m_engine->compositionSize() : m_engine->maskFrame(m_engine->layerId(m_layer));
 }
 
 // A point of a mask's frame on the widget: through the layer's mapping (its picture), or on its canvas (the
 // composition, or its group's)
-QPointF MappingView::frameToWidget(bool composition, QPointF q) const
+QPointF MappingView::maskToWidget(bool composition, QPointF q) const
 {
     const Mapping *m = mapping();
     if (!composition && m) q = m->map(q.x(), q.y());
     return toWidget(outOf(m_layer, q));
 }
 
-QPointF MappingView::widgetToFrame(bool composition, QPointF w, QPointF guess) const
+QPointF MappingView::maskFromWidget(bool composition, QPointF w, QPointF guess) const
 {
     const QPointF c = canvasOf(m_layer, toNorm(w));
     const Mapping *m = mapping();
@@ -1640,226 +1368,45 @@ QPointF MappingView::widgetToFrame(bool composition, QPointF w, QPointF guess) c
     return m->unmap(c, guess);
 }
 
-// Its outline on the widget: the curves flattened, the long segments cut (a warped picture bends them)
-QPolygonF MappingView::maskOutline(const Mask &k) const
+QPointF MappingView::maskSnap(QPointF widgetPoint, const std::vector<QPointF> &others, bool scene)
 {
-    QPolygonF out;
-    if (!k.valid()) return out;
-    const bool comp = maskInComposition(&k);
-    const double scale = 1000;
-    const QList<QPolygonF> polys = k.path(QSizeF(scale, scale)).toSubpathPolygons();
-    for (const QPolygonF &poly : polys)
-        for (int i = 0; i + 1 < poly.size(); ++i) {
-            const QPointF a = poly[i] / scale, b = poly[i + 1] / scale;
-            const int steps = std::max(1, int(std::ceil(std::hypot(b.x() - a.x(), b.y() - a.y()) / 0.02)));
-            for (int s = 0; s < steps; ++s) out << frameToWidget(comp, a + (b - a) * (double(s) / steps));
+    SnapTargets targets;
+    if (scene) {
+        targets = snapTargets();
+    } else {
+        for (const QPointF &w : others) {
+            const QPointF p = toNorm(w);
+            targets.points.push_back(p);
+            targets.xs.push_back(p.x());
+            targets.ys.push_back(p.y());
         }
-    if (!out.isEmpty()) out << out.front();
-    return out;
+    }
+    return toWidget(snapPoint(toNorm(widgetPoint), targets));
 }
 
+// What the editor paints, with this view's drawing
 void MappingView::paintMasks()
 {
-    Engine::Lock lk(&m_engine->mutex());
-    const Layer *l = m_engine->layer(m_layer);
-    if (!l || !mapping()) return;
-    // Its masks: the edited one bright with its points and handles, the others faint
-    for (int i = 0; i < int(l->masks.size()); ++i) {
-        const Mask &k = l->masks[size_t(i)];
-        const QPolygonF poly = maskOutline(k);
-        std::vector<float> lines;
-        for (int j = 0; j + 1 < poly.size(); ++j) pushLine(lines, poly[j], poly[j + 1]);
-        m_draw.drawLines(lines, i == m_maskIndex ? kMask : kMaskFaint);
-    }
-    if (const Layer *cl = l; m_maskEditMode && m_maskIndex >= 0 && m_maskIndex < int(cl->masks.size())) {
-        const Mask &k = cl->masks[size_t(m_maskIndex)];
-        const bool comp = maskInComposition(&k);
-        std::vector<float> stems, handles, points, shadow, sel;
-        for (int i = 0; i < int(k.nodes.size()); ++i) {
-            const MaskNode &n = k.nodes[size_t(i)];
-            const QPointF p = frameToWidget(comp, n.p);
-            for (const QPointF &hq : {n.in, n.out})
-                if (hq != n.p) {
-                    const QPointF h = frameToWidget(comp, hq);
-                    pushLine(stems, p, h);
-                    pushRect(handles, h, 3.0f);
-                }
-            pushRect(shadow, p, 5.5f);
-            pushRect(std::find(m_maskSelection.begin(), m_maskSelection.end(), i) != m_maskSelection.end()
-                         ? sel : points, p, 4.0f);
+    for (const MaskPaint &part : m_masks->paint()) {
+        std::vector<float> v;
+        if (part.kind == MaskPaint::Kind::Lines) {
+            for (size_t i = 0; i + 1 < part.points.size(); i += 2) pushLine(v, part.points[i], part.points[i + 1]);
+            m_draw.drawLines(v, part.color);
+        } else {
+            for (const QPointF &q : part.points) pushRect(v, q, part.half);
+            m_draw.drawTriangles(v, part.color);
         }
-        m_draw.drawLines(stems, kMaskFaint);
-        m_draw.drawTriangles(handles, kMask);
-        m_draw.drawTriangles(shadow, QColor(0, 0, 0, 170));
-        m_draw.drawTriangles(points, QColor(255, 255, 255, 235));
-        m_draw.drawTriangles(sel, kMask);
     }
-    // Being drawn: its points so far, and the line to the cursor
-    if (m_drawing && !m_drawNodes.empty()) {
-        std::vector<float> lines, points;
-        QPointF prev;
-        for (size_t i = 0; i < m_drawNodes.size(); ++i) {
-            const QPointF p = frameToWidget(false, m_drawNodes[i].p);
-            if (i) pushLine(lines, prev, p);
-            pushRect(points, p, i == 0 && m_drawNodes.size() >= 3 ? 6.0f : 4.0f); // the first one closes it
-            if (m_drawNodes[i].out != m_drawNodes[i].p) {
-                pushLine(lines, frameToWidget(false, m_drawNodes[i].in), frameToWidget(false, m_drawNodes[i].out));
-            }
-            prev = p;
-        }
-        if (!m_drawPressing) pushLine(lines, prev, m_cursor);
-        m_draw.drawLines(lines, kMask);
-        m_draw.drawTriangles(points, QColor(255, 255, 255, 235));
-    }
-}
-
-bool MappingView::pressMask(QMouseEvent *e)
-{
-    const QPointF p = e->position();
-    Layer *l = m_engine->layer(m_layer);
-    if (!l || !mapping()) return false;
-    if (m_engine->isLocked(m_layer)) {
-        if (m_drawing) cancelDrawing();
-        return false;
-    }
-    auto near = [&](QPointF a, double r) { return std::hypot(a.x() - p.x(), a.y() - p.y()) <= r; };
-    if (m_drawing) {
-        if (e->button() != Qt::LeftButton) return true;
-        if (m_drawNodes.size() >= 3 && near(frameToWidget(false, m_drawNodes.front().p), 8)) { // on the first point
-            finishDrawing();
-            return true;
-        }
-        const QPointF guess = m_drawNodes.empty() ? QPointF(0.5, 0.5) : m_drawNodes.back().p;
-        QPointF q = widgetToFrame(false, p, guess);
-        if (snapping(e->modifiers())) {
-            const QPointF caught = snapPoint(toNorm(frameToWidget(false, q)), snapTargets());
-            q = widgetToFrame(false, toWidget(caught), guess);
-        }
-        m_drawNodes.push_back({q, q, q});
-        m_drawPressing = true;
-        m_cursor = p;
-        return true;
-    }
-    Mask *k = editedMask();
-    if (!k || !k->enabled || e->button() != Qt::LeftButton) return false;
-    const bool comp = maskInComposition(k);
-    m_maskDrag = MaskDrag::None;
-    for (int i = 0; i < int(k->nodes.size()) && m_maskDrag == MaskDrag::None; ++i) { // the handles first
-        const MaskNode &n = k->nodes[size_t(i)];
-        if (n.out != n.p && near(frameToWidget(comp, n.out), 6)) m_maskDrag = MaskDrag::Out;
-        else if (n.in != n.p && near(frameToWidget(comp, n.in), 6)) m_maskDrag = MaskDrag::In;
-        if (m_maskDrag != MaskDrag::None) m_maskNode = i;
-    }
-    for (int i = 0; i < int(k->nodes.size()) && m_maskDrag == MaskDrag::None; ++i)
-        if (near(frameToWidget(comp, k->nodes[size_t(i)].p), 7)) {
-            m_maskDrag = MaskDrag::Node;
-            m_maskNode = i;
-        }
-    if (m_maskDrag == MaskDrag::None && maskOutline(*k).containsPoint(p, Qt::OddEvenFill)) {
-        m_maskDrag = MaskDrag::Body;
-        m_maskLast = widgetToFrame(comp, p, k->bounds().center());
-    }
-    if (m_maskDrag == MaskDrag::None) return false;
-    if (m_maskDrag == MaskDrag::Node) {
-        const bool extend = e->modifiers() & Qt::ControlModifier;
-        if (!extend && std::find(m_maskSelection.begin(), m_maskSelection.end(), m_maskNode) == m_maskSelection.end())
-            m_maskSelection = {m_maskNode};
-        else if (extend) {
-            const auto it = std::find(m_maskSelection.begin(), m_maskSelection.end(), m_maskNode);
-            if (it == m_maskSelection.end()) m_maskSelection.push_back(m_maskNode);
-            else { m_maskSelection.erase(it); m_maskDrag = MaskDrag::None; }
-        }
-    } else if (m_maskDrag != MaskDrag::Body) {
-        m_maskSelection = {m_maskNode};
-    }
-    m_masksBefore = l->masks;
-    return true;
 }
 
 void MappingView::mouseDoubleClickEvent(QMouseEvent *e)
 {
     if (doubleClickLine(e)) return;
-    if (m_drawing) {
-        finishDrawing();
-        return;
-    }
-    if (m_maskEditMode && e->button() == Qt::LeftButton) {
-        Engine::Lock lock(&m_engine->mutex());
-        Layer *layer = m_engine->layer(m_layer);
-        Mask *mask = editedMask();
-        if (!layer || !mask || !mask->enabled || m_engine->isLocked(m_layer)) return;
-        const bool comp = maskInComposition(mask);
-        double best = 9.0, tBest = 0;
-        int segment = -1;
-        for (int i = 0; i < int(mask->nodes.size()); ++i) {
-            const auto &a = mask->nodes[size_t(i)];
-            const auto &b = mask->nodes[(size_t(i) + 1) % mask->nodes.size()];
-            for (int step = 1; step < 128; ++step) {
-                const double t = step / 128.0, u = 1 - t;
-                const QPointF q = a.p*u*u*u + a.out*3*u*u*t + b.in*3*u*t*t + b.p*t*t*t;
-                const double distance = QLineF(frameToWidget(comp, q), e->position()).length();
-                if (distance < best) { best = distance; segment = i; tBest = t; }
-            }
-        }
-        if (segment >= 0) {
-            const auto before = layer->masks;
-            auto after = before;
-            masks::splitSegment(after[size_t(m_maskIndex)], segment, tBest);
-            const auto id = layer->id;
-            lock.unlock();
-            if (m_undo) m_undo->push(new cmd::SetMasks(m_engine, id, before, after, QStringLiteral("Add Mask Point")));
-            else m_engine->setLayerMasks(id, after);
-            m_maskNode = segment + 1;
-            m_maskSelection = {m_maskNode};
-            m_maskDrag = MaskDrag::None;
-            emit masksEdited(); update();
-        }
-        return;
-    }
+    if (m_masks->mouseDoubleClick(e)) return;
     QRhiWidget::mouseDoubleClickEvent(e);
 }
 
-
 void MappingView::contextMenuEvent(QContextMenuEvent *event)
 {
-    if (!m_maskEditMode || m_drawing) { QRhiWidget::contextMenuEvent(event); return; }
-    Engine::Lock lock(&m_engine->mutex());
-    Layer *layer = m_engine->layer(m_layer);
-    Mask *mask = editedMask();
-    if (!layer || !mask || !mask->enabled || m_engine->isLocked(m_layer)) return;
-    int node = -1;
-    for (int i = 0; i < int(mask->nodes.size()); ++i)
-        if (QLineF(frameToWidget(maskInComposition(mask), mask->nodes[size_t(i)].p), event->pos()).length() <= 8) { node = i; break; }
-    if (node < 0) return;
-    const auto before = layer->masks;
-    const auto id = layer->id;
-    const int maskIndex = m_maskIndex;
-    lock.unlock(); // menu runs a nested event loop
-    QMenu menu(this);
-    auto *smooth = menu.addAction(QStringLiteral("Smooth Point (Bézier)"));
-    auto *corner = menu.addAction(QStringLiteral("Corner Point"));
-    auto *remove = menu.addAction(QStringLiteral("Delete Point"));
-    remove->setEnabled(before[size_t(maskIndex)].nodes.size() > 3);
-    const auto *chosen = menu.exec(event->globalPos());
-    if (!chosen) return;
-    // A recall may have replaced the geometry while the menu was open.
-    lock.relock();
-    layer = m_engine->layer(m_engine->indexOfId(id));
-    if (!layer || m_engine->isLocked(m_engine->indexOfId(id)) || layer->masks != before) return;
-    auto after = before;
-    auto &edited = after[size_t(maskIndex)];
-    auto &point = edited.nodes[size_t(node)];
-    if (chosen == smooth) {
-        const auto prev = edited.nodes[(size_t(node) + edited.nodes.size() - 1) % edited.nodes.size()].p;
-        const auto next = edited.nodes[(size_t(node) + 1) % edited.nodes.size()].p;
-        const QPointF tangent = (next - prev) / 6;
-        point.in = point.p - tangent; point.out = point.p + tangent;
-    } else if (chosen == corner) { point.in = point.out = point.p; }
-    else if (chosen == remove) edited.nodes.erase(edited.nodes.begin() + node);
-    edited.shape = Mask::Shape::Path;
-    lock.unlock();
-    if (m_undo) m_undo->push(new cmd::SetMasks(m_engine, id, before, after, chosen->text()));
-    else m_engine->setLayerMasks(id, after);
-    m_maskNode = -1; m_maskSelection.clear();
-    emit masksEdited(); update();
+    if (!m_masks->contextMenu(event)) QRhiWidget::contextMenuEvent(event);
 }

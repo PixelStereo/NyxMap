@@ -275,6 +275,53 @@ const std::vector<Parameter *> &Layer::parameters()
         num("output/exposure", "Output › Exposure (EV)", -10, 10, 0,
             [self] { return self->outputExposure; }, [self](double v) { self->outputExposure = v; })
             .step(.01).animatable(false); // calibration belongs to the viewport, independent of cues
+        // Warp: how far each corner of the output is pulled, in % of the output (its mesh is saved with the project)
+        {
+            Mapping *w = &warp;
+            static const char *const kCorners[] = {"top_left", "top_right", "bottom_right", "bottom_left"};
+            static const char *const kCornerNames[] = {"Top Left", "Top Right", "Bottom Right", "Bottom Left"};
+            for (int k = 0; k < 4; ++k)
+                for (int axis = 0; axis < 2; ++axis) {
+                    const bool x = axis == 0;
+                    num(QStringLiteral("warp/%1/%2").arg(QLatin1String(kCorners[k]), x ? "x" : "y"),
+                        QStringLiteral("Spatial › Warp %1 %2 (%)").arg(QLatin1String(kCornerNames[k]), x ? "X" : "Y"), -100, 100, 0.0,
+                        [w, k, x] { return (x ? w->pins[k].x() : w->pins[k].y()) * 100.0; },
+                        [w, k, x](double v) {
+                            (x ? w->pins[k].rx() : w->pins[k].ry()) = v / 100.0;
+                            ++w->revision;
+                        })
+                        .limits(-1000, 1000)
+                        .step(0.01).pointComponent(axis);
+                }
+        }
+        // Flip and flop: what the projector shows, mirrored across or upside down
+        flag("flip/x", "Spatial › Flip Horizontal", false, &flipX);
+        flag("flip/y", "Spatial › Flip Vertical", false, &flipY);
+        // Soft edge: the picture fades out towards a side, in pixels of the output, to blend into the next projector
+        static const char *const kSoftSides[] = {"left", "right", "top", "bottom"};
+        static const char *const kSoftNames[] = {"Left", "Right", "Top", "Bottom"};
+        for (int k = 0; k < 4; ++k) {
+            const QString base = QStringLiteral("soft_edge/%1/").arg(QLatin1String(kSoftSides[k]));
+            const QString name = QStringLiteral("Spatial › Soft Edge %1 ").arg(QLatin1String(kSoftNames[k]));
+            num(base + "width", name + "Width (px)", 0, 10000, 0.0, [self, k] { return self->softWidth[k]; },
+                [self, k](double v) { self->softWidth[k] = v; })
+                .limits(0, 100000)
+                .step(1);
+            num(base + "curve", name + "Curve", 0.2, 6, 2.0, [self, k] { return self->softCurve[k]; },
+                [self, k](double v) { self->softCurve[k] = v; })
+                .step(0.01);
+        }
+        num("soft_edge/gamma", "Spatial › Soft Edge Gamma", 1, 3, 2.2, [self] { return self->softGamma; },
+            [self](double v) { self->softGamma = v; })
+            .step(0.01);
+        num("soft_edge/black", "Spatial › Soft Edge Black Level (%)", 0, 30, 0.0, [self] { return self->softBlack; },
+            [self](double v) { self->softBlack = v; })
+            .step(0.1);
+        static const double kGuideDefault[3] = {0.2, 0.8, 1.0};
+        for (int c = 0; c < 3; ++c)
+            num(QStringLiteral("soft_edge/guide/") + QChar("rgb"[c]), QStringLiteral("Spatial › Soft Edge Guide ") + QChar("RGB"[c]), 0, 1,
+                kGuideDefault[c], [self, c] { return self->guideColor[c]; }, [self, c](double v) { self->guideColor[c] = v; })
+                .colorComponent(c);
     }
 
     // Playback: the media's (backwards below 0: it turns round where it is), or the pace of the shader's TIME

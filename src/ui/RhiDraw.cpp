@@ -160,9 +160,12 @@ void RhiDraw::drawPicture(float left, float bottom, float right, float top, bool
     if (!hasPicture()) return;
     const int first = int(m_data.size() / 8);
     const float a = over ? 0.f : 1.f; // alpha channel of the color: 1 forces an opaque picture
+    // The color's rgb says the channel (uidraw_tex.frag): all 1 the picture, one 1 that channel, all 0 its alpha
+    const float cr = m_channel == 0 || m_channel == 1 ? 1.f : 0.f, cg = m_channel == 0 || m_channel == 2 ? 1.f : 0.f,
+                cb = m_channel == 0 || m_channel == 3 ? 1.f : 0.f;
     // A strip: bottom left, bottom right, top left, top right; the picture's first row is its bottom (as the engine gives it)
-    m_data.insert(m_data.end(), {left, bottom, 0.f, 0.f, 1.f, 1.f, 1.f, a, right, bottom, 1.f, 0.f, 1.f, 1.f, 1.f, a,
-                                 left, top, 0.f, 1.f, 1.f, 1.f, 1.f, a, right, top, 1.f, 1.f, 1.f, 1.f, 1.f, a});
+    m_data.insert(m_data.end(), {left, bottom, 0.f, 0.f, cr, cg, cb, a, right, bottom, 1.f, 0.f, cr, cg, cb, a,
+                                 left, top, 0.f, 1.f, cr, cg, cb, a, right, top, 1.f, 1.f, cr, cg, cb, a});
     m_commands.push_back({over ? Kind::PictureOver : Kind::Picture, first, 4});
 }
 

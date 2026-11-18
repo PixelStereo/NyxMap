@@ -242,6 +242,9 @@ int Engine::addViewport(const QString &name, QSize size)
         l->vpHeight = px.height();
         const int n = viewportCountLocked();
         l->name = name.isEmpty() ? QStringLiteral("Viewport %1").arg(n + 1) : name;
+        // Its color in the blend guide: neighbours get colors that complete each other (red and cyan make white where they overlap)
+        static const double kGuideColors[6][3] = {{1, 0.2, 0.2}, {0.2, 0.9, 1}, {1, 0.85, 0.2}, {0.35, 0.45, 1}, {0.3, 1, 0.4}, {1, 0.3, 0.9}};
+        for (int c = 0; c < 3; ++c) l->guideColor[c] = kGuideColors[n % 6][c];
         l->vpPublish = PublishSettings();
         for (PublishTarget &t : l->vpPublish.targets) t.name = QStringLiteral("NyxMap %1").arg(l->name);
         double x = 0;
@@ -257,6 +260,25 @@ int Engine::addViewport(const QString &name, QSize size)
     }
     emit layersChanged();
     return indexOfId(id);
+}
+
+void Engine::setBlendGuide(quint64 viewport, int mode, bool onlyOverlap, bool withRamp)
+{
+    Lock lk(&m_mutex);
+    for (auto &l : m_layers) {
+        if (!l->isViewport || (viewport && l->id != viewport)) continue;
+        l->guideMode = std::clamp(mode, 0, 4);
+        l->guideOnly = onlyOverlap;
+        l->guideRamp = withRamp;
+    }
+}
+
+void Engine::setViewportProbe(quint64 viewport, QPointF at)
+{
+    Lock lk(&m_mutex);
+    const int i = indexOfId(viewport);
+    if (i < 0 || !m_layers[size_t(i)]->isViewport) return;
+    m_layers[size_t(i)]->probe = at.x() < 0 || at.y() < 0 || at.x() > 1 || at.y() > 1 ? QPointF(-1, -1) : at;
 }
 
 bool Engine::isViewport(int i) const

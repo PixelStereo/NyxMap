@@ -186,7 +186,7 @@ private:
     class QStackedWidget *m_inspectorStack = nullptr;
     class QComboBox *m_fixturePicker = nullptr;
     QString m_fixturePickerKey;
-    QWidget *m_settingsTab = nullptr, *m_compositionTab = nullptr;
+    QWidget *m_settingsTab = nullptr, *m_compositionTab = nullptr, *m_viewportsTab = nullptr;
     SnapshotPanel *m_snapshots = nullptr;
     SequenceFeedback *m_feedback = nullptr;
     SequenceWindow *m_seqWindow = nullptr;

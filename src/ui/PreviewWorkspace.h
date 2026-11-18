@@ -24,10 +24,15 @@ public:
     QJsonObject state() const;
     void setState(const QJsonObject &o);
     void setUndoStack(QUndoStack *undo);
+    void selectMask(quint64 layer, int index); // the mask picked in the inspector's list, edited in the views that show that layer
+    bool startMaskDrawing(quint64 layer);      // a new mask drawn in the view in Mask mode that shows that layer (false: none)
     void setCurrentLayer(quint64 id); // the 3D views show its handles when it is one of their scene's objects
 
 signals:
     void layerPicked(int index); // clicked in a 3D view
+    void masksEdited();          // a mask drawn, moved or removed in a view
+    void maskPicked(int index);  // a mask picked in a view
+    void softEdgeEdited();       // a viewport's soft edge dragged in its view
 
 private:
     void setCount(int count);

@@ -6,6 +6,7 @@
 #include "SequencePanel.h"
 #include "SnapshotPanel.h"
 #include "TimelinePanel.h"
+#include "PreviewWorkspace.h"
 #include "LayerInspector.h"
 #include "PresetEditor.h"
 #include "SettingsPanel.h"
@@ -126,6 +127,27 @@ static void mediaBinColumnTests(Engine &engine, const std::function<void(bool, c
                       "asynchronous media-bin color metadata arrives");
                 check(tree->sortColumn() == 3 && group->child(0) == a && bin.selectedPath() == alpha,
                       "metadata updates preserve color sorting and selection");
+                // Preview: the button shows the selected media larger, under the list
+                auto *previewButton = bin.findChild<QPushButton *>("mediaPreviewButton");
+                auto *preview = bin.findChild<QLabel *>("mediaPreview");
+                check(previewButton && preview && !preview->isVisibleTo(&bin) , "the media bin has a Preview button, off at first");
+                if (previewButton && preview) {
+                    previewButton->setChecked(true);
+                    QElapsedTimer waitPreview; waitPreview.start();
+                    while (waitPreview.elapsed() < 5000 && preview->pixmap().isNull()) {
+                        // the metadata arriving rebuilds the list: the item is picked again from its path each time
+                        if (auto *now = itemOf(bravo); now && (tree->currentItem() != now || tree->selectedItems().size() != 1)) {
+                            tree->clearSelection();
+                            tree->setCurrentItem(now);
+                            now->setSelected(true);
+                        }
+                        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+                        QThread::msleep(2);
+                    }
+                    check(preview->isVisibleTo(&bin) && !preview->pixmap().isNull(), "the preview shows the selected picture");
+                    previewButton->setChecked(false);
+                    check(!preview->isVisibleTo(&bin), "the button hides the preview again");
+                }
                 tree->sortItems(0, Qt::AscendingOrder);
                 check(orderIs(a, b, c), "File sorts media by name");
                 auto clickHeader = [tree](int column) {
@@ -690,9 +712,74 @@ int main(int argc, char **argv)
             auto *viewportInspector = window.findChild<LayerInspector *>("viewportInspector");
             auto *mainTabs = window.findChild<QTabWidget *>("mainInspectorTabs");
             auto *inspectorStack = window.findChild<QStackedWidget *>("inspectorStack");
-            check(mainTabs && mainTabs->tabText(0) == "Inspector" && mainTabs->tabText(1) == "Composition" && mainTabs->count() == 3 &&
-                      inspectorStack && inspectorStack->count() == 3,
-                  "one Inspector tab (a layer, a viewport or a fixture), then Composition and Settings");
+            check(mainTabs && mainTabs->tabText(0) == "Inspector" && mainTabs->tabText(1) == "Viewports" && mainTabs->tabText(2) == "Composition" &&
+                      mainTabs->count() == 4 && inspectorStack && inspectorStack->count() == 2,
+                  "an Inspector tab (a layer, a group or a fixture), the Viewports tab (their list, + and −, their parameters), then Composition and Settings");
+            // The views of a viewport have the Layer / Mask tool: a mask drawn in one lands on that viewport, as one undo step
+            {
+                auto *previews = window.findChild<PreviewWorkspace *>();
+                const quint64 shown = engine.layerId(engine.viewports().front());
+                if (previews) previews->setState(QJsonObject{{"count", 1}, {"cells", QJsonArray{QJsonObject{{"source", QString::number(shown)}}}}});
+                app.processEvents();
+                auto *mode = window.findChild<QToolButton *>("previewSelectionMode");
+                check(mode && mode->isVisibleTo(&window) && mode->text() == "Layer", "a view of a viewport has the Layer / Mask button");
+                if (mode && mode->parentWidget() && mode->parentWidget()->parentWidget()) {
+                    QWidget *view = mode->parentWidget()->parentWidget(); // the bar's view
+                    mode->setChecked(true);
+                    app.processEvents();
+                    check(mode->text() == "Mask", "the button says Mask once pressed");
+                    const size_t before = engine.layerMasks(shown).size();
+                    const int w = view->width(), h = view->height();
+                    auto send = [&](QEvent::Type type, QPoint p) {
+                        QMouseEvent e(type, QPointF(p), view->mapToGlobal(QPointF(p)), Qt::LeftButton,
+                                      type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton, Qt::NoModifier);
+                        QApplication::sendEvent(view, &e);
+                        app.processEvents();
+                    };
+                    check(previews && previews->startMaskDrawing(shown), "the view in Mask mode takes the request to draw a mask");
+                    for (QPoint p : {QPoint(w / 3, h / 3), QPoint(2 * w / 3, h / 3), QPoint(w / 2, 2 * h / 3)}) {
+                        send(QEvent::MouseButtonPress, p);
+                        send(QEvent::MouseButtonRelease, p);
+                    }
+                    send(QEvent::MouseButtonDblClick, QPoint(w / 2, 2 * h / 3));
+                    send(QEvent::MouseButtonRelease, QPoint(w / 2, 2 * h / 3));
+                    check(engine.layerMasks(shown).size() == before + 1, "clicking three points then double-clicking draws a mask on the viewport");
+                    if (engine.layerMasks(shown).size() == before + 1) {
+                        // the same editor as the mapping view: a point dragged moves, as one undo step
+                        const Mask drawn = engine.layerMasks(shown).back();
+                        send(QEvent::MouseButtonPress, QPoint(w / 3, h / 3));
+                        send(QEvent::MouseMove, QPoint(w / 3 + 30, h / 3 + 20));
+                        send(QEvent::MouseButtonRelease, QPoint(w / 3 + 30, h / 3 + 20));
+                        const Mask moved = engine.layerMasks(shown).back();
+                        check(moved.nodes.size() == drawn.nodes.size() && moved.nodes[0].p != drawn.nodes[0].p && moved.nodes[1].p == drawn.nodes[1].p,
+                              "dragging a point of the mask in a view moves that point (the editor is the mapping view's)");
+                        QUndoStack *undoStack = window.findChild<QUndoStack *>();
+                        if (undoStack) {
+                            undoStack->undo();
+                            check(engine.layerMasks(shown).back().nodes[0].p == drawn.nodes[0].p, "a dragged point is one undo step");
+                            undoStack->redo();
+                        }
+                        if (undoStack) {
+                            undoStack->undo(); // the move, then the drawing
+                            undoStack->undo();
+                            check(engine.layerMasks(shown).size() == before, "the drawn mask is one undo step");
+                            undoStack->redo();
+                            undoStack->redo();
+                        }
+                    }
+                    mode->setChecked(false);
+                    app.processEvents();
+                }
+            }
+            {
+                QStringList titles;
+                for (QAction *a : window.menuBar()->actions()) titles << a->text().remove('&');
+                check(titles.size() >= 2 && titles.last() == "Help" && titles.at(titles.size() - 2) == "Output" && titles.first() == "File",
+                      "the menus run File … Output, then Help last");
+            }
+            check(window.findChild<QPushButton *>("addViewport") && window.findChild<QPushButton *>("removeViewport") && viewportList &&
+                      viewportList->parentWidget() && viewportList->parentWidget()->isAncestorOf(viewportInspector),
+                  "the Viewports tab has its list and the + and − buttons");
             check(viewportList && viewportList->currentRow() == 0 && viewportInspector && viewportInspector->layerIndex() == engine.viewports().front(), "first viewport selected by default");
             {
                 const quint64 viewport = engine.layerId(engine.viewports().front());
@@ -1136,7 +1223,7 @@ int main(int argc, char **argv)
             auto *viewportInspector = window.findChild<LayerInspector *>("viewportInspector");
             const quint64 v1 = engine.layerId(engine.addViewport("V1")), v2 = engine.layerId(engine.addViewport("V2")),
                           v3 = engine.layerId(engine.addViewport("V3"));
-            if (auto *stack = window.findChild<QStackedWidget *>("inspectorStack")) stack->setCurrentIndex(1);
+            if (tabs) tabs->setCurrentIndex(1); // the Viewports tab
             app.processEvents();
             check(viewportList && viewportList->selectionMode() == QAbstractItemView::ExtendedSelection,
                   "viewport list takes a multiple selection");

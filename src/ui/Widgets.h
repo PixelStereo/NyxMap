@@ -108,6 +108,9 @@ class ZoomBar : public QWidget
 public:
     explicit ZoomBar(QWidget *view, const QString &fitTip);
     QToolButton *addButton(const QString &text, const QString &tip);
+    // The channels of the picture, in black and white: RGB, R, G, B, A (0..4). `changed` is told the one picked
+    QToolButton *addChannelButton(const std::function<void(int)> &changed);
+    static void showChannel(QToolButton *button, int channel); // the button and its menu say this one
     void setZoom(double zoom); // the percentage shown; the bar stays at the top right of its view
     void place();
     QToolButton *magnetButton() const { return m_magnet; }

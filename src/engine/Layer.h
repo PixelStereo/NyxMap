@@ -293,6 +293,28 @@ struct Layer {
     // composition fader/blackout. Its defaults leave the pixels as they are.
     QString outputInputSpace = QStringLiteral("srgb"), outputSpace = QStringLiteral("same");
     double outputExposure = 0; // stops, applied between decode and encode
+    // A viewport's output seen from its projector: mirrored across, upside down, and the soft edge that blends it into
+    // its neighbour (left, right, top, bottom). A width in output pixels (0: none); the curve is the exponent of the
+    // blend in linear light (2: Bourke's, the pair of overlapping edges then adds up to one), the gamma that of the projectors
+    bool flipX = false, flipY = false;
+    double softWidth[4] = {0, 0, 0, 0};
+    double softCurve[4] = {2, 2, 2, 2};
+    double softGamma = 2.2;
+    double softBlack = 0;                      // the black lifted outside the overlap, in % of white (a projector's black adds up in it)
+    double guideColor[3] = {0.2, 0.8, 1.0};    // its color in the blend guide
+    // The blend guide: what the output shows instead of its picture to line up the projectors (the interface's, never saved):
+    // 0 off, 1 pattern, 2 white, 3 grey, 4 black; only the overlap; with the ramp applied
+    int guideMode = 0;
+    bool guideOnly = false, guideRamp = true;
+    // Its warp: the picture on its output, as the projector throws it (a corner pin and a mesh over the output's whole
+    // frame, as a layer's mapping has them; it stays upright, full frame, when there is none)
+    Mapping warp;
+    int warpEdit = 0; // what its view lets drag: 0 nothing, 1 its corners, 2 its mesh points (the interface's, never saved)
+    // A cross over its output where the pointer is in a view of it, to see where a warp point would go (normalized, origin
+    // top left; negative: none). Transient: never saved, never in a snapshot
+    QPointF probe{-1, -1};
+    bool softEdgeActive() const { return softWidth[0] > 0 || softWidth[1] > 0 || softWidth[2] > 0 || softWidth[3] > 0; }
+    bool outputTreated() const { return softEdgeActive() || softBlack > 0 || guideMode > 0; }
     PublishSettings vpPublish;           // NDI, OMT, Syphon, Spout of this viewport
     // How much of this item each viewport shows (an item at the top of the list; inside a group, the group decides).
     // A viewport that is not in the map shows it fully, so a viewport created later shows everything.

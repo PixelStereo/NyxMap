@@ -429,7 +429,22 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     });
     look->start();
 
+    // The selected media, larger: a picture, a video's first frame (the Preview button shows it under the list)
+    m_preview = new QLabel;
+    m_preview->setObjectName(QStringLiteral("mediaPreview"));
+    m_preview->setAlignment(Qt::AlignCenter);
+    m_preview->setMinimumHeight(170);
+    m_preview->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    m_preview->setStyleSheet(QStringLiteral("QLabel { background:#111114; color:#888; border:1px solid #3a3a42; }"));
+    m_preview->setWordWrap(true);
+    m_preview->hide();
+    v->addWidget(m_preview);
     auto *buttons = new QHBoxLayout;
+    m_previewButton = new QPushButton(QStringLiteral("Preview"));
+    m_previewButton->setObjectName(QStringLiteral("mediaPreviewButton"));
+    m_previewButton->setCheckable(true);
+    m_previewButton->setToolTip(QStringLiteral("Show the selected media larger, under the list: an image, or the first frame of a video"));
+    buttons->addWidget(m_previewButton);
     m_relink = new QPushButton(QStringLiteral("Replace…"));
     m_relink->setToolTip(QStringLiteral("Replace this file (media or ISF generator) with another everywhere it is used "
                                         "(moved file, new version)"));
@@ -451,6 +466,12 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     v->addWidget(m_summary);
 
     connect(m_rebuild, &QToolButton::clicked, this, &MediaBin::rebuild);
+    connect(m_previewButton, &QPushButton::toggled, this, [this](bool on) {
+        m_preview->setVisible(on);
+        QSettings().setValue(QStringLiteral("mediabin/preview"), on);
+        if (on) refreshPreview();
+    });
+    m_previewButton->setChecked(QSettings().value(QStringLiteral("mediabin/preview"), false).toBool());
     connect(m_relink, &QPushButton::clicked, this, &MediaBin::relinkSelected);
     connect(m_remove, &QPushButton::clicked, this, &MediaBin::removeSelected);
     connect(m_reveal, &QPushButton::clicked, this, &MediaBin::revealSelected);
@@ -1045,6 +1066,58 @@ void MediaBin::probe(const QString &path)
     });
 }
 
+// The preview follows the selection: the picture of one file, read off the UI thread (a video's first frame), kept
+void MediaBin::refreshPreview()
+{
+    if (!m_preview || !m_previewButton || !m_previewButton->isChecked()) return;
+    const auto items = m_tree->selectedItems();
+    QString path;
+    if (items.size() == 1 && !items.first()->data(0, MissingRole).toBool()) path = items.first()->data(0, PathRole).toString();
+    m_previewPath = path;
+    if (path.isEmpty()) {
+        m_preview->setPixmap(QPixmap());
+        m_preview->setText(items.isEmpty() ? QStringLiteral("Select a media to see it here")
+                                           : items.size() > 1 ? QStringLiteral("Select one media") : QStringLiteral("No preview"));
+        return;
+    }
+    if (const auto it = m_previews.constFind(path); it != m_previews.constEnd()) {
+        m_preview->setText(QString());
+        m_preview->setPixmap(it->scaled(m_preview->size() - QSize(4, 4), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        return;
+    }
+    const bool image = Engine::isImageFile(path), video = !image && !Engine::isAudioFile(path) && !QFileInfo(path).isDir() && Engine::isVideoFile(path);
+    if (!image && !video) {
+        m_preview->setPixmap(QPixmap());
+        m_preview->setText(Engine::isAudioFile(path) ? QStringLiteral("Sound: no picture") : QStringLiteral("No preview"));
+        return;
+    }
+    m_preview->setPixmap(QPixmap());
+    m_preview->setText(QStringLiteral("…"));
+    QPointer<MediaBin> self(this);
+    QThreadPool::globalInstance()->start([self, path, video] {
+        const QImage picture = readThumbnail(path, QSize(640, 360), video);
+        QMetaObject::invokeMethod(
+            QCoreApplication::instance(),
+            [self, path, picture] {
+                if (!self) return;
+                if (!picture.isNull()) {
+                    if (self->m_previews.size() > 24) self->m_previews.clear();
+                    self->m_previews.insert(path, QPixmap::fromImage(picture));
+                }
+                if (self->m_previewPath == path) {
+                    if (picture.isNull()) {
+                        self->m_preview->setText(QStringLiteral("No preview"));
+                    } else {
+                        self->m_preview->setText(QString());
+                        self->m_preview->setPixmap(self->m_previews.value(path).scaled(self->m_preview->size() - QSize(4, 4), Qt::KeepAspectRatio,
+                                                                                          Qt::SmoothTransformation));
+                    }
+                }
+            },
+            Qt::QueuedConnection);
+    });
+}
+
 void MediaBin::updateButtons()
 {
     bool any = false, removable = false;
@@ -1057,6 +1130,7 @@ void MediaBin::updateButtons()
     m_remove->setEnabled(removable);
     m_reveal->setEnabled(any && !m_tree->selectedItems().first()->data(0, MissingRole).toBool() &&
                          !Engine::isStreamUrl(m_tree->selectedItems().first()->data(0, PathRole).toString()));
+    refreshPreview();
 }
 
 static bool isMedia(const QString &p) { return Engine::isToxFile(p) || Model3D::isModelFile(p) || Engine::isVideoFile(p) || Engine::isImageFile(p) || Engine::isAudioFile(p); }

@@ -115,19 +115,21 @@ private:
 class SetMapping : public QUndoCommand
 {
 public:
-    SetMapping(Engine *e, int layer, const Mapping &before, const Mapping &after, const QString &text, bool nudge = false);
+    // `warp`: a viewport's output warp (its `warp`) instead of its mapping
+    SetMapping(Engine *e, int layer, const Mapping &before, const Mapping &after, const QString &text, bool nudge = false,
+               bool warp = false);
     void undo() override { apply(m_before); }
     void redo() override { apply(m_after); }
     int id() const override { return m_nudge ? NudgeId : -1; }
     bool mergeWith(const QUndoCommand *other) override;
-    static Mapping read(Engine *e, int layer);
+    static Mapping read(Engine *e, int layer, bool warp = false);
 
 private:
     void apply(const Mapping &m);
     Engine *m_e;
     int m_layer;
     Mapping m_before, m_after;
-    bool m_nudge;
+    bool m_nudge, m_warp;
     qint64 m_time;
 };
 

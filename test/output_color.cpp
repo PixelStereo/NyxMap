@@ -4,6 +4,7 @@
 #include <QUndoStack>
 #include "color_reference.h"
 #include <QTemporaryDir>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <vector>
@@ -199,6 +200,95 @@ int runOutputColorTests(Engine &engine)
             check(read(second)==identity,"one viewport's transform does not change another viewport");
             check(engine.grabOutput()==composition,"output transform does not rewrite the composition preview");
         }
+    }
+    // Soft edge (Bourke's blend in linear light, then the projector's gamma) and flip, on the viewport's output
+    {
+        engine.setParameter(first,"output/input_space","srgb");
+        engine.setParameter(first,"output/space","same");
+        engine.setParameter(first,"output/exposure",0);
+        engine.renderFrame();
+        const auto base=read(first);
+        engine.setParameter(first,"soft_edge/left/width",256);
+        engine.setParameter(first,"soft_edge/left/curve",2);
+        engine.setParameter(first,"soft_edge/gamma",2.2);
+        engine.renderFrame();
+        const auto soft=read(first);
+        auto ramp=[](double x,double p){ x=std::clamp(x,0.0,1.0); return x<0.5 ? 0.5*std::pow(2*x,p) : 1-0.5*std::pow(2*(1-x),p); };
+        bool ramped=soft[0]<=base[0]/50; // black at the edge
+        for(int x : {40,128,200}) {
+            const double expected=base[size_t(x)*4+1]*std::pow(ramp((x+.5)/256,2),1/2.2);
+            ramped=ramped && std::abs(double(soft[size_t(x)*4+1])-expected)<=std::max(400.0,expected*.02);
+        }
+        for(int x=256;x<width;x+=97) ramped=ramped && soft[size_t(x)*4+1]==base[size_t(x)*4+1];
+        check(ramped,"a soft edge fades the output over its width in pixels, by Bourke's curve at the projector's gamma, and leaves the rest");
+        // two overlapping ramps add up to one in linear light
+        double worst=0;
+        for(int i=0;i<=64;++i) worst=std::max(worst,std::abs(std::pow(ramp(i/64.0,2),1/2.2*2.2)+std::pow(ramp(1-i/64.0,2),1/2.2*2.2)-1));
+        check(worst<1e-9,"the blend of two overlapping edges adds up to one in linear light");
+        engine.setParameter(first,"soft_edge/left/width",0);
+        engine.setParameter(first,"flip/x",true);
+        engine.renderFrame();
+        const auto flipped=read(first);
+        bool mirrored=true;
+        for(int x=0;x<width;x+=51) for(int c=0;c<3;++c)
+            mirrored=mirrored && std::abs(int(flipped[size_t(x)*4+c])-int(base[size_t(width-1-x)*4+c]))<=2;
+        check(mirrored,"flip mirrors the output left to right");
+        engine.setParameter(first,"flip/x",false);
+        // the blend guide: the overlap in the viewport's color, the rest black when only the overlap is asked for
+        engine.setParameter(first,"soft_edge/left/width",256);
+        engine.setParameter(first,"soft_edge/guide/r",1);
+        engine.setParameter(first,"soft_edge/guide/g",0.2);
+        engine.setParameter(first,"soft_edge/guide/b",0.2);
+        engine.setBlendGuide(first,1,true,false);
+        engine.renderFrame();
+        {
+            const auto g=read(first);
+            const bool tinted=std::abs(int(g[100*4])-32768)<400 && std::abs(int(g[100*4+1])-6554)<400 && g[600*4]==0 && g[600*4+1]==0 && g[600*4+2]==0;
+            check(tinted,"the blend guide shows the overlap in the viewport's color and nothing else when only the overlap is asked for");
+        }
+        engine.setBlendGuide(first,2,false,true);
+        engine.renderFrame();
+        {
+            const auto g=read(first);
+            check(g[600*4]>=65530 && g[600*4+1]>=65530 && g[2*4]<g[600*4]/4,"the white field is white outside the ramp and fades inside it");
+        }
+        engine.setParameter(first,"soft_edge/black",10);
+        engine.setBlendGuide(first,4,false,true);
+        engine.renderFrame();
+        {
+            const auto g=read(first);
+            const double lifted=std::pow(0.1,1/2.2)*65535;
+            check(std::abs(double(g[600*4])-lifted)<500 && g[100*4]<600,"the black level is lifted outside the overlap and not inside it");
+        }
+        engine.setBlendGuide(0,0,false,true);
+        engine.setParameter(first,"soft_edge/black",0);
+        engine.setParameter(first,"soft_edge/left/width",0);
+        engine.renderFrame();
+        check(read(first)==base,"without the guide, the black level and the soft edge the output is as it was");
+        // the cross where the pointer is, on the output only while it is set
+        engine.setViewportProbe(first,QPointF(0.25,0.5));
+        engine.renderFrame();
+        {
+            const QImage crossed=engine.grabViewport(first,true).convertToFormat(QImage::Format_RGBA64);
+            const int cx=int(width*0.25), cy=crossed.height()/2;
+            auto white=[&](int x,int y){ const QRgba64 c=crossed.pixelColor(x,y).rgba64(); return c.red()==65535 && c.green()==65535 && c.blue()==65535; };
+            check(white(cx,3) && white(5,cy) && !white(cx+40,3) && !white(5,cy+6),"the cross draws a line across the output through the pointer");
+        }
+        engine.setViewportProbe(first,QPointF(-1,-1));
+        engine.renderFrame();
+        check(read(first)==base,"without the pointer the output has no cross");
+        // the warp: pulling the left corners in leaves the left of the output black and the right edge where it was
+        engine.setParameter(first,"warp/top_left/x",40);
+        engine.setParameter(first,"warp/bottom_left/x",40);
+        engine.renderFrame();
+        const auto warped=read(first);
+        check(warped[10*4+1]==0 && warped[10*4]==0 && warped[10*4+3]==65535 &&
+              std::abs(int(warped[size_t(width-3)*4+1])-int(base[size_t(width-3)*4+1]))<=800,
+              "a warp's corner pin moves the picture over the output and leaves black where it is not");
+        engine.setParameter(first,"warp/top_left/x",0);
+        engine.setParameter(first,"warp/bottom_left/x",0);
+        engine.renderFrame();
+        check(read(first)==base,"a flat warp is the output as it was");
     }
     engine.setParameter(first,"output/input_space","linear709");
     engine.setParameter(first,"output/space","same");
