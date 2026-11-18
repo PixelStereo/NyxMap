@@ -33,6 +33,13 @@ def release_assets(release, repository):
         if url != f"https://github.com/{repository}/releases/download/{tag}/{name}":
             raise ValueError(f"Unexpected asset URL: {url}")
         urls[platform] = url
+    # The Intel macOS zip is optional: a release that has it gets its own badge
+    intel = assets.get(f"{product}-macos-x64-{tag}.zip")
+    if intel:
+        expected = f"https://github.com/{repository}/releases/download/{tag}/{product}-macos-x64-{tag}.zip"
+        if intel["browser_download_url"] != expected:
+            raise ValueError(f"Unexpected asset URL: {intel['browser_download_url']}")
+        urls["mac_intel"] = expected
     companion = assets.get(f'{product}-Companion-{tag}.tgz')
     if companion:
         expected = f'https://github.com/{repository}/releases/download/{tag}/{product}-Companion-{tag}.tgz'
@@ -54,6 +61,23 @@ def select_release(releases, repository):
     raise ValueError("No published release with all four platform packages")
 
 
+GRAPHITE = "1a1c20"  # the badges of every Pixel Stereo application (pxs scripts/release_downloads.py)
+
+
+def badge(label, sub, colour, logo, url):
+    return (f"[![{label} {sub}](https://img.shields.io/badge/{label}-{sub.replace(' ', '_')}-{colour}"
+            f"?style=for-the-badge&logo={logo}&logoColor=white&labelColor={GRAPHITE})]({url})")
+
+
+def badges(urls):
+    rows = [badge("macOS", "Apple Silicon", "6b7787", "apple", urls["mac"])]
+    if "mac_intel" in urls:
+        rows.append(badge("macOS", "Intel", "515b69", "apple", urls["mac_intel"]))
+    rows.append(badge("Windows", "Installer", "2b6fb6", "windows", urls["win"]))
+    rows.append(badge("Linux", "AppImage", "b8821c", "linux", urls["linux"]))
+    return "&nbsp;&nbsp;".join(rows)
+
+
 def downloads(release, urls, repository):
     """Render the README's established download layout; only versions and asset URLs vary."""
     tag = release["tag_name"]
@@ -65,9 +89,7 @@ def downloads(release, urls, repository):
     return f"""<!-- release-downloads:start -->
 **LATEST VERSION · [{tag}{preview}](https://github.com/{repository}/releases/tag/{tag})**
 
-[![macOS](https://img.shields.io/badge/macOS-Download-34CC34?style=for-the-badge&logo=apple&logoColor=white)]({urls['mac']})
-[![Windows](https://img.shields.io/badge/Windows-Download-CCCC34?style=for-the-badge&logo=windows&logoColor=white)]({urls['win']})
-[![Linux](https://img.shields.io/badge/Linux-Download-CC3434?style=for-the-badge&logo=linux&logoColor=111111)]({urls['linux']})
+{badges(urls)}
 
 <a href="https://pixelstereo.github.io/NyxMap/"><img alt="Documentation" src="https://img.shields.io/badge/documentation-blue?style=for-the-badge&logo=material%20for%20mkdocs" height="28"></a>
 

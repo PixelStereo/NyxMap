@@ -527,9 +527,14 @@ jobs:
 
   macos:
     if: needs.scope.outputs.macos == 'true'
-    name: macOS (Apple Silicon) + tests
-    runs-on: macos-latest
+    name: macOS (${{ matrix.label }}) + tests
+    runs-on: ${{ matrix.runner }}
     needs: [scope, media]
+    # The Intel build is made for a release (a tag or a manual run) and attached when it passes; it never blocks the release
+    continue-on-error: ${{ matrix.optional || false }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON((github.ref_type == 'tag' || github.event_name == 'workflow_dispatch') && '{"include":[{"runner":"macos-latest","arch":"arm64","label":"Apple Silicon"},{"runner":"macos-15-intel","arch":"x64","label":"Intel","optional":true}]}' || '{"include":[{"runner":"macos-latest","arch":"arm64","label":"Apple Silicon"}]}') }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -579,7 +584,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: macos-test-log
+          name: macos-test-log-${{ matrix.arch }}
           path: build/Testing/Temporary/LastTest*.log
           retention-days: 7
       - name: Dependency versions
@@ -735,7 +740,7 @@ jobs:
           if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then TAG_SUFFIX="-$GITHUB_REF_NAME"; fi
           cp deps-macos.txt "$APP/Contents/Resources/DEPENDENCIES.txt"
           codesign --force --sign - "$APP" # the resource added: sealed again
-          ditto -c -k --keepParent "$APP" "NyxMap-macos-arm64${TAG_SUFFIX}.zip"
+          ditto -c -k --keepParent "$APP" "NyxMap-macos-${{ matrix.arch }}${TAG_SUFFIX}.zip"
       - name: Smoke test of the extracted app
         if: needs.scope.outputs.package == 'true'
         run: |
@@ -748,7 +753,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: needs.scope.outputs.package == 'true'
         with:
-          name: NyxMap-macos
+          name: NyxMap-macos-${{ matrix.arch }}
           path: NyxMap-macos*.zip
 
   windows:

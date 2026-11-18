@@ -11,9 +11,7 @@ Every effect can be applied to a layer or through an RGBA mask — compositing a
 <!-- release-downloads:start -->
 **LATEST VERSION · [v0.7.0](https://github.com/PixelStereo/NyxMap/releases/tag/v0.7.0)**
 
-[![macOS](https://img.shields.io/badge/macOS-Download-34CC34?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/PixelStereo/NyxMap/releases/download/v0.7.0/NyxMap-macos-arm64-v0.7.0.zip)
-[![Windows](https://img.shields.io/badge/Windows-Download-CCCC34?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/PixelStereo/NyxMap/releases/download/v0.7.0/NyxMap-windows-x64-v0.7.0-Setup.exe)
-[![Linux](https://img.shields.io/badge/Linux-Download-CC3434?style=for-the-badge&logo=linux&logoColor=111111)](https://github.com/PixelStereo/NyxMap/releases/download/v0.7.0/NyxMap-linux-x64-v0.7.0.AppImage)
+[![macOS Apple Silicon](https://img.shields.io/badge/macOS-Apple_Silicon-6b7787?style=for-the-badge&logo=apple&logoColor=white&labelColor=1a1c20)](https://github.com/PixelStereo/NyxMap/releases/download/v0.7.0/NyxMap-macos-arm64-v0.7.0.zip)&nbsp;&nbsp;[![Windows Installer](https://img.shields.io/badge/Windows-Installer-2b6fb6?style=for-the-badge&logo=windows&logoColor=white&labelColor=1a1c20)](https://github.com/PixelStereo/NyxMap/releases/download/v0.7.0/NyxMap-windows-x64-v0.7.0-Setup.exe)&nbsp;&nbsp;[![Linux AppImage](https://img.shields.io/badge/Linux-AppImage-b8821c?style=for-the-badge&logo=linux&logoColor=white&labelColor=1a1c20)](https://github.com/PixelStereo/NyxMap/releases/download/v0.7.0/NyxMap-linux-x64-v0.7.0.AppImage)
 
 <a href="https://pixelstereo.github.io/NyxMap/"><img alt="Documentation" src="https://img.shields.io/badge/documentation-blue?style=for-the-badge&logo=material%20for%20mkdocs" height="28"></a>
 
