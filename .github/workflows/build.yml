@@ -261,7 +261,7 @@ jobs:
         run: |
           # Only distribution files, fixtures and the test harness cross this boundary.
           mkdir -p "$RUNNER_TEMP/linux-packages" "$RUNNER_TEMP/linux-smoke-scripts"
-          cp dist/NyxMap-linux-x86_64*.AppImage dist/NyxMap-linux-x86_64*.tar.gz "$RUNNER_TEMP/linux-packages/"
+          cp dist/NyxMap-linux-x64*.AppImage dist/NyxMap-linux-x64*.tar.gz "$RUNNER_TEMP/linux-packages/"
           cp scripts/smoke_package.py scripts/smoke_linux_package.py scripts/linux_qt_plugins.py "$RUNNER_TEMP/linux-smoke-scripts/"
           for ubuntu_version in 26.04; do
             docker run --rm --init --network none \
@@ -275,8 +275,8 @@ jobs:
         with:
           name: NyxMap-linux
           path: |
-            dist/NyxMap-linux-x86_64*.AppImage
-            dist/NyxMap-linux-x86_64*.tar.gz
+            dist/NyxMap-linux-x64*.AppImage
+            dist/NyxMap-linux-x64*.tar.gz
 
   workspace-memory:
     if: needs.scope.outputs.memory == 'true'
@@ -735,7 +735,7 @@ jobs:
           if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then TAG_SUFFIX="-$GITHUB_REF_NAME"; fi
           cp deps-macos.txt "$APP/Contents/Resources/DEPENDENCIES.txt"
           codesign --force --sign - "$APP" # the resource added: sealed again
-          ditto -c -k --keepParent "$APP" "NyxMap-macos${TAG_SUFFIX}.zip"
+          ditto -c -k --keepParent "$APP" "NyxMap-macos-arm64${TAG_SUFFIX}.zip"
       - name: Smoke test of the extracted app
         if: needs.scope.outputs.package == 'true'
         run: |
@@ -985,7 +985,7 @@ jobs:
           choco install nsis --yes --no-progress
           if ($LASTEXITCODE -ne 0) { throw "NSIS install failed" }
           $makensis = Join-Path ${env:ProgramFiles(x86)} "NSIS\makensis.exe"
-          $setup = Join-Path $PWD "NyxMap-windows$tagSuffix-Setup.exe"
+          $setup = Join-Path $PWD "NyxMap-windows-x64$tagSuffix-Setup.exe"
           & $makensis "/DPRODUCT=NyxMap" "/DAPP_VERSION=$version" "/DAPP_EXE=$appName.exe" "/DPAYLOAD=$PWD\dist" "/DOUTPUT=$setup" third_party\pxs\packaging\windows.nsi
           if ($LASTEXITCODE -ne 0) { throw "makensis failed" }
       - name: Smoke test of the installed application

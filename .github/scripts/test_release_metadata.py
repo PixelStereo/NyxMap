@@ -12,8 +12,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def release(tag="v1.2.3", date="2026-10-22T10:00:00Z", **flags):
-    names = [f"NyxMap-macos-{tag}.zip", f"NyxMap-windows-{tag}-Setup.exe",
-             f"NyxMap-linux-x86_64-{tag}.AppImage", f"NyxMap-linux-x86_64-{tag}.tar.gz"]
+    names = [f"NyxMap-macos-arm64-{tag}.zip", f"NyxMap-windows-x64-{tag}-Setup.exe",
+             f"NyxMap-linux-x64-{tag}.AppImage", f"NyxMap-linux-x64-{tag}.tar.gz"]
     return {"tag_name": tag, "published_at": date, "draft": False, "prerelease": False, **flags,
             "assets": [{"name": name, "state": "uploaded", "size": 123,
                         "browser_download_url": f"https://github.com/{REPO}/releases/download/{tag}/{name}"}
@@ -21,14 +21,18 @@ def release(tag="v1.2.3", date="2026-10-22T10:00:00Z", **flags):
 
 
 class ReleaseMetadataTests(unittest.TestCase):
-    def test_release_before_the_windows_installer_keeps_its_zip(self):
+    def test_release_before_the_shared_names_keeps_its_older_files(self):
         old = release()
         for asset in old["assets"]:
+            for new_name, old_name in (("-macos-arm64-", "-macos-"), ("-windows-x64-", "-windows-"), ("-linux-x64-", "-linux-x86_64-")):
+                asset["name"] = asset["name"].replace(new_name, old_name)
+                asset["browser_download_url"] = asset["browser_download_url"].replace(new_name, old_name)
             if asset["name"].endswith("-Setup.exe"):
                 asset["name"] = asset["name"].replace("-Setup.exe", ".zip")
                 asset["browser_download_url"] = asset["browser_download_url"].replace("-Setup.exe", ".zip")
         chosen, urls = metadata.select_release([old], REPO)
         self.assertTrue(urls["win"].endswith("-windows-v1.2.3.zip"))
+        self.assertTrue(urls["linux"].endswith("-linux-x86_64-v1.2.3.AppImage"))
 
     def test_actual_assets_and_idempotence(self):
         with tempfile.TemporaryDirectory() as tmp:

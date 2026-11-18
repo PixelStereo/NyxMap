@@ -371,17 +371,17 @@ def package(build, ffmpeg, omt, ndi, output):
     (app / "README-Linux.txt").write_text(
         "NyxMap — Ubuntu 26.04 or newer, x86_64\n\n"
         "Portable archive: extract the whole folder, then run ./AppRun. No installation or FUSE needed.\n"
-        "AppImage: chmod +x NyxMap-linux-x86_64*.AppImage, then run it.\n"
-        "If FUSE is unavailable: ./NyxMap-linux-x86_64*.AppImage --appimage-extract-and-run\n"
+        "AppImage: chmod +x NyxMap-linux-x64*.AppImage, then run it.\n"
+        "If FUSE is unavailable: ./NyxMap-linux-x64*.AppImage --appimage-extract-and-run\n"
         "Qt, FFmpeg, audio/camera plugins, NDI and OMT are included. The host provides glibc, a desktop session "
         "and Vulkan 1.1 graphics drivers (Mesa on most distributions). Optional Blackmagic hardware needs Desktop Video.\n"
         "OMT discovery needs a running Avahi service; the application reports its absence.\n"
         "Licences and dependency/source versions: usr/bin/THIRD-PARTY-NOTICES.md, THIRD-PARTY-LINUX.md, "
         "DEPENDENCIES.txt and licenses/.\n")
     suffix = "-" + os.environ["GITHUB_REF_NAME"] if os.environ.get("GITHUB_REF_TYPE") == "tag" else ""
-    image = output / f"NyxMap-linux-x86_64{suffix}.AppImage"
+    image = output / f"NyxMap-linux-x64{suffix}.AppImage"
     run([tool["appimagetool"], "--runtime-file", tool["runtime-x86_64"], app, image], env={**env, "ARCH": "x86_64"})
-    with tarfile.open(output / f"NyxMap-linux-x86_64{suffix}.tar.gz", "w:gz") as archive:
+    with tarfile.open(output / f"NyxMap-linux-x64{suffix}.tar.gz", "w:gz") as archive:
         archive.add(app, arcname="NyxMap")
 
 
