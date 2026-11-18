@@ -19,10 +19,11 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <vector>
 
 struct ShowControl {
-    enum class Kind { Slider = 0, Toggle, Choice, Button, Color, Pad, Group, Adsr };
-    static constexpr int kKindCount = 8;
+    enum class Kind { Slider = 0, Toggle, Choice, Button, Color, Pad, Group, Adsr, Multi };
+    static constexpr int kKindCount = 9;
     static constexpr int kGridColumns = 12, kGridRowsMax = 400; // the remote page's grid
     quint64 id = 0;
     QString name = QStringLiteral("Control");
@@ -48,6 +49,10 @@ struct ShowControl {
     std::array<double, 3> rgb{{1, 1, 1}}; // Color
     // Adsr: an envelope's four numbers, control/<key>/attack, decay, sustain (0..1) and release; the times in seconds up to `max`
     std::array<double, 4> adsr{{0.05, 0.2, 0.7, 0.4}};
+    // Multi: a row of sliders in one control (2..32), each of the range min..max; control/<key>/1, /2…
+    int count = 8;
+    std::vector<double> multi;
+    static constexpr int kMultiMax = 32;
     static constexpr const char *const kAdsrKeys[4] = {"attack", "decay", "sustain", "release"};
 
     // What a remote page may ask for: a short word, a color in #rrggbb; anything else is the default
@@ -67,7 +72,7 @@ struct ShowControl {
     }
     static QString kindKey(Kind k)
     {
-        static const char *const keys[] = {"slider", "toggle", "choice", "button", "color", "pad", "group", "adsr"};
+        static const char *const keys[] = {"slider", "toggle", "choice", "button", "color", "pad", "group", "adsr", "multi"};
         return QString::fromLatin1(keys[std::clamp(int(k), 0, kKindCount - 1)]);
     }
     static Kind kindFromKey(const QString &s)
@@ -78,7 +83,7 @@ struct ShowControl {
     }
     static QString kindName(Kind k)
     {
-        static const char *const names[] = {"Slider", "Toggle", "Selector", "Button", "Color", "2D Slider", "Group", "ADSR"};
+        static const char *const names[] = {"Slider", "Toggle", "Selector", "Button", "Color", "2D Slider", "Group", "ADSR", "Multi-slider"};
         return QString::fromLatin1(names[std::clamp(int(k), 0, kKindCount - 1)]);
     }
     // The value kept within what the control takes
@@ -93,6 +98,7 @@ struct ShowControl {
         case Kind::Choice: return choices.isEmpty() ? 0.0 : std::clamp(std::round(v), 0.0, double(choices.size() - 1));
         case Kind::Color:
         case Kind::Adsr:
+        case Kind::Multi:
         case Kind::Group: return value;
         }
         return value;
@@ -134,6 +140,17 @@ struct ShowControl {
             break;
         }
         case Kind::Color: o["rgb"] = QJsonArray{rgb[0], rgb[1], rgb[2]}; break;
+        case Kind::Multi: {
+            o["count"] = count;
+            o["min"] = min;
+            o["max"] = max;
+            o["step"] = step;
+            o["default"] = def;
+            QJsonArray list;
+            for (double v : multi) list.append(v);
+            o["values"] = list;
+            break;
+        }
         case Kind::Adsr:
             o["max"] = max;
             o["adsr"] = QJsonArray{adsr[0], adsr[1], adsr[2], adsr[3]};
@@ -182,6 +199,18 @@ struct ShowControl {
             break;
         case Kind::Toggle: c.value = o.value("value").toBool() ? 1.0 : 0.0; break;
         case Kind::Button: break;
+        case Kind::Multi: {
+            c.count = std::clamp(o.value("count").toInt(8), 2, kMultiMax);
+            c.min = finite(o.value("min").toDouble(0), 0);
+            c.max = finite(o.value("max").toDouble(1), 1);
+            if (c.max <= c.min) c.max = c.min + 1;
+            c.step = std::clamp(finite(o.value("step").toDouble(0.01), 0.01), 1e-6, std::max(1e-6, c.max - c.min));
+            c.def = std::clamp(finite(o.value("default").toDouble(c.min), c.min), c.min, c.max);
+            const QJsonArray a = o.value("values").toArray();
+            c.multi.assign(size_t(c.count), c.def);
+            for (int i = 0; i < c.count && i < a.size(); ++i) c.multi[size_t(i)] = std::clamp(finite(a.at(i).toDouble(c.def), c.def), c.min, c.max);
+            break;
+        }
         case Kind::Adsr: {
             c.min = 0;
             c.max = std::clamp(finite(o.value("max").toDouble(2), 2), 0.1, 60.0);

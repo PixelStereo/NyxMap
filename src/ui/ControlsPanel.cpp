@@ -7,6 +7,9 @@
 #include "PresetEditor.h"
 #include "TimelinePanel.h"
 #include "Widgets.h"
+#include <QSpinBox>
+#include <functional>
+#include <QPainter>
 
 #include <QAbstractItemView>
 #include <QCheckBox>
@@ -86,6 +89,60 @@ int decimalsFor(double step)
 }
 } // namespace
 
+
+// A row of bars to take in the hand: a Multi-slider's numbers, each a bar, dragged across (the same gesture as the remote's)
+class MultiBars : public QWidget
+{
+public:
+    std::function<void(const std::vector<double> &)> edited;
+    explicit MultiBars(QWidget *parent = nullptr) : QWidget(parent)
+    {
+        setMinimumHeight(80);
+        setMouseTracking(false);
+    }
+    void setRange(double lo, double hi) { m_lo = lo; m_hi = hi; update(); }
+    void setValues(const std::vector<double> &v)
+    {
+        if (m_down) return;
+        m_v = v;
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.fillRect(rect(), QColor(37, 37, 43));
+        const int n = int(m_v.size());
+        if (!n) return;
+        const double w = double(width()) / n, span = m_hi - m_lo;
+        for (int i = 0; i < n; ++i) {
+            const double f = span > 0 ? std::clamp((m_v[size_t(i)] - m_lo) / span, 0.0, 1.0) : 0.0;
+            const QRectF bar(i * w + 2, height() * (1 - f), w - 4, height() * f);
+            p.fillRect(bar, QColor(41, 199, 224, 90));
+            p.fillRect(QRectF(bar.left(), bar.top(), bar.width(), 3), QColor(41, 199, 224));
+        }
+    }
+    void mousePressEvent(QMouseEvent *e) override { m_down = true; set(e->position()); }
+    void mouseMoveEvent(QMouseEvent *e) override { if (m_down) set(e->position()); }
+    void mouseReleaseEvent(QMouseEvent *) override { m_down = false; }
+
+private:
+    void set(QPointF at)
+    {
+        const int n = int(m_v.size());
+        if (!n) return;
+        const int i = std::clamp(int(at.x() / (double(width()) / n)), 0, n - 1);
+        m_v[size_t(i)] = m_lo + (m_hi - m_lo) * std::clamp(1 - at.y() / height(), 0.0, 1.0);
+        update();
+        if (edited) edited(m_v);
+    }
+    std::vector<double> m_v;
+    double m_lo = 0, m_hi = 1;
+    bool m_down = false;
+};
+
 ControlsPanel::ControlsPanel(Engine *engine, QUndoStack *undo, QWidget *parent) : QWidget(parent), m_engine(engine), m_undo(undo)
 {
     setObjectName(QStringLiteral("controlsPanel"));
@@ -151,6 +208,7 @@ void ControlsPanel::addControl(int kind)
     if (c.kind == ShowControl::Kind::Choice) c.choices = {QStringLiteral("A"), QStringLiteral("B"), QStringLiteral("C")};
     if (c.kind == ShowControl::Kind::Pad) c.def = c.value = c.value2 = 0.5; // the middle of its square
     if (c.kind == ShowControl::Kind::Adsr) c.max = 2; // the longest of its times, in seconds
+    if (c.kind == ShowControl::Kind::Multi) c.multi.assign(size_t(c.count), c.def);
     const QJsonArray before = m_engine->controlsJson();
     if (!m_engine->addControl(c)) return;
     m_undo->push(new SetControlsCommand(m_engine, before, m_engine->controlsJson(), QStringLiteral("Add Control")));
@@ -166,7 +224,9 @@ void ControlsPanel::editControl(quint64 id)
     auto *form = new QFormLayout(&dialog);
     auto *name = new QLineEdit(current->name);
     form->addRow(QStringLiteral("Name"), name);
-    if (current->kind == ShowControl::Kind::Adsr)
+    if (current->kind == ShowControl::Kind::Multi)
+        form->addRow(QStringLiteral("Address"), new QLabel(QStringLiteral("/control/%1 (one float per slider) · …/1 · …/2 …").arg(current->key)));
+    else if (current->kind == ShowControl::Kind::Adsr)
         form->addRow(QStringLiteral("Address"), new QLabel(QStringLiteral("/control/%1 (attack, decay, sustain, release) · …/attack · …/decay · …/sustain · …/release").arg(current->key)));
     else if (current->kind == ShowControl::Kind::Pad)
         form->addRow(QStringLiteral("Address"), new QLabel(QStringLiteral("/control/%1/x · /control/%1/y").arg(current->key)));
@@ -176,7 +236,14 @@ void ControlsPanel::editControl(quint64 id)
     QLineEdit *unit = nullptr;
     QPlainTextEdit *choices = nullptr;
     QDoubleSpinBox *longest = nullptr;
-    if (current->kind == ShowControl::Kind::Slider || current->kind == ShowControl::Kind::Pad) {
+    QSpinBox *count = nullptr;
+    if (current->kind == ShowControl::Kind::Multi) {
+        count = new QSpinBox;
+        count->setRange(2, ShowControl::kMultiMax);
+        count->setValue(current->count);
+        form->addRow(QStringLiteral("Sliders"), count);
+    }
+    if (current->kind == ShowControl::Kind::Slider || current->kind == ShowControl::Kind::Pad || current->kind == ShowControl::Kind::Multi) {
         min = new QDoubleSpinBox;
         max = new QDoubleSpinBox;
         step = new QDoubleSpinBox;
@@ -227,6 +294,7 @@ void ControlsPanel::editControl(quint64 id)
         change.unit = unit->text();
     }
     if (longest) change.max = longest->value();
+    if (count) change.count = count->value();
     if (choices) {
         QStringList list;
         for (const QString &line : choices->toPlainText().split(QLatin1Char('\n')))
@@ -466,6 +534,16 @@ QWidget *ControlsPanel::makeRow(const ShowControl &c, const std::vector<const Sh
     QWidget *field = nullptr;
     switch (c.kind) {
     case ShowControl::Kind::Group: break; // a frame: makeGroup
+    case ShowControl::Kind::Multi: {
+        auto *bars = new MultiBars;
+        bars->setObjectName(QStringLiteral("control_%1").arg(c.key));
+        bars->setRange(c.min, c.max);
+        bars->setValues(c.multi);
+        bars->edited = [this, id](const std::vector<double> &v) { m_engine->setControlMulti(id, v); };
+        field = bars;
+        h->addWidget(bars, 1);
+        break;
+    }
     case ShowControl::Kind::Adsr: {
         // An envelope to take in the hand (the instruments' and the interactions' own widget): its four numbers are parameters
         auto *curve = new AdsrCurve;
@@ -559,7 +637,10 @@ QWidget *ControlsPanel::makeRow(const ShowControl &c, const std::vector<const Sh
     const QString path = QStringLiteral("control/") + c.key;
     if (field) {
         // Its value as any value: in a preset (Edit mode, a click on its name, right-click), on a timeline, learned by an interaction
-        const QStringList paths = c.kind == ShowControl::Kind::Adsr
+        QStringList multiPaths;
+        for (int i = 0; i < c.count && c.kind == ShowControl::Kind::Multi; ++i) multiPaths << path + QLatin1Char('/') + QString::number(i + 1);
+        const QStringList paths = c.kind == ShowControl::Kind::Multi ? multiPaths
+                                  : c.kind == ShowControl::Kind::Adsr
                                       ? QStringList{path + QStringLiteral("/attack"), path + QStringLiteral("/decay"), path + QStringLiteral("/sustain"), path + QStringLiteral("/release")}
                                   : c.kind == ShowControl::Kind::Pad ? QStringList{path + QStringLiteral("/x"), path + QStringLiteral("/y")}
                                   : c.kind == ShowControl::Kind::Color
@@ -597,7 +678,9 @@ void ControlsPanel::refreshValues()
         const auto it = std::find_if(controls.begin(), controls.end(), [&](const ShowControl &c) { return c.id == row.id; });
         if (it == controls.end()) continue;
         const ShowControl &c = *it;
-        if (auto *curve = dynamic_cast<AdsrCurve *>(row.field.data())) {
+        if (auto *bars = dynamic_cast<MultiBars *>(row.field.data())) {
+            bars->setValues(c.multi);
+        } else if (auto *curve = dynamic_cast<AdsrCurve *>(row.field.data())) {
             curve->setValues({c.adsr[0], c.adsr[1], c.adsr[2], c.adsr[3]});
         } else if (auto *pad = qobject_cast<XyPad *>(row.field.data())) {
             if (!pad->isDragging()) pad->setValue(c.value, c.value2);

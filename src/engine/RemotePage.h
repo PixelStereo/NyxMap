@@ -55,6 +55,15 @@ header h1 { flex:1; margin:0 10px 0 0; font-size:16px; font-weight:600; white-sp
 .kval { fill:none; stroke:var(--a); stroke-width:8; stroke-linecap:round; filter:drop-shadow(0 0 3px var(--a)); }
 .kdot { stroke:#f2f2f5; stroke-width:3.5; stroke-linecap:round; }
 .ktx { fill:var(--text); font:600 15px -apple-system, system-ui, sans-serif; text-anchor:middle; font-variant-numeric:tabular-nums; }
+.multi { display:flex; width:100%; height:100%; align-self:stretch; touch-action:none; }
+.mb { flex:1; position:relative; margin-right:3px; background:var(--panel2); border-radius:6px; overflow:hidden; }
+.mb:last-child { margin-right:0; }
+.mf { position:absolute; left:0; right:0; bottom:0; background:var(--a); opacity:.3; }
+.me { position:absolute; left:0; right:0; height:4px; background:var(--a); box-shadow:0 0 10px var(--a); border-radius:2px; }
+.multi.h { flex-direction:column; }
+.multi.h .mb { margin:0 0 3px; } .multi.h .mb:last-child { margin:0; }
+.multi.h .mf { right:auto; top:0; height:auto; }
+.multi.h .me { top:0; bottom:0; right:auto; width:4px; height:auto; }
 .adsr { position:relative; width:100%; height:100%; align-self:stretch; touch-action:none; }
 .adsr svg { display:block; }
 .aarea { fill:var(--a); opacity:.14; }
@@ -176,7 +185,7 @@ inline constexpr char kScriptA[] = R"JS(
       let m; try { m = JSON.parse(e.data); } catch (_) { return; }
       if (m.t === 'controls') {
         controls = m.list || []; byId = {}; $('#title').textContent = m.title || 'NyxMap';
-        controls.forEach(c => { byId[c.id] = c; values[c.id] = c.kind === 'color' ? c.rgb : c.kind === 'pad' ? [c.x, c.y] : c.kind === 'adsr' ? c.adsr : c.value; });
+        controls.forEach(c => { byId[c.id] = c; values[c.id] = c.kind === 'color' ? c.rgb : c.kind === 'pad' ? [c.x, c.y] : c.kind === 'adsr' ? c.adsr : c.kind === 'multi' ? c.values : c.value; });
         if (busy) again = true; else render();
       } else if (m.t === 'values') { Object.assign(values, m.v || {}); update(); }
     };
@@ -190,9 +199,9 @@ inline constexpr char kScriptA[] = R"JS(
 
 // B: the widgets, in SVG and CSS. Each takes its control and `io` (begin, input(v), end) and gives { el, set(v) }
 inline constexpr char kScriptB[] = R"JS(
-  const wDefault = { slider: 'fader', toggle: 'switch', choice: 'buttons', button: 'hold', color: 'picker', pad: 'pad', adsr: 'adsr' };
-  const wChoices = { slider: ['fader', 'vfader', 'knob', 'number', 'slim', 'vslim'], toggle: ['switch'], choice: ['buttons', 'menu'], button: ['hold', 'tap'], color: ['picker'], pad: ['pad'], adsr: ['adsr'] };
-  const wName = { fader: 'Fader', vfader: 'Vertical fader', slim: 'Slim fader', vslim: 'Slim vertical fader', knob: 'Encoder', number: 'Number', switch: 'Switch', buttons: 'Buttons', menu: 'Menu', hold: 'Hold button', tap: 'Tap button', picker: 'Color', pad: 'XY pad', adsr: 'ADSR' };
+  const wDefault = { slider: 'fader', toggle: 'switch', choice: 'buttons', button: 'hold', color: 'picker', pad: 'pad', adsr: 'adsr', multi: 'multi' };
+  const wChoices = { slider: ['fader', 'vfader', 'knob', 'number', 'slim', 'vslim'], toggle: ['switch'], choice: ['buttons', 'menu'], button: ['hold', 'tap'], color: ['picker'], pad: ['pad'], adsr: ['adsr'], multi: ['multi', 'hmulti'] };
+  const wName = { fader: 'Fader', vfader: 'Vertical fader', slim: 'Slim fader', vslim: 'Slim vertical fader', knob: 'Encoder', number: 'Number', switch: 'Switch', buttons: 'Buttons', menu: 'Menu', hold: 'Hold button', tap: 'Tap button', picker: 'Color', pad: 'XY pad', adsr: 'ADSR', multi: 'Multi-slider', hmulti: 'Horizontal multi-slider' };
   const widgetOf = c => (wChoices[c.kind] || []).indexOf(c.widget) >= 0 ? c.widget : wDefault[c.kind];
   // The big one, as TouchOSC and Lemur have it: the whole tile is the fader, a finger anywhere puts the level there, and the level is
   // the filled part, ended by a bright edge. Nothing small to catch
@@ -267,7 +276,28 @@ inline constexpr char kScriptB[] = R"JS(
       return { el: pad, set: v => { if (!down) draw(v); } };
     }
     if (c.kind === 'adsr') return adsr(c, io);
+    if (c.kind === 'multi') return multi(c, io, w === 'hmulti');
     return { el: el('div'), set: () => {} };
+  }
+  // A row of sliders in one tile (as Lemur's and NexusUI's multi-slider): a finger across the bars sets each one it crosses
+  function multi(c, io, horizontal) {
+    const root = el('div', 'multi' + (horizontal ? ' h' : '')), n = c.count, span = (c.max - c.min) || 1, bars = [];
+    let v = (c.values || []).slice(), down = false, last = -1, lastF = 0;
+    while (v.length < n) v.push(c.min);
+    for (let i = 0; i < n; i++) { const b = el('div', 'mb'), f = el('div', 'mf'), e = el('div', 'me'); b.appendChild(f); b.appendChild(e); root.appendChild(b); bars.push({ f, e }); }
+    const draw = () => bars.forEach((b, i) => { const p = (clamp((v[i] - c.min) / span, 0, 1) * 100) + '%';
+      if (horizontal) { b.f.style.width = p; b.e.style.left = 'calc(' + p + ' - 2px)'; } else { b.f.style.height = p; b.e.style.bottom = 'calc(' + p + ' - 2px)'; } });
+    const snap = f => { const st = c.step || 0.01; return clamp(Number((Math.round((c.min + f * span - c.min) / st) * st + c.min).toFixed(6)), Math.min(c.min, c.max), Math.max(c.min, c.max)); };
+    const put = p => {
+      const r = root.getBoundingClientRect();
+      const i = clamp(Math.floor((horizontal ? (p.y - r.top) / r.height : (p.x - r.left) / r.width) * n), 0, n - 1);
+      const f = clamp(horizontal ? (p.x - r.left) / r.width : 1 - (p.y - r.top) / r.height, 0, 1);
+      const from = last < 0 ? i : last, lo = Math.min(from, i), hi = Math.max(from, i); // a fast swipe crosses bars between two samples
+      for (let k = lo; k <= hi; k++) v[k] = snap(hi === lo ? f : lastF + (f - lastF) * ((k - from) / (i - from || 1)));
+      last = i; lastF = f; draw(); io.input(v.slice());
+    };
+    press(root, { down: p => { down = true; last = -1; io.begin(); put(p); }, move: put, up: p => { put(p); down = false; io.end(); } });
+    return { el: root, resize: draw, set: x => { if (!down) { v = x.slice(); while (v.length < n) v.push(c.min); draw(); } } };
   }
   // An envelope in the hand: attack, decay, sustain and release, each by its own handle (the times along four slots, the sustain up and down)
   function adsr(c, io) {
@@ -297,7 +327,7 @@ inline constexpr char kScriptB[] = R"JS(
 
 // C: pages, the grid, the tiles, Edit mode (drag, resize)
 inline constexpr char kScriptC[] = R"JS(
-  const sizeOf = c => { const w = widgetOf(c); return c.kind === 'group' ? [12, 1] : c.kind === 'pad' ? [5, 5] : c.kind === 'adsr' ? [6, 3] : c.kind === 'choice' ? [6, 2] : c.kind === 'slider' ? (w === 'knob' ? [3, 3] : w === 'vfader' ? [2, 6] : w === 'vslim' ? [1, 5] : w === 'number' ? [3, 2] : w === 'slim' ? [5, 2] : [6, 3]) : [3, 2]; };
+  const sizeOf = c => { const w = widgetOf(c); return c.kind === 'group' ? [12, 1] : c.kind === 'pad' ? [5, 5] : c.kind === 'adsr' ? [6, 3] : c.kind === 'multi' ? (widgetOf(c) === 'hmulti' ? [6, 5] : [8, 4]) : c.kind === 'choice' ? [6, 2] : c.kind === 'slider' ? (w === 'knob' ? [3, 3] : w === 'vfader' ? [2, 6] : w === 'vslim' ? [1, 5] : w === 'number' ? [3, 2] : w === 'slim' ? [5, 2] : [6, 3]) : [3, 2]; };
   const minOf = c => c.kind === 'pad' ? [2, 2] : c.kind === 'slider' && widgetOf(c) === 'knob' ? [2, 2] : c.kind === 'slider' && (widgetOf(c) === 'vfader' || widgetOf(c) === 'vslim') ? [1, 3] : c.kind === 'group' ? [2, 1] : [2, 1];
   const hit = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
   const topOf = c => { let p = c.group; while (p && byId[p] && byId[p].group) p = byId[p].group; return p || 0; };
@@ -340,7 +370,7 @@ inline constexpr char kScriptC[] = R"JS(
     hd.appendChild(name); if (c.kind === 'slider') hd.appendChild(val); face.appendChild(hd);
     if (c.kind !== 'group' && c.kind !== 'toggle') {
       const bd = el('div', 'bd');
-      const kindMsg = (v) => c.kind === 'adsr' ? { t: 'adsr', id: c.id, v } : { t: 'set', id: c.id, v };
+      const kindMsg = (v) => c.kind === 'adsr' ? { t: 'adsr', id: c.id, v } : c.kind === 'multi' ? { t: 'multi', id: c.id, v } : { t: 'set', id: c.id, v };
       const io = { begin: () => active.add(c.id), input: v => { values[c.id] = v; if (val) val.textContent = fmt(c, v); throttled(c.id, () => send(kindMsg(v))); }, end: () => { active.delete(c.id); send(kindMsg(values[c.id])); } };
       t.api = widget(c, io); t.val = val; bd.appendChild(t.api.el); face.appendChild(bd);
     } else if (c.kind === 'toggle') {
@@ -424,15 +454,18 @@ inline constexpr char kScriptD[] = R"JS(
       field('Accent', sw);
     }
     if (c.kind === 'adsr') field('Longest time (s)', numeric(c.max, v => push({ max: v })));
-    if (c.kind === 'slider') {
+    if (c.kind === 'multi') field('Sliders', numeric(c.count, v => push({ count: Math.round(v) }), 1));
+    if (c.kind === 'slider' || c.kind === 'multi') {
       const row = el('div', 'row'), cell2 = (l, n) => { const d = el('div'); d.appendChild(el('label', '', l)); d.appendChild(n); return d; };
       row.appendChild(cell2('Min', numeric(c.min, v => push({ min: v })))); row.appendChild(cell2('Max', numeric(c.max, v => push({ max: v })))); sh.appendChild(row);
       const row2 = el('div', 'row'); row2.appendChild(cell2('Step', numeric(c.step, v => push({ step: v })))); row2.appendChild(cell2('Unit', text(c.unit || '', v => push({ unit: v })))); sh.appendChild(row2);
+      if (c.kind === 'slider') {
       sh.appendChild(el('label', '', 'Curve'));
       const r = el('input'), hint = el('div', 'hint'); r.type = 'range'; r.min = -100; r.max = 100; r.value = Math.round(Math.log(c.curve || 1) / Math.log(4) * 100);
       const say = k => { hint.textContent = Math.abs(k - 1) < 0.03 ? 'Linear' : k > 1 ? 'Fine at the low end (×' + k.toFixed(2) + ')' : 'Fine at the high end (×' + k.toFixed(2) + ')'; };
       r.oninput = () => { const k = Math.pow(4, Number(r.value) / 100); say(k); push({ curve: Number(k.toFixed(3)) }); };
       say(c.curve || 1); sh.appendChild(r); sh.appendChild(hint);
+      }
     }
     const del = el('button', 'del', 'Delete this control'); del.onclick = () => { if (confirm('Delete "' + c.name + '"? Its OSC address goes with it.')) { send({ t: 'remove', id: c.id }); closeSheet(); } };
     sh.appendChild(del);

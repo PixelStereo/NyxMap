@@ -211,7 +211,17 @@ int main(int argc, char **argv)
             engine.addControl(toggle);
             engine.addControl(choice);
             // More to look at: a pad, an encoder, a page of its own (a group) with a nested one
-            ShowControl pad, knob, vfader, page, lights, spot, envelope;
+            ShowControl pad, knob, vfader, page, lights, spot, envelope, bars, hbars;
+            bars.name = "EQ";
+            bars.kind = ShowControl::Kind::Multi;
+            bars.count = 10;
+            bars.accent = "#d36bd9";
+            hbars.name = "Sends";
+            hbars.kind = ShowControl::Kind::Multi;
+            hbars.count = 4;
+            hbars.widget = "hmulti";
+            engine.addControl(bars);
+            engine.addControl(hbars);
             envelope.name = "Envelope";
             envelope.kind = ShowControl::Kind::Adsr;
             engine.addControl(envelope);
@@ -462,6 +472,26 @@ int main(int argc, char **argv)
             phone.pumpUntil([&] { return engine.control(t)->widget.isEmpty(); });
             const ShowControl cleaned = *engine.control(t);
             require(cleaned.widget.isEmpty() && cleaned.accent.isEmpty() && cleaned.curve <= 10.0, "what is not a widget, a color or a sane curve is dropped");
+            // A multi-slider: its numbers set in one message, each a parameter, the count changed from the phone
+            ShowControl eq;
+            eq.name = "Bands";
+            eq.kind = ShowControl::Kind::Multi;
+            eq.count = 4;
+            eq.max = 10;
+            const quint64 q = engine.addControl(eq);
+            require(engine.control(q) && engine.control(q)->multi.size() == 4, "a multi-slider has a number for each of its sliders");
+            phone.sendText(QJsonDocument(QJsonObject{{"t", "multi"}, {"id", QString::number(q)}, {"v", QJsonArray{1, 99, -5, 4.5}}}).toJson(QJsonDocument::Compact));
+            phone.pumpUntil([&] { return near(engine.control(q)->multi[0], 1); });
+            const ShowControl bandsNow = *engine.control(q);
+            require(near(bandsNow.multi[0], 1) && near(bandsNow.multi[1], 10) && near(bandsNow.multi[2], 0) && near(bandsNow.multi[3], 4.5), "set from the phone, each within its range");
+            ParamInfo bandInfo;
+            require(engine.parameterInfo(0, "control/bands/1", &bandInfo) && engine.parameterInfo(0, "control/bands/4", &bandInfo) && !engine.parameterInfo(0, "control/bands/5", &bandInfo), "and each is a parameter of the show");
+            phone.sendText(QJsonDocument(QJsonObject{{"t", "edit"}, {"id", QString::number(q)}, {"props", QJsonObject{{"count", 6}}}}).toJson(QJsonDocument::Compact));
+            phone.pumpUntil([&] { return engine.control(q)->count == 6; });
+            require(engine.control(q)->count == 6 && engine.control(q)->multi.size() == 6 && near(engine.control(q)->multi[1], 10), "more sliders added, the others kept");
+            const ShowControl bandsAgain = ShowControl::fromJson(engine.control(q)->toJson());
+            require(bandsAgain.count == 6 && bandsAgain.multi.size() == 6 && near(bandsAgain.multi[3], 4.5), "and saved with the project");
+            engine.removeControl(q);
             // An ADSR: four numbers moved from the phone, kept within their ranges, saved, and a parameter each
             ShowControl envelope;
             envelope.name = "Env";

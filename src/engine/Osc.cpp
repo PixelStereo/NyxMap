@@ -451,6 +451,25 @@ void OscNamespace::build()
                 n.set = [e, id](const QVariantList &a) { return a.size() >= 2 && e->setControlPoint(id, num(a[0]), num(a[1])); };
                 break;
             }
+            case ShowControl::Kind::Multi: {
+                // A row of sliders in one message: a float each, within its range
+                OscNode &n = add(path, QByteArray(c.count, 'f'), 3, c.name);
+                for (int i = 0; i < c.count; ++i) n.range.push_back(minMax(c.min, c.max));
+                n.clip = "both";
+                n.get = [e, id] {
+                    const auto v = e->control(id);
+                    QVariantList out;
+                    if (v)
+                        for (double x : v->multi) out << x;
+                    return out;
+                };
+                n.set = [e, id](const QVariantList &a) {
+                    std::vector<double> values;
+                    for (const QVariant &x : a) values.push_back(num(x));
+                    return !values.empty() && e->setControlMulti(id, values);
+                };
+                break;
+            }
             case ShowControl::Kind::Adsr: {
                 // An envelope: attack, decay, sustain, release in one message (the times in seconds up to its range, the sustain 0..1)
                 OscNode &n = add(path, "ffff", 3, c.name + QStringLiteral(" (attack, decay, sustain, release)"));

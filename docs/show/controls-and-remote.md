@@ -4,7 +4,7 @@
 
 The **Controls** tab (Shift+5), next to the Media Bin and the Interactions, holds the operator's own values: a **Slider**
 (range, step, unit, default), a **Toggle**, a **Selector** (a list of choices), a **Button** (1 while it is held down) and a
-**Color**, an **ADSR** (an envelope to take in the hand, see below) and a **2D Slider** (a square: two numbers, X and Y, moved by one gesture; double-click puts it back to its
+**Color**, an **ADSR** (an envelope to take in the hand, see below), a **Multi-slider** (a row of 2 to 32 sliders in one control) and a **2D Slider** (a square: two numbers, X and Y, moved by one gesture; double-click puts it back to its
 default). **+ New** makes one; **⋯** edits, duplicates, moves or deletes it, each one undo step. They are saved with the
 project (not in snapshots: a control is the operator's, not the scene's).
 
@@ -22,6 +22,10 @@ Its times go up to its **Longest time** (⋯ › Edit). Each number is a paramet
 `release`, so a timeline, an interaction or a preset reaches it, and OSC sets the four at once: `/control/<name>` takes four floats.
 On the remote page it is a tile with the same curve, a handle for each number. An interaction's **Envelope** filter can take its
 four numbers from it (**Settings from** under its curve): the envelope of a hit is then moved from the page, a timeline or a preset.
+
+A **Multi-slider** is a row of sliders sharing one range: each is a parameter, `control/<name>/1`, `/2`…, and OSC takes all of them in
+one message (a float each). On the remote page the bars are vertical or horizontal (**Widget**), and a finger swept across them sets
+each bar it crosses; the number of sliders and the range are set in its settings.
 
 A control is a value of the show, `control/<name>` (a color: `control/<name>/r`, `g`, `b`; a 2D slider: `control/<name>/x` and
 `y`, a point a timeline draws as an XY track), like a layer's opacity. So:

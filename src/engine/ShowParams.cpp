@@ -280,6 +280,19 @@ const std::vector<std::unique_ptr<Parameter>> &Engine::showParams()
             break;
         }
         case ShowControl::Kind::Group: break; // a frame of the page, not a value
+        case ShowControl::Kind::Multi:
+            for (int i = 0; i < control.count; ++i)
+                add(path + QLatin1Char('/') + QString::number(i + 1), label + QStringLiteral(" ") + QString::number(i + 1), T::Float)
+                    .range(control.min, control.max)
+                    .step(control.step)
+                    .byDefault(control.def)
+                    .animatable()
+                    .transient()
+                    .bind(read([i](const ShowControl &c) { return QVariant(i < int(c.multi.size()) ? c.multi[size_t(i)] : c.def); }, 0.0),
+                          write([i](ShowControl &c, const QVariant &v) {
+                              if (i < int(c.multi.size())) c.multi[size_t(i)] = std::clamp(v.toDouble(), std::min(c.min, c.max), std::max(c.min, c.max));
+                          }));
+            break;
         case ShowControl::Kind::Adsr:
             for (int i = 0; i < 4; ++i) {
                 static const double fallback[4] = {0.05, 0.2, 0.7, 0.4};

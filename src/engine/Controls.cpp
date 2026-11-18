@@ -219,6 +219,13 @@ quint64 Engine::addControl(const ShowControl &control)
             c.min = 0;
             c.max = std::clamp(c.max > 1 ? c.max : 2.0, 0.1, 60.0); // the longest of its times
         }
+        if (c.kind == ShowControl::Kind::Multi) {
+            c.count = std::clamp(c.count, 2, ShowControl::kMultiMax);
+            if (!(c.max > c.min)) c.max = c.min + 1;
+            c.def = std::clamp(c.def, c.min, c.max);
+            c.multi.resize(size_t(c.count), c.def);
+            for (double &v : c.multi) v = std::clamp(v, c.min, c.max);
+        }
         id = c.id;
         m_controls.push_back(std::move(c));
         keyAll(m_controls);
@@ -330,6 +337,13 @@ bool Engine::updateControl(quint64 id, const ShowControl &change)
         if (c.kind == ShowControl::Kind::Choice && c.choices.isEmpty()) c.choices = it->choices;
         c.value = c.kind == it->kind ? c.clamped(c.value) : (c.kind == ShowControl::Kind::Slider || c.kind == ShowControl::Kind::Pad ? c.def : 0.0);
         c.value2 = c.kind == ShowControl::Kind::Pad ? (c.kind == it->kind ? c.clamped(c.value2) : c.def) : 0.0;
+        if (c.kind == ShowControl::Kind::Multi) {
+            c.count = std::clamp(c.count, 2, ShowControl::kMultiMax);
+            if (!(c.max > c.min)) c.max = c.min + 1;
+            c.def = std::clamp(c.def, c.min, c.max);
+            c.multi.resize(size_t(c.count), c.def);
+            for (double &v : c.multi) v = std::clamp(v, c.min, c.max);
+        }
         if (c.kind == ShowControl::Kind::Adsr) {
             c.min = 0;
             c.max = std::clamp(c.max, 0.1, 60.0);
@@ -417,6 +431,22 @@ bool Engine::setControlPoint(quint64 id, double x, double y)
         if (field == next) continue;
         field = next;
         feedControlAction(QStringLiteral("control/") + it->key + (axis == 0 ? QStringLiteral("/x") : QStringLiteral("/y")), next);
+    }
+    return true;
+}
+
+bool Engine::setControlMulti(quint64 id, const std::vector<double> &values)
+{
+    Lock lk(&m_mutex);
+    auto it = std::find_if(m_controls.begin(), m_controls.end(), [id](const ShowControl &c) { return c.id == id; });
+    if (it == m_controls.end() || it->kind != ShowControl::Kind::Multi) return false;
+    if (int(it->multi.size()) != it->count) it->multi.resize(size_t(it->count), it->def);
+    for (size_t i = 0; i < values.size() && i < it->multi.size(); ++i) {
+        if (!std::isfinite(values[i])) continue;
+        const double next = std::clamp(values[i], std::min(it->min, it->max), std::max(it->min, it->max));
+        if (it->multi[i] == next) continue;
+        it->multi[i] = next;
+        feedControlAction(QStringLiteral("control/") + it->key + QLatin1Char('/') + QString::number(i + 1), next);
     }
     return true;
 }
