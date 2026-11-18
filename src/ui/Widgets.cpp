@@ -1,3 +1,4 @@
+#include <pxs/Theme.h>
 #include "Widgets.h"
 #include "Mapping.h"
 #include "ColorPicker.h"
@@ -259,40 +260,30 @@ void applyToApplication(QApplication &app)
 {
     app.installEventFilter(new SoftSelection(&app));
     app.setStyle(checkStyle(QStyleFactory::create(QStringLiteral("Fusion"))));
-    QPalette p;
-    const QColor base(30, 30, 33), window(40, 40, 44), text(225, 225, 228), a = accent();
-    p.setColor(QPalette::Window, window);
-    p.setColor(QPalette::WindowText, text);
-    p.setColor(QPalette::Base, base);
-    p.setColor(QPalette::AlternateBase, window);
-    p.setColor(QPalette::ToolTipBase, base);
-    p.setColor(QPalette::ToolTipText, text);
-    p.setColor(QPalette::Text, text);
-    p.setColor(QPalette::Button, QColor(52, 52, 57));
-    p.setColor(QPalette::ButtonText, text);
-    p.setColor(QPalette::Highlight, a);
+    // The graphite look shared by every Pixel Stereo application; the accent stays the one the user chose
+    pxs::Palette palette = pxs::graphite();
+    palette.link = accent();
+    pxs::apply(app, palette,
+               tabStyle() + QStringLiteral("QGroupBox { font-weight: bold; border: 1px solid @border; border-radius: 4px; "
+                                           "margin-top: 10px; padding-top: 8px; } "
+                                           "QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; "
+                                           "color: @link; }"
+                                           "QSplitter::handle { background:@border; margin:1px; }"
+                                           "QSplitter::handle:horizontal { width:7px; }"
+                                           "QSplitter::handle:vertical { height:7px; }"
+                                           "QSplitter::handle:hover { background:@link; }"
+                                           "QHeaderView::section { background:@midlight; color:@text;"
+                                           " border:0; border-right:1px solid @light; border-bottom:1px solid @border; padding:4px 6px; }"
+                                           "QMenu::separator { height:1px; background:@border; margin:5px 8px; }"
+                                           // A button that is on shows it: the accent, not Fusion's barely darker shade
+                                           "QPushButton:checked, QToolButton:checked { background:@link; color:%1; "
+                                           "border:1px solid @link; border-radius:3px; }")
+                   .arg(onAccent().name()));
+    // Selections follow the accent
+    QPalette p = app.palette();
+    p.setColor(QPalette::Highlight, accent());
     p.setColor(QPalette::HighlightedText, onAccent());
-    p.setColor(QPalette::Link, a);
-    p.setColor(QPalette::PlaceholderText, QColor(130, 130, 135));
-    p.setColor(QPalette::Disabled, QPalette::Text, QColor(120, 120, 125));
-    p.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(120, 120, 125));
-    p.setColor(QPalette::Disabled, QPalette::WindowText, QColor(120, 120, 125));
     app.setPalette(p);
-    app.setStyleSheet(tabStyle() + QStringLiteral("QGroupBox { font-weight: bold; border: 1px solid #62626e; border-radius: 4px; "
-                                     "margin-top: 10px; padding-top: 8px; } "
-                                     "QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; "
-                                     "color: %1; }"
-                                     "QSplitter::handle { background:#62626e; margin:1px; }"
-                                     "QSplitter::handle:horizontal { width:7px; }"
-                                     "QSplitter::handle:vertical { height:7px; }"
-                                     "QSplitter::handle:hover { background:%1; }"
-                                     "QHeaderView::section { background:#35353e; color:#e1e1e8;"
-                                     " border:0; border-right:1px solid #555561; border-bottom:1px solid #747480; padding:4px 6px; }"
-                                     "QMenu::separator { height:1px; background:#62626e; margin:5px 8px; }"
-                                     // A button that is on shows it: the accent, not Fusion's barely darker shade
-                                     "QPushButton:checked, QToolButton:checked { background:%1; color:%2; "
-                                     "border:1px solid %1; border-radius:3px; }")
-                          .arg(css(), onAccent().name()));
 }
 } // namespace theme
 
