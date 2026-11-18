@@ -21,6 +21,19 @@ def release(tag="v1.2.3", date="2026-10-22T10:00:00Z", **flags):
 
 
 class ReleaseMetadataTests(unittest.TestCase):
+    def test_intel_zip_gets_its_own_badge(self):
+        current = release()
+        name = "NyxMap-macos-x64-v1.2.3.zip"
+        current["assets"].append({"name": name, "state": "uploaded", "size": 123,
+                                  "browser_download_url": f"https://github.com/{REPO}/releases/download/v1.2.3/{name}"})
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "README.md").write_text(f"{metadata.START}\nold\n{metadata.END}\n", encoding="utf-8")
+            metadata.update_files(root, [current], REPO)
+            text = (root / "README.md").read_text(encoding="utf-8")
+            self.assertIn("macOS-Intel", text)
+            self.assertIn(name, text)
+
     def test_release_before_the_shared_names_keeps_its_older_files(self):
         old = release()
         for asset in old["assets"]:
@@ -47,9 +60,10 @@ class ReleaseMetadataTests(unittest.TestCase):
                 self.assertIn(asset["browser_download_url"], text)
             self.assertNotIn(current["assets"][3]["browser_download_url"], text)
             self.assertIn("documentation-blue", text)
-            self.assertIn("34CC34", text)
-            self.assertIn("CCCC34", text)
-            self.assertIn("CC3434", text)
+            self.assertIn("6b7787", text)   # macOS Apple Silicon
+            self.assertIn("2b6fb6", text)   # Windows
+            self.assertIn("b8821c", text)   # Linux
+            self.assertNotIn("macOS-Intel", text)  # this release has no Intel zip: no badge
             self.assertNotIn("Portable archive", text)
             self.assertEqual((root / "VERSION").read_text(), "1.2.3\n")
             metadata.update_files(root, [current], REPO)
