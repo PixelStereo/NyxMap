@@ -98,19 +98,6 @@ Notifier *notifier()
 
 } // namespace theme
 
-QString theme::tabStyle()
-{
-    return QStringLiteral("QTabBar::tab { background:#25252b; color:#c3c3cd; padding:5px 9px; margin-right:3px;"
-                          " font-weight:600; border:1px solid #62626e; border-bottom:3px solid #44444e;"
-                          " border-top-left-radius:4px; border-top-right-radius:4px; }"
-                          "QTabBar::tab:selected { background:#4c4c59; color:#ffffff; border-color:#9494a3;"
-                          " border-bottom:3px solid %1; }"
-                          "QTabBar::tab:hover:!selected { background:#383841; color:#ffffff; border-color:#9292a0; }"
-                          "QTabBar::tab:disabled { color:#777782; border-color:#44444e; }"
-                          "QTabWidget::pane { border:1px solid #62626e; }")
-        .arg(css());
-}
-
 QColor theme::cueColor(CueKind kind)
 {
     switch (kind) {
@@ -256,15 +243,13 @@ public:
 };
 } // namespace
 
-void applyToApplication(QApplication &app)
+// The graphite look shared by every Pixel Stereo application (pxs::theme); the accent stays the one the user chose
+static void applyLook(QApplication &app)
 {
-    app.installEventFilter(new SoftSelection(&app));
-    app.setStyle(checkStyle(QStyleFactory::create(QStringLiteral("Fusion"))));
-    // The graphite look shared by every Pixel Stereo application; the accent stays the one the user chose
     pxs::Palette palette = pxs::graphite();
     palette.link = accent();
     pxs::apply(app, palette,
-               tabStyle() + QStringLiteral("QGroupBox { font-weight: bold; border: 1px solid @border; border-radius: 4px; "
+               QStringLiteral("QGroupBox { font-weight: bold; border: 1px solid @border; border-radius: 4px; "
                                            "margin-top: 10px; padding-top: 8px; } "
                                            "QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; "
                                            "color: @link; }"
@@ -284,6 +269,15 @@ void applyToApplication(QApplication &app)
     p.setColor(QPalette::Highlight, accent());
     p.setColor(QPalette::HighlightedText, onAccent());
     app.setPalette(p);
+}
+
+void applyToApplication(QApplication &app)
+{
+    app.installEventFilter(new SoftSelection(&app));
+    app.setStyle(checkStyle(QStyleFactory::create(QStringLiteral("Fusion"))));
+    applyLook(app);
+    // A new accent shows at once: the focus, the selection, the checked buttons and the tab underline
+    QObject::connect(notifier(), &Notifier::changed, &app, [&app] { applyLook(app); });
 }
 } // namespace theme
 

@@ -108,9 +108,8 @@ class CueWorkspaceTabs final : public QTabBar
 public:
     CueWorkspaceTabs()
     {
-        // Keep the normal tab fills and hide their border and underline.
-        setStyleSheet(theme::tabStyle() +
-                      QStringLiteral("QTabBar::tab { padding-left: 16px; }") +
+        // Keep the shared tab fills and hide their border and underline.
+        setStyleSheet(QStringLiteral("QTabBar::tab { padding-left: 16px; }") +
                       QStringLiteral("QTabBar::tab, QTabBar::tab:selected, QTabBar::tab:hover:!selected {"
                                      " border-color: transparent; border-bottom-color: transparent; }"));
         addCueTab(QStringLiteral("Snapshots"), theme::CueKind::Snapshot);

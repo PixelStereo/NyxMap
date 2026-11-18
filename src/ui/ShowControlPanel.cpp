@@ -154,7 +154,6 @@ ShowControlPanel::ShowControlPanel(Engine *engine, QWidget *parent) : QWidget(pa
     root->setContentsMargins(0, 0, 0, 0);
     auto *tabs = new QTabWidget;
     tabs->setObjectName(QStringLiteral("showControlTabs"));
-    tabs->setStyleSheet(theme::tabStyle());
     tabs->setDocumentMode(true);
     root->addWidget(tabs);
 

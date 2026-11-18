@@ -58,7 +58,6 @@ QColor onAccent();               // text and icons drawn on the accent: dark or 
 QString css(int alpha = 255);    // "#rrggbb", or "rgba(r, g, b, a)" when alpha < 255
 // Sub-tabs that read as tabs (the inspector's, the interactions', the settings'): the current one lighter, in bold,
 // underlined with the accent; the others darker, apart
-QString tabStyle();
 enum class CueKind { Snapshot, Preset, Timeline, Group, Sequence };
 QColor cueColor(CueKind kind);
 } // namespace theme
