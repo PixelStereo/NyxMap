@@ -125,7 +125,6 @@ add_library(nyxmap_engine STATIC
   src/engine/Presets.cpp
   src/engine/Animations.cpp
   src/engine/ShowParams.cpp
-  src/engine/Parameter.cpp
   src/engine/LayerParams.cpp
 )
 target_include_directories(nyxmap_engine PUBLIC src/engine)
@@ -192,7 +191,7 @@ qt_add_shaders(nyxmap_engine "nyxmap_shaders"
         src/engine/shaders/scenelit_noglow.frag src/engine/shaders/sceneglowdown.frag src/engine/shaders/sceneglowup.frag
         src/engine/shaders/scenebackground.frag src/engine/shaders/scenesky.vert src/engine/shaders/scenesky.frag
         src/engine/shaders/scenesky_noglow.frag src/engine/shaders/scenefog.frag src/engine/shaders/scenefogblur.frag)
-target_link_libraries(nyxmap_engine PUBLIC Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::ShaderToolsPrivate Qt6::Network ffmpeg pxs::osc)
+target_link_libraries(nyxmap_engine PUBLIC Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::ShaderToolsPrivate Qt6::Network ffmpeg pxs::osc pxs::params pxs::tree)
 if(WIN32)
   target_link_libraries(nyxmap_engine PRIVATE psapi pdh) # resource usage (ProcessMemory.cpp)
 endif()

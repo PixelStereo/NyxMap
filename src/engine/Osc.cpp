@@ -157,7 +157,7 @@ QString OscNamespace::signature() const
 void OscNamespace::refresh()
 {
     const QString sig = signature();
-    if (sig == m_signature && !m_nodes.empty()) return;
+    if (sig == m_signature && !m_index.empty()) return;
     m_signature = sig;
     ++m_generation;
     build();
@@ -165,15 +165,14 @@ void OscNamespace::refresh()
 
 const OscNode *OscNamespace::node(const QString &path) const
 {
-    const auto it = m_nodes.find(path);
-    return it == m_nodes.end() ? nullptr : &it->second;
+    return m_tree.find(path);
 }
 
 QStringList OscNamespace::addressesOf(quint64 layer, const QString &path) const
 {
     QStringList out;
     const auto add = [&](const QString &address) {
-        if (m_nodes.count(address)) out << address;
+        if (m_tree.find(address)) out << address;
     };
     QStringList bases;
     if (!layer) {
@@ -197,8 +196,8 @@ QStringList OscNamespace::addressesOf(quint64 layer, const QString &path) const
 
 void OscNamespace::forEachUnder(const QString &prefix, const std::function<void(const QString &, const OscNode &)> &visit) const
 {
-    for (auto it = m_nodes.lower_bound(prefix); it != m_nodes.end() && it->first.startsWith(prefix); ++it) {
-        const OscNode &node = it->second;
+    for (auto it = m_index.lower_bound(prefix); it != m_index.end() && it->first.startsWith(prefix); ++it) {
+        const OscNode &node = *it->second;
         if (it->first.size() > prefix.size() && it->first[prefix.size()] != '/') continue; // another name that begins alike
         if (!node.type.isEmpty() && node.get && (node.access & 1)) visit(it->first, node);
     }
@@ -214,48 +213,34 @@ QStringList OscNamespace::layerPrefixes(quint64 layer) const
 
 void OscNamespace::forEachReadable(const std::function<void(const QString &, const OscNode &)> &visit) const
 {
-    for (const auto &[path, node] : m_nodes)
-        if (!node.type.isEmpty() && node.get && (node.access & 1)) visit(path, node);
+    for (const auto &[path, node] : m_index)
+        if (!node->type.isEmpty() && node->get && (node->access & 1)) visit(path, *node);
 }
 
 QStringList OscNamespace::paths() const
 {
     QStringList out;
-    for (const auto &[p, n] : m_nodes)
-        if (!n.type.isEmpty()) out << p;
+    for (const auto &[p, n] : m_index)
+        if (!n->type.isEmpty()) out << p;
     return out;
 }
 
 OscNode &OscNamespace::add(const QString &path, const QString &type, int access, const QString &description)
 {
-    // Containers up to the root
-    QString parent = path.section('/', 0, -2);
-    QString child = path.section('/', -1);
-    QString cur = path;
-    while (!cur.isEmpty() && cur != "/") {
-        const QString par = cur.section('/', 0, -2).isEmpty() ? QStringLiteral("/") : cur.section('/', 0, -2);
-        OscNode &p = m_nodes[par];
-        p.path = par;
-        const QString seg = cur.section('/', -1);
-        if (!p.children.contains(seg)) p.children << seg;
-        cur = par;
-    }
-    (void)parent;
-    (void)child;
-    OscNode &n = m_nodes[path];
-    n.path = path;
+    OscNode &n = m_tree.add(path); // its containers up to the root are made on the way
     n.type = type;
     n.access = access;
     n.description = description;
+    m_index[path] = &n;
     return n;
 }
 
 void OscNamespace::build()
 {
-    m_nodes.clear();
+    m_tree.clear();
+    m_index.clear();
     m_prefixOf.clear();
     m_interactionPrefix.clear();
-    m_nodes["/"].path = "/";
     Engine *e = m_e;
 
     // --- Composition: opacity, sound volume, blackout (picture and sound), size, frame rate
@@ -377,7 +362,7 @@ void OscNamespace::build()
         };
         OscNode &c = add("/snapshot/count", "i", 1, "Count");
         c.get = [e] { return QVariantList{e->snapshotCount()}; };
-        m_nodes["/snapshot"].description = "Snapshots";
+        m_tree.add("/snapshot").description = "Snapshots";
         for (int i = 0; i < e->snapshotCount(); ++i) {
             const QString base = QStringLiteral("/snapshot/%1").arg(i + 1);
             OscNode &r = add(base + "/recall", "N", 2, "Recall");
@@ -388,7 +373,7 @@ void OscNamespace::build()
             };
             OscNode &nm = add(base + "/name", "s", 1, "Name");
             nm.get = [e, i] { return QVariantList{e->snapshot(i).name}; };
-            m_nodes[base].description = e->snapshot(i).name.isEmpty() ? QString::number(i + 1) : e->snapshot(i).name;
+            m_tree.add(base).description = e->snapshot(i).name.isEmpty() ? QString::number(i + 1) : e->snapshot(i).name;
         }
     }
 
@@ -404,7 +389,7 @@ void OscNamespace::build()
         };
         OscNode &c = add("/preset/count", "i", 1, "Count");
         c.get = [e] { return QVariantList{e->presetCount()}; };
-        m_nodes["/preset"].description = "Presets";
+        m_tree.add("/preset").description = "Presets";
         for (int i = 0; i < e->presetCount(); ++i) {
             const QString base = QStringLiteral("/preset/%1").arg(i + 1);
             OscNode &r = add(base + "/recall", "N", 2, "Recall");
@@ -415,7 +400,7 @@ void OscNamespace::build()
             };
             OscNode &nm = add(base + "/name", "s", 1, "Name");
             nm.get = [e, i] { return QVariantList{e->preset(i).name}; };
-            m_nodes[base].description = e->preset(i).name.isEmpty() ? QString::number(i + 1) : e->preset(i).name;
+            m_tree.add(base).description = e->preset(i).name.isEmpty() ? QString::number(i + 1) : e->preset(i).name;
         }
     }
 
@@ -479,7 +464,7 @@ void OscNamespace::build()
             }
             }
         }
-        m_nodes["/control"].description = "Controls";
+        m_tree.add("/control").description = "Controls";
     }
 
     // --- Clock: the show's musical clock. bpm, bar length, start / stop / tap, where it is (beat, beat in the bar), and sync:
@@ -507,7 +492,7 @@ void OscNamespace::build()
             clock.sync(num(a.value(0)), num(a.value(1)), a.size() < 3 || num(a.value(2)) != 0);
             return true;
         };
-        m_nodes["/clock"].description = "Clock";
+        m_tree.add("/clock").description = "Clock";
     }
 
     // --- Sequence: GO, GO BACK, a step of the current sequence (1 = first), where it is
@@ -534,7 +519,7 @@ void OscNamespace::build()
             e->sequencer().stopAll();
             return true;
         };
-        m_nodes["/sequence"].description = "Sequence";
+        m_tree.add("/sequence").description = "Sequence";
         // Each sequence (1 = first) on its own: several cue lists play side by side, a controller drives one
         // whatever the interface has selected
         for (int i = 0; i < e->sequencer().count(); ++i) {
@@ -561,13 +546,13 @@ void OscNamespace::build()
             OscNode &nm = add(base + "/name", "s", 1, "Name");
             nm.get = [e, i] { return QVariantList{e->sequencer().sequence(i).name}; };
             const QString name = e->sequencer().sequence(i).name;
-            m_nodes[base].description = name.isEmpty() ? QString::number(i + 1) : name;
+            m_tree.add(base).description = name.isEmpty() ? QString::number(i + 1) : name;
         }
     }
 
     // --- Timelines (1 = first): their transport
     {
-        m_nodes["/timeline"].description = "Timelines";
+        m_tree.add("/timeline").description = "Timelines";
         using A = Engine::AnimAction;
         for (int i = 0; i < e->animationCount(); ++i) {
             const Engine::Animation an = e->animation(i);
@@ -601,7 +586,7 @@ void OscNamespace::build()
             };
             OscNode &pl = add(base + "/playing", "T", 1, "Playing");
             pl.get = [e, id] { return QVariantList{e->animation(e->indexOfAnimation(id)).state == Engine::AnimState::Playing}; };
-            m_nodes[base].description = an.name.isEmpty() ? QString::number(i + 1) : an.name;
+            m_tree.add(base).description = an.name.isEmpty() ? QString::number(i + 1) : an.name;
         }
     }
 
@@ -623,7 +608,7 @@ void OscNamespace::build()
     }
     add("/layer", QString(), 0, "Layers");
     add("/viewport", QString(), 0, "Viewports");
-    m_nodes["/composition"].description = "Composition";
+    m_tree.add("/composition").description = "Composition";
     QHash<quint64, QString> prefixOf;
     osc::SegmentNamer namer;
     for (const Item &it : items) {
@@ -634,12 +619,12 @@ void OscNamespace::build()
         prefixOf[it.id] = base + '/' + seg;
         m_prefixOf[it.id] = base + '/' + seg;
         addLayer(base + '/' + seg, it.id);
-        m_nodes[base + '/' + seg].description = it.name; // real name (spaces included) for the clients that show names
+        m_tree.add(base + '/' + seg).description = it.name; // real name (spaces included) for the clients that show names
         // Stable remote editing paths are separate from name-based paths and their wildcards.
         // A group's alias exposes its own controls; its children have their own IDs.
         const QString remote = QStringLiteral("/show/layer/by-id/%1").arg(it.id);
         addLayer(remote, it.id);
-        m_nodes[remote].description = it.name;
+        m_tree.add(remote).description = it.name;
     }
 
     // --- Interactions, by their names: their values (on / off, master level, ranges, filter, curve)
@@ -652,7 +637,7 @@ void OscNamespace::build()
         const Interaction &it = interactions[k];
         const QString P = QStringLiteral("/interaction/") + segs[int(k)];
         m_interactionPrefix[it.id] = P;
-        m_nodes[P].description = it.name;
+        m_tree.add(P).description = it.name;
         const QString prefix = QStringLiteral("interaction/%1/").arg(it.id);
         for (const QString &key : Engine::interactionKeys(it)) {
             ParamInfo info;
@@ -689,7 +674,7 @@ QString OscNamespace::addressOf(quint64 layer, const QString &path) const
     } else if (m_prefixOf.contains(layer)) {
         addr = m_prefixOf.value(layer) + '/' + path;
     }
-    return m_nodes.count(addr) ? addr : QString();
+    return m_tree.find(addr) ? addr : QString();
 }
 
 QString OscNamespace::addressOf(Engine *e, quint64 layer, const QString &path)
@@ -711,8 +696,8 @@ struct LayerNodes {
     {
         Engine *eng = e;
         const quint64 lid = id;
-        node.resetPath = node.path + QStringLiteral("/reset");
-        node.defaults = [eng, lid, paths] {
+        const QString resetPath = node.path() + QStringLiteral("/reset");
+        const auto defaults = [eng, lid, paths] {
             Engine::Lock lock(&eng->mutex());
             Layer *layer = find(eng, lid);
             QVariantList out;
@@ -723,7 +708,16 @@ struct LayerNodes {
             }
             return out;
         };
-        method(node.resetPath, "N", 2, QStringLiteral("Reset %1 to default").arg(node.description), nullptr,
+        // NyxMap's extension of OSCQuery: the live defaults, and the address that puts them back
+        const OscNode *self = &node;
+        node.attributes["NYXMAP_DEFAULT"] = [defaults, self] {
+            QJsonArray values;
+            const QVariantList v = defaults();
+            for (int k = 0; k < v.size(); ++k) values.append(pxs::Tree::jsonValue(self->type, v[k], k));
+            return QJsonValue(values);
+        };
+        node.attributes["NYXMAP_RESET"] = [resetPath] { return QJsonValue(resetPath); };
+        method(resetPath, "N", 2, QStringLiteral("Reset %1 to default").arg(node.description), nullptr,
                edit([paths](Layer &layer, const QVariantList &args) {
                    if (!args.isEmpty() && (args.size() != 1 || !truth(args[0]))) return false;
                    std::vector<Parameter *> parameters;
@@ -1236,7 +1230,7 @@ void OscNamespace::addLayer(const QString &P, quint64 id)
                         return true;
                     });
         }
-        m_nodes[A].description = QStringLiteral("Animation");
+        m_tree.add(A).description = QStringLiteral("Animation");
     }
     if (isGroup) add(P + "/layer", QString(), 0, "Layers");
     // Readable names of the containers
@@ -1245,62 +1239,13 @@ void OscNamespace::addLayer(const QString &P, quint64 id)
         {"/text", "Text"},      {"/fx", "FX"},            {"/output", "Output"},  {"/position", "Position"},
         {"/pivot", "Pivot"},    {"/scale", "Scale"},      {"/add", "Add"},        {"/remove", "Remove"}};
     for (const auto &[suffix, name] : kNames) {
-        auto it = m_nodes.find(P + suffix);
-        if (it != m_nodes.end() && it->second.description.isEmpty()) it->second.description = name;
+        OscNode *node = m_tree.find(P + suffix);
+        if (node && node->description.isEmpty()) node->description = name;
     }
     for (const auto &[k, seg] : effects) {
-        auto it = m_nodes.find(P + "/fx/" + seg);
-        if (it != m_nodes.end() && it->second.description.isEmpty()) it->second.description = seg;
+        OscNode *node = m_tree.find(P + "/fx/" + seg);
+        if (node && node->description.isEmpty()) node->description = seg;
     }
-}
-
-QJsonValue OscNamespace::jsonValue(const OscNode &n, const QVariant &v, int k)
-{
-    const QChar t = k < n.type.size() ? n.type[k] : QChar();
-    if (t == 'T' || t == 'F') return v.toBool();
-    if (t == 'i' || t == 'h') return v.toLongLong();
-    if (t == 's') return v.toString();
-    if (t == 'N' || t == 'I') return QJsonValue();
-    const double d = v.toDouble();
-    return std::isfinite(d) ? d : 0.0;
-}
-
-QJsonObject OscNamespace::toJson(const QString &path) const
-{
-    const OscNode *n = node(path);
-    if (!n) return {};
-    QJsonObject o;
-    o["FULL_PATH"] = n->path;
-    o["ACCESS"] = n->access;
-    if (!n->description.isEmpty()) o["DESCRIPTION"] = n->description;
-    if (!n->type.isEmpty()) {
-        o["TYPE"] = n->type;
-        if ((n->access & 1) && n->get) {
-            const QVariantList v = n->get();
-            QJsonArray a;
-            for (int k = 0; k < v.size(); ++k) a.append(jsonValue(*n, v[k], k));
-            o["VALUE"] = a;
-        }
-        if (!n->range.isEmpty()) o["RANGE"] = n->range;
-        if (!n->resetPath.isEmpty() && n->defaults) {
-            QJsonArray defaults;
-            const QVariantList values = n->defaults();
-            for (int k = 0; k < values.size(); ++k) defaults.append(jsonValue(*n, values[k], k));
-            o["NYXMAP_DEFAULT"] = defaults;
-            o["NYXMAP_RESET"] = n->resetPath;
-        }
-        if (!n->clip.isEmpty()) {
-            QJsonArray c;
-            for (int k = 0; k < n->type.size(); ++k) c.append(n->clip);
-            o["CLIPMODE"] = c;
-        }
-    }
-    if (!n->children.isEmpty() || n->type.isEmpty()) { // a container always has CONTENTS (even empty)
-        QJsonObject contents;
-        for (const QString &c : n->children) contents[c] = toJson(path == "/" ? "/" + c : path + "/" + c);
-        o["CONTENTS"] = contents;
-    }
-    return o;
 }
 
 // ---------------------------------------------------------------------------
@@ -1498,16 +1443,12 @@ bool OscServer::handleMessage(const osc::Message &m)
 
 QJsonObject OscServer::hostInfo() const
 {
-    return QJsonObject{
-        {"NAME", m_name},
-        {"OSC_PORT", int(oscPort())},
-        {"OSC_TRANSPORT", "UDP"},
-        {"WS_PORT", int(queryPort())},
-        {"EXTENSIONS", QJsonObject{{"ACCESS", true}, {"VALUE", true}, {"RANGE", true}, {"DESCRIPTION", true},
-                                   {"TAGS", false}, {"EXTENDED_TYPE", false}, {"UNIT", false}, {"CRITICAL", false},
-                                   {"CLIPMODE", true}, {"LISTEN", true}, {"PATH_CHANGED", true},
-                                   {"NYXMAP_DEFAULT", true}, {"NYXMAP_RESET", true}}},
-    };
+    return pxs::Tree::hostInfo(m_name, int(oscPort()),
+                               QJsonObject{{"ACCESS", true}, {"VALUE", true}, {"RANGE", true}, {"DESCRIPTION", true},
+                                           {"TAGS", false}, {"EXTENDED_TYPE", false}, {"UNIT", false}, {"CRITICAL", false},
+                                           {"CLIPMODE", true}, {"LISTEN", true}, {"PATH_CHANGED", true},
+                                           {"NYXMAP_DEFAULT", true}, {"NYXMAP_RESET", true}},
+                               QJsonObject{{"WS_PORT", int(queryPort())}});
 }
 
 QByteArray OscServer::httpGet(const QString &target, int *status)
