@@ -36,6 +36,11 @@ header h1 { flex:1; margin:0 10px 0 0; font-size:16px; font-weight:600; white-sp
 .hd span { overflow:hidden; text-overflow:ellipsis; }
 .hd b { color:var(--text); font-weight:600; font-variant-numeric:tabular-nums; letter-spacing:0; margin-left:8px; }
 .bd { flex:1; min-height:0; position:relative; display:flex; align-items:center; justify-content:center; }
+.slab { position:relative; width:100%; height:100%; align-self:stretch; min-height:56px; border-radius:12px; background:var(--panel2); overflow:hidden; touch-action:none; cursor:pointer; }
+.slab .sfill { position:absolute; left:0; bottom:0; top:0; background:var(--a); opacity:.3; }
+.slab .sedge { position:absolute; top:0; bottom:0; width:4px; background:var(--a); box-shadow:0 0 14px var(--a); border-radius:2px; }
+.slab.v .sfill { left:0; right:0; top:auto; width:auto; }
+.slab.v .sedge { left:0; right:0; top:auto; bottom:0; width:auto; height:4px; }
 .fader { width:100%; padding:10px 6px; touch-action:none; }
 .fader .trk { position:relative; height:8px; background:var(--panel2); border-radius:6px; }
 .fader .fill { position:absolute; left:0; top:0; bottom:0; border-radius:6px; background:var(--a); box-shadow:0 0 10px var(--a); }
@@ -186,9 +191,21 @@ inline constexpr char kScriptA[] = R"JS(
 // B: the widgets, in SVG and CSS. Each takes its control and `io` (begin, input(v), end) and gives { el, set(v) }
 inline constexpr char kScriptB[] = R"JS(
   const wDefault = { slider: 'fader', toggle: 'switch', choice: 'buttons', button: 'hold', color: 'picker', pad: 'pad', adsr: 'adsr' };
-  const wChoices = { slider: ['fader', 'vfader', 'knob', 'number'], toggle: ['switch'], choice: ['buttons', 'menu'], button: ['hold', 'tap'], color: ['picker'], pad: ['pad'], adsr: ['adsr'] };
-  const wName = { fader: 'Fader', vfader: 'Vertical fader', knob: 'Encoder', number: 'Number', switch: 'Switch', buttons: 'Buttons', menu: 'Menu', hold: 'Hold button', tap: 'Tap button', picker: 'Color', pad: 'XY pad', adsr: 'ADSR' };
+  const wChoices = { slider: ['fader', 'vfader', 'knob', 'number', 'slim', 'vslim'], toggle: ['switch'], choice: ['buttons', 'menu'], button: ['hold', 'tap'], color: ['picker'], pad: ['pad'], adsr: ['adsr'] };
+  const wName = { fader: 'Fader', vfader: 'Vertical fader', slim: 'Slim fader', vslim: 'Slim vertical fader', knob: 'Encoder', number: 'Number', switch: 'Switch', buttons: 'Buttons', menu: 'Menu', hold: 'Hold button', tap: 'Tap button', picker: 'Color', pad: 'XY pad', adsr: 'ADSR' };
   const widgetOf = c => (wChoices[c.kind] || []).indexOf(c.widget) >= 0 ? c.widget : wDefault[c.kind];
+  // The big one, as TouchOSC and Lemur have it: the whole tile is the fader, a finger anywhere puts the level there, and the level is
+  // the filled part, ended by a bright edge. Nothing small to catch
+  function slab(c, io, vertical) {
+    const root = el('div', 'slab' + (vertical ? ' v' : '')), fill = el('div', 'sfill'), edge = el('div', 'sedge');
+    root.appendChild(fill); root.appendChild(edge);
+    let pos = 0, down = false;
+    const draw = () => { const p = (pos * 100) + '%'; if (vertical) { fill.style.height = p; edge.style.bottom = 'calc(' + p + ' - 2px)'; } else { fill.style.width = p; edge.style.left = 'calc(' + p + ' - 2px)'; } };
+    const at = p => { const r = root.getBoundingClientRect(); return clamp(vertical ? 1 - (p.y - r.top) / r.height : (p.x - r.left) / r.width, 0, 1); };
+    const move = p => { pos = at(p); draw(); io.input(fromPos(c, pos)); };
+    press(root, { down: p => { down = true; io.begin(); move(p); }, move, up: p => { move(p); down = false; io.end(); } });
+    return { el: root, set: v => { if (!down) { pos = toPos(c, v); draw(); } } };
+  }
   function fader(c, io, vertical) {
     const root = el('div', 'fader' + (vertical ? ' v' : '')), trk = el('div', 'trk'), fill = el('div', 'fill'), cap = el('div', 'cap');
     trk.appendChild(fill); trk.appendChild(cap); root.appendChild(trk);
@@ -221,7 +238,7 @@ inline constexpr char kScriptB[] = R"JS(
   }
   function widget(c, io) {
     const w = widgetOf(c);
-    if (c.kind === 'slider') return w === 'knob' ? knob(c, io) : w === 'number' ? number(c, io) : fader(c, io, w === 'vfader');
+    if (c.kind === 'slider') return w === 'knob' ? knob(c, io) : w === 'number' ? number(c, io) : w === 'slim' || w === 'vslim' ? fader(c, io, w === 'vslim') : slab(c, io, w === 'vfader');
     if (c.kind === 'toggle') { const b = el('button', 'sw', c.name); b.onclick = () => { io.begin(); io.input(values[c.id] >= 0.5 ? 0 : 1); io.end(); }; return { el: b, set: v => b.classList.toggle('on', v >= 0.5) }; }
     if (c.kind === 'button') {
       const b = el('button', w === 'tap' ? 'tapb' : 'holdb', w === 'tap' ? 'Tap' : 'Hold');
@@ -280,8 +297,8 @@ inline constexpr char kScriptB[] = R"JS(
 
 // C: pages, the grid, the tiles, Edit mode (drag, resize)
 inline constexpr char kScriptC[] = R"JS(
-  const sizeOf = c => { const w = widgetOf(c); return c.kind === 'group' ? [12, 1] : c.kind === 'pad' ? [5, 5] : c.kind === 'adsr' ? [6, 3] : c.kind === 'choice' ? [6, 2] : c.kind === 'slider' ? (w === 'knob' ? [3, 3] : w === 'vfader' ? [2, 5] : w === 'number' ? [3, 2] : [5, 2]) : [3, 2]; };
-  const minOf = c => c.kind === 'pad' ? [2, 2] : c.kind === 'slider' && widgetOf(c) === 'knob' ? [2, 2] : c.kind === 'slider' && widgetOf(c) === 'vfader' ? [1, 3] : c.kind === 'group' ? [2, 1] : [2, 1];
+  const sizeOf = c => { const w = widgetOf(c); return c.kind === 'group' ? [12, 1] : c.kind === 'pad' ? [5, 5] : c.kind === 'adsr' ? [6, 3] : c.kind === 'choice' ? [6, 2] : c.kind === 'slider' ? (w === 'knob' ? [3, 3] : w === 'vfader' ? [2, 6] : w === 'vslim' ? [1, 5] : w === 'number' ? [3, 2] : w === 'slim' ? [5, 2] : [6, 3]) : [3, 2]; };
+  const minOf = c => c.kind === 'pad' ? [2, 2] : c.kind === 'slider' && widgetOf(c) === 'knob' ? [2, 2] : c.kind === 'slider' && (widgetOf(c) === 'vfader' || widgetOf(c) === 'vslim') ? [1, 3] : c.kind === 'group' ? [2, 1] : [2, 1];
   const hit = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
   const topOf = c => { let p = c.group; while (p && byId[p] && byId[p].group) p = byId[p].group; return p || 0; };
   function pages() {
