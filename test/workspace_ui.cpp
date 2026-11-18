@@ -133,9 +133,14 @@ static void mediaBinColumnTests(Engine &engine, const std::function<void(bool, c
                 check(previewButton && preview && !preview->isVisibleTo(&bin) , "the media bin has a Preview button, off at first");
                 if (previewButton && preview) {
                     previewButton->setChecked(true);
-                    tree->setCurrentItem(b);
                     QElapsedTimer waitPreview; waitPreview.start();
                     while (waitPreview.elapsed() < 5000 && preview->pixmap().isNull()) {
+                        // the metadata arriving rebuilds the list: the item is picked again from its path each time
+                        if (auto *now = itemOf(bravo); now && (tree->currentItem() != now || tree->selectedItems().size() != 1)) {
+                            tree->clearSelection();
+                            tree->setCurrentItem(now);
+                            now->setSelected(true);
+                        }
                         QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
                         QThread::msleep(2);
                     }

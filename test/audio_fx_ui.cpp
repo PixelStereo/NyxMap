@@ -191,7 +191,7 @@ int runAudioFxUiTests(Engine &engine)
         pump();
     }
 
-    // The menu at the top of the inspector: every layer, group and viewport; picking one asks for it, ◀ ▶ step
+    // The menu at the top of the inspector: every layer and group (the viewports have their own tab); picking one asks for it, ◀ ▶ step
     {
         const int grouped = engine.addLayer("In the group");
         const quint64 member = engine.layerId(grouped);
@@ -208,16 +208,11 @@ int runAudioFxUiTests(Engine &engine)
         for (auto *c : inspector.findChildren<QComboBox *>("layerPicker")) picker = c;
         check(picker != nullptr, "the inspector has a menu at its top");
         if (picker) {
-            check(picker->count() == engine.layerCount(), "it lists every layer, group and viewport");
+            int notViewports = 0;
+            for (int i = 0; i < engine.layerCount(); ++i) notViewports += !engine.isViewport(i);
+            check(picker->count() == notViewports, "it lists every layer and group, and no viewport");
             check(picker->itemText(picker->currentIndex()).contains("Instrument") && picker->itemData(picker->currentIndex()).toULongLong() == id,
                   "its current item is the layer inspected");
-            bool viewportsFirst = true, seenOther = false;
-            for (int k = 0; k < picker->count(); ++k) {
-                const bool isViewport = picker->itemText(k).contains("◫");
-                if (seenOther && isViewport) viewportsFirst = false;
-                seenOther |= !isViewport;
-            }
-            check(viewportsFirst, "the viewports come first");
             bool indented = false;
             for (int k = 0; k < picker->count(); ++k)
                 if (picker->itemText(k).contains("In the group")) indented = picker->itemText(k).startsWith(QChar(0x2003));
