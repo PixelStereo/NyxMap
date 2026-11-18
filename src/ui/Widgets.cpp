@@ -42,7 +42,6 @@
 #include <cmath>
 #include <cstdlib>
 
-QStyle *checkStyle(QStyle *base); // Fusion with the application's check boxes (below)
 
 // ---------------------------------------------------------------------------
 // Accent color
@@ -274,7 +273,6 @@ static void applyLook(QApplication &app)
 void applyToApplication(QApplication &app)
 {
     app.installEventFilter(new SoftSelection(&app));
-    app.setStyle(checkStyle(QStyleFactory::create(QStringLiteral("Fusion"))));
     applyLook(app);
     // A new accent shows at once: the focus, the selection, the checked buttons and the tab underline
     QObject::connect(notifier(), &Notifier::changed, &app, [&app] { applyLook(app); });
@@ -910,71 +908,6 @@ QSize IntBox::sizeHint() const
     return boxHint(this, prefix() + (minimum() < 0 ? QStringLiteral("-") : QString()) + QString::number(big) + suffix());
 }
 
-namespace {
-QColor flagEdge(bool hover, bool enabled)
-{
-    QColor c = hover ? QColor(165, 165, 172) : QColor(105, 105, 112);
-    if (!enabled) c.setAlphaF(0.45f);
-    return c;
-}
-} // namespace
-
-// A check box as a square: its edge, and when it is on, a square of the accent inside it (no tick)
-QColor theme::foldArrowColor() { return QColor(238, 238, 244); }
-
-void theme::paintFoldArrow(QPainter &p, const QPointF &center, bool open)
-{
-    const QPolygonF points = open ? QPolygonF{center + QPointF(-6, -3.5), center + QPointF(6, -3.5), center + QPointF(0, 4.5)}
-                                  : QPolygonF{center + QPointF(-3.5, -6), center + QPointF(4.5, 0), center + QPointF(-3.5, 6)};
-    p.save();
-    p.setRenderHint(QPainter::Antialiasing);
-    p.setPen(QPen(QColor(0, 0, 0, 110), 1)); // a dark edge: seen on a light row too
-    p.setBrush(foldArrowColor());
-    p.drawPolygon(points);
-    p.restore();
-}
-
-void theme::paintCheck(QPainter &p, const QRectF &box, bool on, bool partial, bool hover, bool enabled)
-{
-    p.save();
-    p.setRenderHint(QPainter::Antialiasing);
-    QColor accent = theme::accent();
-    if (!enabled) accent.setAlphaF(0.45f);
-    p.setPen(QPen(on || partial ? accent : flagEdge(hover, enabled), 1.2));
-    p.setBrush(QColor(24, 24, 27));
-    p.drawRoundedRect(box.adjusted(0.6, 0.6, -0.6, -0.6), 3, 3);
-    if (on || partial) {
-        p.setPen(Qt::NoPen);
-        p.setBrush(accent);
-        const QRectF inner = box.adjusted(3.2, 3.2, -3.2, -3.2);
-        p.drawRoundedRect(partial && !on ? QRectF(inner.left(), inner.center().y() - 1.5, inner.width(), 3) : inner, 1.5, 1.5);
-    }
-    p.restore();
-}
-
-namespace {
-// The application's style: Fusion, its check boxes drawn as theme::paintCheck (the ones of the lists and the trees too)
-class CheckStyle : public QProxyStyle
-{
-public:
-    using QProxyStyle::QProxyStyle;
-    void drawPrimitive(PrimitiveElement pe, const QStyleOption *o, QPainter *p, const QWidget *w = nullptr) const override
-    {
-        if (pe == PE_IndicatorCheckBox || pe == PE_IndicatorItemViewItemCheck) {
-            const QRectF r(o->rect);
-            const double side = std::min(r.width(), r.height());
-            const QRectF box(r.center().x() - side / 2, r.center().y() - side / 2, side, side);
-            theme::paintCheck(*p, box, o->state & State_On, o->state & State_NoChange, o->state & State_MouseOver,
-                              o->state & State_Enabled);
-            return;
-        }
-        QProxyStyle::drawPrimitive(pe, o, p, w);
-    }
-};
-} // namespace
-
-QStyle *checkStyle(QStyle *base) { return new CheckStyle(base); }
-
 FlagBox::FlagBox(QWidget *parent) : FlagBox(QString(), parent) {}
 FlagBox::FlagBox(const QString &text, QWidget *parent) : QCheckBox(text, parent)
 {
@@ -1009,7 +942,7 @@ void FlagBox::paintEvent(QPaintEvent *)
     p.setRenderHint(QPainter::Antialiasing);
     const bool on = isChecked(), en = isEnabled();
     const QRectF box(1.5, (height() - 14) / 2.0, 14, 14);
-    theme::paintCheck(p, box, on, checkState() == Qt::PartiallyChecked, m_hover, en);
+    pxs::paintCheck(p, box, on, checkState() == Qt::PartiallyChecked, m_hover, en, palette()); // the same box as every check box
     if (!text().isEmpty()) {
         p.setPen(palette().color(en ? QPalette::Active : QPalette::Disabled, QPalette::WindowText));
         p.setFont(font());
