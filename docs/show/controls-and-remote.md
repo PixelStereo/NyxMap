@@ -18,8 +18,11 @@ opens the page in a window of its own, large enough to lay it out; **+ New** mak
 server of its own on the loopback (127.0.0.1) with a code of its own: it needs neither the Remote setting nor its PIN, and nothing
 else on the network can reach it. Without a browser the tab is the list of rows.
 
-A control made with **Add to Controls Page** goes **both ways**: it drives the parameter, and it follows the parameter when something
-else changes it (the inspector, OSC, a timeline, another interaction), so the page and the panel always show where it is.
+A control made with **Add to Controls Page** is a **view of that parameter**, not a copy: it has no value of its own, it reads and sets the
+parameter itself, with its range, step and choices. So whatever changes the parameter (the inspector, OSC, a timeline, an interaction, a
+preset) shows on every page and in the panel at once, and several views of one parameter always agree. It has no `control/<name>` address
+and no interaction: the parameter keeps its own address, presets and timelines. Right-click its row in the panel for what the parameter
+offers (presets, timeline, interaction). Controls made with **+ New** are the operator's own values, as before.
 
 A new project starts with an empty Controls panel; its controls belong to the project and are cleared when you create a new project. **Group** (also in **+ New**) is a titled frame that lays its controls out in 1 to 4 columns. **⋯ › Move to Group** puts a
 control or another group into one (or back on the page), **⋯ › Width** sets how many of the group's columns a control takes,

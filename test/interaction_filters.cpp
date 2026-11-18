@@ -319,24 +319,29 @@ int runInteractionFilterTests(Engine &e)
         e.removeControl(control);
     }
 
-    // A control added from a parameter goes both ways: it drives the parameter, and follows it when it is changed elsewhere
+    // A control added from a parameter is a view of it: it reads and sets that parameter, with no value or interaction of its own
     {
         const int layerIndex = e.addLayer("Bound");
         const quint64 layerId = e.layerId(layerIndex);
+        const size_t interactionsBefore = e.interactions().size();
         const quint64 control = e.addControlForParameter(layerId, "opacity", 0);
         check(control != 0 && e.control(control)->boundParam == "opacity" && e.control(control)->boundLayer == layerId, "a control added from a parameter knows it");
+        check(e.interactions().size() == interactionsBefore, "and makes no interaction");
         const ShowControl again = ShowControl::fromJson(e.control(control)->toJson());
-        check(again.boundParam == "opacity" && again.boundLayer == layerId, "and saved with it");
-        e.renderFrame();
+        check(again.boundParam == "opacity" && again.boundLayer == layerId, "saved with it");
         e.setParameter(layerId, "opacity", 0.3);
-        e.renderFrame();
-        e.renderFrame();
-        check(near(e.control(control)->value, 0.3, 1e-3), "a change of the parameter elsewhere shows in the control");
+        check(near(e.control(control)->value, 0.3, 1e-6), "a change of the parameter anywhere shows in the control at once");
         e.setControlValue(control, 0.8);
-        for (int k = 0; k < 4; ++k) e.renderFrame();
-        check(near(e.parameterValue(layerId, "opacity").toDouble(), 0.8, 1e-3) && near(e.control(control)->value, 0.8, 1e-3), "the control still drives the parameter, and is not put back");
-        for (const Interaction &x : e.interactions()) e.removeInteraction(x.id);
+        check(near(e.parameterValue(layerId, "opacity").toDouble(), 0.8, 1e-6) && near(e.control(control)->value, 0.8, 1e-6), "the control sets the parameter itself");
+        ParamInfo info;
+        check(e.parameterInfo(layerId, "opacity", &info) && near(e.control(control)->min, info.min) && near(e.control(control)->max, info.max), "its range is the parameter's");
+        check(!e.parameterInfo(0, "control/" + e.control(control)->key, &info), "it has no address of its own");
+        // several views of one parameter agree
+        const quint64 second = e.addControlForParameter(layerId, "opacity", 0);
+        e.setControlValue(second, 0.1);
+        check(near(e.control(control)->value, 0.1, 1e-6) && near(e.control(second)->value, 0.1, 1e-6), "two views of one parameter always agree");
         e.removeControl(control);
+        e.removeControl(second);
     }
 
     e.setFadesManual(false);

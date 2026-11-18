@@ -807,7 +807,11 @@ QWidget *ControlsPanel::makeRow(const ShowControl &c, const std::vector<const Sh
         QStringList pointPaths;
         for (int i = 0; i < c.count && c.kind == ShowControl::Kind::Points; ++i)
             pointPaths << path + QStringLiteral("/p%1/x").arg(i + 1) << path + QStringLiteral("/p%1/y").arg(i + 1);
-        const QStringList paths = c.kind == ShowControl::Kind::Points ? pointPaths
+        const quint64 layer = c.boundParam.isEmpty() ? 0 : c.boundLayer; // a view of a parameter is that parameter, wherever it is
+        const QStringList paths = !c.boundParam.isEmpty() ? (c.kind == ShowControl::Kind::Color
+                                                                 ? QStringList{c.boundParam + QStringLiteral("/r"), c.boundParam + QStringLiteral("/g"), c.boundParam + QStringLiteral("/b")}
+                                                                 : QStringList{c.boundParam})
+                                  : c.kind == ShowControl::Kind::Points ? pointPaths
                                   : c.kind == ShowControl::Kind::Multi ? multiPaths
                                   : c.kind == ShowControl::Kind::Adsr
                                       ? QStringList{path + QStringLiteral("/attack"), path + QStringLiteral("/decay"), path + QStringLiteral("/sustain"), path + QStringLiteral("/release")}
@@ -816,16 +820,16 @@ QWidget *ControlsPanel::makeRow(const ShowControl &c, const std::vector<const Sh
                                       ? QStringList{path + QStringLiteral("/r"), path + QStringLiteral("/g"), path + QStringLiteral("/b")}
                                       : QStringList{path};
         if (PresetEditor *pe = PresetEditor::instance()) {
-            pe->track(field, 0, paths);
-            if (auto *label = row->findChild<QLabel *>(QStringLiteral("controlName"))) pe->track(label, 0, paths);
+            pe->track(field, layer, paths);
+            if (auto *label = row->findChild<QLabel *>(QStringLiteral("controlName"))) pe->track(label, layer, paths);
         }
         field->setContextMenuPolicy(Qt::CustomContextMenu);
-        connect(field, &QWidget::customContextMenuRequested, this, [this, field, paths](const QPoint &pos) {
+        connect(field, &QWidget::customContextMenuRequested, this, [this, field, paths, layer](const QPoint &pos) {
             auto *menu = new QMenu(field);
             menu->setAttribute(Qt::WA_DeleteOnClose);
-            if (PresetEditor *pe = PresetEditor::instance()) pe->fillMenu(menu, 0, paths);
-            TimelineWindow::fillParameterMenu(menu, m_engine, m_undo, 0, paths, field);
-            InteractionPanel::fillValueMenu(menu, m_engine, 0, paths);
+            if (PresetEditor *pe = PresetEditor::instance()) pe->fillMenu(menu, layer, paths);
+            TimelineWindow::fillParameterMenu(menu, m_engine, m_undo, layer, paths, field);
+            InteractionPanel::fillValueMenu(menu, m_engine, layer, paths);
             if (menu->isEmpty()) {
                 delete menu;
                 return;

@@ -700,8 +700,9 @@ public:
     quint64 addControl(const ShowControl &control); // its id (0: too many); its key is made from its name
     // Where the controls are on the remote page (ShowControl::gx…): id -> {x, y, w, h}; unknown ids are ignored. True: something changed
     bool setControlLayouts(const QHash<quint64, std::array<int, 4>> &places);
-    // A control for a parameter, on the page or in a Group (0: the page), and an interaction that makes it drive the parameter:
-    // a slider for a number, a switch, a selector, a button, a color (for a color's channel). Its id (0: not a parameter a control can drive)
+    // A control that is a view of a parameter, on the page or in a Group (0: the page): a slider for a number, a switch, a selector, a
+    // button, a color (for a color's channel). It has no value of its own: it reads and sets the parameter, so every change shows, from
+    // wherever it comes. Its id (0: not a parameter a control can show)
     quint64 addControlForParameter(quint64 layer, const QString &path, quint64 group);
     // An interaction that makes a control's number (its `sub` path: "", "x", "p2/y", "3"…) drive a numeric parameter, the control's range
     // remapped onto the parameter's. Its id (0: not possible)
@@ -1295,8 +1296,8 @@ private:
     std::vector<ShowControl> m_controls;
     quint64 m_nextControlId = 1;
     std::atomic<quint64> m_controlsRevision{0}; // read by the remote's thread
-    QHash<quint64, QList<double>> m_boundSeen;   // a bound control's parameter, as it was last frame (the interaction thread)
-    void followBoundControls();                  // controls added from a parameter take its changes; lock held
+    void fillBound(ShowControl &c);                    // a view of a parameter shows its value, range and choices; lock held
+    bool setBound(const ShowControl &c, double value); // and sets it; lock held
     ShowControl *controlLocked(quint64 id);
     void remapControlKeys(const QHash<QString, QString> &keys); // lock held
     Sequencer *m_sequencer = nullptr; // a child QObject

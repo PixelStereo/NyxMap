@@ -12,7 +12,10 @@ constexpr int kMaxControls = 256;
 std::vector<ShowControl> Engine::controls() const
 {
     Lock lk(&m_mutex);
-    return m_controls;
+    std::vector<ShowControl> list = m_controls;
+    for (ShowControl &c : list)
+        if (!c.boundParam.isEmpty()) const_cast<Engine *>(this)->fillBound(c);
+    return list;
 }
 
 QJsonArray Engine::controlsJson() const
@@ -243,52 +246,6 @@ quint64 Engine::addControl(const ShowControl &control)
     return id;
 }
 
-// A control added from a parameter follows it: when the parameter changes (the inspector, OSC, a timeline, another interaction),
-// the control takes the value, so the page and the Controls panel show it. Only when the parameter has changed since the last frame:
-// a control just moved is not put back to the parameter's old value before its interaction has carried it there
-void Engine::followBoundControls()
-{
-    bool any = false;
-    for (const ShowControl &c : m_controls) any |= !c.boundParam.isEmpty();
-    if (!any) {
-        m_boundSeen.clear();
-        return;
-    }
-    for (ShowControl &c : m_controls) {
-        if (c.boundParam.isEmpty()) continue;
-        QList<double> now;
-        if (c.kind == ShowControl::Kind::Color) {
-            for (int k = 0; k < 3; ++k) {
-                const Parameter *p = findParameter(c.boundLayer, c.boundParam + QLatin1Char('/') + QLatin1Char("rgb"[k]));
-                if (!p || !p->isNumber()) {
-                    now.clear();
-                    break;
-                }
-                now << std::clamp(p->number(), 0.0, 1.0);
-            }
-        } else if (const Parameter *p = findParameter(c.boundLayer, c.boundParam)) {
-            if (c.kind == ShowControl::Kind::Slider && p->isNumber()) now << p->number();
-            else if (c.kind == ShowControl::Kind::Toggle) now << (p->json().toBool() ? 1.0 : 0.0);
-            else if (c.kind == ShowControl::Kind::Choice) now << double(std::max<qsizetype>(0, c.choices.indexOf(QRegularExpression(
-                                                                        QStringLiteral("^%1$").arg(QRegularExpression::escape(p->json().toString())),
-                                                                        QRegularExpression::CaseInsensitiveOption))));
-        }
-        if (now.isEmpty()) continue;
-        const auto seen = m_boundSeen.find(c.id);
-        if (seen == m_boundSeen.end()) { // the first time: where it is, not a change
-            m_boundSeen.insert(c.id, now);
-            continue;
-        }
-        if (seen.value() == now) continue;
-        seen.value() = now;
-        if (c.kind == ShowControl::Kind::Color) {
-            for (int k = 0; k < 3; ++k) c.rgb[size_t(k)] = now[k];
-        } else {
-            c.value = c.kind == ShowControl::Kind::Slider ? std::clamp(now[0], std::min(c.min, c.max), std::max(c.min, c.max)) : c.clamped(now[0]);
-        }
-    }
-}
-
 bool Engine::setControlLayouts(const QHash<quint64, std::array<int, 4>> &places)
 {
     bool changed = false;
@@ -353,15 +310,6 @@ quint64 Engine::addControlForParameter(quint64 layer, const QString &path, quint
     c.boundParam = target;
     const quint64 id = addControl(c);
     if (!id) return 0;
-    const std::optional<ShowControl> made = control(id);
-    if (!made) return id;
-    Interaction it = Interaction::made(InteractionSource::Internal);
-    it.sourceLayer = 0;
-    it.sourceParam = QStringLiteral("control/") + made->key;
-    it.layer = layer;
-    it.param = target;
-    it.takeover = Takeover::Jump;
-    addInteraction(it);
     return id;
 }
 
@@ -485,6 +433,7 @@ bool Engine::setControlValue(quint64 id, double value)
     Lock lk(&m_mutex);
     auto it = std::find_if(m_controls.begin(), m_controls.end(), [id](const ShowControl &c) { return c.id == id; });
     if (it == m_controls.end() || it->kind == ShowControl::Kind::Color || it->kind == ShowControl::Kind::Group || !std::isfinite(value)) return false;
+    if (!it->boundParam.isEmpty()) return setBound(*it, value); // a view of a parameter: the parameter is what is set
     const double next = it->clamped(value);
     if (it->value != next) {
         it->value = next;
@@ -572,6 +521,16 @@ bool Engine::setControlColor(quint64 id, double r, double g, double b)
     Lock lk(&m_mutex);
     auto it = std::find_if(m_controls.begin(), m_controls.end(), [id](const ShowControl &c) { return c.id == id; });
     if (it == m_controls.end() || it->kind != ShowControl::Kind::Color) return false;
+    if (!it->boundParam.isEmpty()) { // a view of a color: its three channels
+        const double v[3] = {r, g, b};
+        bool any = false;
+        for (int k = 0; k < 3; ++k)
+            if (Parameter *p = findParameter(it->boundLayer, it->boundParam + QLatin1Char('/') + QLatin1Char("rgb"[k])); p && std::isfinite(v[k])) {
+                any |= p->setNumber(std::clamp(v[k], 0.0, 1.0));
+                if (it->boundLayer) releaseFromFades(it->boundLayer, it->boundParam + QLatin1Char('/') + QLatin1Char("rgb"[k]));
+            }
+        return any;
+    }
     const double c[3] = {r, g, b};
     for (int i = 0; i < 3; ++i) {
         if (!std::isfinite(c[i])) continue;
@@ -587,8 +546,63 @@ std::optional<ShowControl> Engine::control(quint64 id) const
 {
     Lock lk(&m_mutex);
     for (const ShowControl &c : m_controls)
-        if (c.id == id) return c;
+        if (c.id == id) {
+            ShowControl out = c;
+            if (!out.boundParam.isEmpty()) const_cast<Engine *>(this)->fillBound(out);
+            return out;
+        }
     return std::nullopt;
+}
+
+// A control that is a view of a parameter shows what the parameter is now: its value, and its range, step and choices (lock held)
+void Engine::fillBound(ShowControl &c)
+{
+    if (c.kind == ShowControl::Kind::Color) {
+        for (int k = 0; k < 3; ++k)
+            if (const Parameter *p = findParameter(c.boundLayer, c.boundParam + QLatin1Char('/') + QLatin1Char("rgb"[k])); p && p->isNumber())
+                c.rgb[size_t(k)] = std::clamp(p->number(), 0.0, 1.0);
+        return;
+    }
+    const Parameter *p = findParameter(c.boundLayer, c.boundParam);
+    if (!p) return;
+    const ParamInfo &info = p->info();
+    switch (c.kind) {
+    case ShowControl::Kind::Slider:
+        if (!p->isNumber()) return;
+        c.min = info.min;
+        c.max = info.max > info.min ? info.max : info.min + 1;
+        c.step = info.type == ParamInfo::Type::Int ? std::max(1.0, info.step) : std::max(1e-6, info.step);
+        c.value = std::clamp(p->number(), std::min(c.min, c.max), std::max(c.min, c.max));
+        break;
+    case ShowControl::Kind::Toggle: c.value = p->json().toBool() ? 1.0 : 0.0; break;
+    case ShowControl::Kind::Choice:
+        if (!info.choices.isEmpty()) c.choices = info.choices;
+        c.value = std::max<qsizetype>(0, c.choices.indexOf(p->json().toString()));
+        break;
+    default: break;
+    }
+}
+
+// What a view of a parameter sets: the parameter itself (lock held). False: it is not there, or does not take it
+bool Engine::setBound(const ShowControl &c, double value)
+{
+    Parameter *p = findParameter(c.boundLayer, c.boundParam);
+    if (!p || !(p->info().access & ParamInfo::Write)) return false;
+    bool ok = false;
+    switch (c.kind) {
+    case ShowControl::Kind::Slider: ok = p->isNumber() && p->setNumber(value); break;
+    case ShowControl::Kind::Toggle: ok = p->setJson(value >= 0.5); break;
+    case ShowControl::Kind::Choice: {
+        const QStringList &keys = p->info().choices;
+        const int k = std::clamp(int(std::lround(value)), 0, int(keys.size()) - 1);
+        ok = !keys.isEmpty() && p->setJson(keys[k]);
+        break;
+    }
+    case ShowControl::Kind::Button: ok = value >= 0.5 && p->setJson(true); break; // a trigger: sent when it is pressed
+    default: break;
+    }
+    if (ok && c.boundLayer) releaseFromFades(c.boundLayer, c.boundParam);
+    return ok;
 }
 
 // A control's parameters, by its id (the lookups of the bindings: its place in the list changes)

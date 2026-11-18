@@ -410,6 +410,7 @@ void OscNamespace::build()
     {
         const std::vector<ShowControl> list = e->controls();
         for (const ShowControl &c : list) {
+            if (!c.boundParam.isEmpty()) continue; // a view of a parameter: it has the parameter's own address
             const quint64 id = c.id;
             const QString path = QStringLiteral("/control/") + c.key;
             switch (c.kind) {

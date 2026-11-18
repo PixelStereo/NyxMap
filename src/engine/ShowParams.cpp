@@ -230,6 +230,7 @@ const std::vector<std::unique_ptr<Parameter>> &Engine::showParams()
     // The operator's controls: control/<key>, a color as control/<key>/r, g, b. Their values live in the list; they are never
     // stored by a cue (the operator's, not the scene's) and saved with the project by their own (Controls.cpp)
     for (const ShowControl &control : m_controls) {
+        if (!control.boundParam.isEmpty()) continue; // a view of a parameter: its address is the parameter's own
         const quint64 id = control.id;
         const QString path = QStringLiteral("control/") + control.key;
         const QString label = QStringLiteral("Controls › ") + control.name;
