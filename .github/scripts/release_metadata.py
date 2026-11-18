@@ -14,19 +14,18 @@ def release_assets(release, repository):
     tag = release["tag_name"]
     if not re.fullmatch(r"v?\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?", tag):
         return None
+    # <App>-<os>-<arch>-<tag>: the same names in every Pixel Stereo application (see pxs docs/conventions.md). Releases
+    # published before it keep their older names until a newer release exists.
     names = {
-        "mac": f"{product}-macos-{tag}.zip",
-        "win": f"{product}-windows-{tag}-Setup.exe",
-        "linux": f"{product}-linux-x86_64-{tag}.AppImage",
-        "portable": f"{product}-linux-x86_64-{tag}.tar.gz",
+        "mac": [f"{product}-macos-arm64-{tag}.zip", f"{product}-macos-{tag}.zip"],
+        "win": [f"{product}-windows-x64-{tag}-Setup.exe", f"{product}-windows-{tag}-Setup.exe", f"{product}-windows-{tag}.zip"],
+        "linux": [f"{product}-linux-x64-{tag}.AppImage", f"{product}-linux-x86_64-{tag}.AppImage"],
+        "portable": [f"{product}-linux-x64-{tag}.tar.gz", f"{product}-linux-x86_64-{tag}.tar.gz"],
     }
     assets = {a["name"]: a for a in release.get("assets", []) if a.get("state") == "uploaded" and a.get("size", 0) > 0}
-    # Releases published before the Windows installer carry a zip: they stay valid until a newer release exists
-    legacy = {"win": f"{product}-windows-{tag}.zip"}
     urls = {}
-    for platform, name in names.items():
-        if platform in legacy and name not in assets:
-            name = legacy[platform]
+    for platform, candidates in names.items():
+        name = next((n for n in candidates if n in assets), None)
         asset = assets.get(name)
         if not asset:
             return None
