@@ -734,7 +734,8 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
         if (!viewportMode()) m_view->setMaskIndex(index);
     });
     connect(m_inspector, &LayerInspector::maskDrawRequested, this, [this] {
-        m_view->startMaskDrawing();
+        // in the view in Mask mode that shows the layer, else the composition's
+        if (!m_previews->startMaskDrawing(m_inspector->layerId())) m_view->startMaskDrawing();
         statusBar()->showMessage(QStringLiteral("Draw the mask in the preview: click its points (drag to curve); the first "
                                                 "point, a double-click or Enter closes it; Esc cancels"),
                                  10000);
@@ -770,12 +771,12 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     });
     connect(m_viewportInspector, &LayerInspector::maskSelected, this, [this](int index) {
         if (viewportMode()) m_view->setMaskIndex(index);
-        m_previews->selectMask(index);
+        m_previews->selectMask(m_viewportInspector->layerId(), index);
     });
-    connect(m_inspector, &LayerInspector::maskSelected, this, [this](int index) { m_previews->selectMask(index); });
+    connect(m_inspector, &LayerInspector::maskSelected, this, [this](int index) { m_previews->selectMask(m_inspector->layerId(), index); });
     connect(m_viewportInspector, &LayerInspector::maskDrawRequested, this, [this] {
         showInspectorPage(1);
-        m_view->startMaskDrawing();
+        if (!m_previews->startMaskDrawing(m_viewportInspector->layerId())) m_view->startMaskDrawing();
     });
     connect(m_viewportInspector, &LayerInspector::rescanLibraryRequested, this, &MainWindow::rescanLibrary, Qt::QueuedConnection);
     connect(m_inspector, &LayerInspector::layerChanged, this, &MainWindow::refreshLayerList);

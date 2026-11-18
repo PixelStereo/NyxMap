@@ -731,19 +731,34 @@ int main(int argc, char **argv)
                         QApplication::sendEvent(view, &e);
                         app.processEvents();
                     };
+                    check(previews && previews->startMaskDrawing(shown), "the view in Mask mode takes the request to draw a mask");
                     for (QPoint p : {QPoint(w / 3, h / 3), QPoint(2 * w / 3, h / 3), QPoint(w / 2, 2 * h / 3)}) {
                         send(QEvent::MouseButtonPress, p);
                         send(QEvent::MouseButtonRelease, p);
                     }
-                    send(QEvent::MouseButtonPress, QPoint(w / 2, 2 * h / 3 - 1)); // the second click of a double-click
-                    send(QEvent::MouseButtonDblClick, QPoint(w / 2, 2 * h / 3 - 1));
-                    send(QEvent::MouseButtonRelease, QPoint(w / 2, 2 * h / 3 - 1));
+                    send(QEvent::MouseButtonDblClick, QPoint(w / 2, 2 * h / 3));
+                    send(QEvent::MouseButtonRelease, QPoint(w / 2, 2 * h / 3));
                     check(engine.layerMasks(shown).size() == before + 1, "clicking three points then double-clicking draws a mask on the viewport");
                     if (engine.layerMasks(shown).size() == before + 1) {
+                        // the same editor as the mapping view: a point dragged moves, as one undo step
+                        const Mask drawn = engine.layerMasks(shown).back();
+                        send(QEvent::MouseButtonPress, QPoint(w / 3, h / 3));
+                        send(QEvent::MouseMove, QPoint(w / 3 + 30, h / 3 + 20));
+                        send(QEvent::MouseButtonRelease, QPoint(w / 3 + 30, h / 3 + 20));
+                        const Mask moved = engine.layerMasks(shown).back();
+                        check(moved.nodes.size() == drawn.nodes.size() && moved.nodes[0].p != drawn.nodes[0].p && moved.nodes[1].p == drawn.nodes[1].p,
+                              "dragging a point of the mask in a view moves that point (the editor is the mapping view's)");
                         QUndoStack *undoStack = window.findChild<QUndoStack *>();
                         if (undoStack) {
                             undoStack->undo();
+                            check(engine.layerMasks(shown).back().nodes[0].p == drawn.nodes[0].p, "a dragged point is one undo step");
+                            undoStack->redo();
+                        }
+                        if (undoStack) {
+                            undoStack->undo(); // the move, then the drawing
+                            undoStack->undo();
                             check(engine.layerMasks(shown).size() == before, "the drawn mask is one undo step");
+                            undoStack->redo();
                             undoStack->redo();
                         }
                     }

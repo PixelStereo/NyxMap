@@ -52,7 +52,7 @@ void MappingView::startLineDrawing()
         Engine::Lock lk(&m_engine->mutex());
         if (!isLineLayer() || m_engine->isLocked(m_layer)) return;
     }
-    if (m_drawing) cancelDrawing();
+    if (m_masks->drawing()) m_masks->cancelDrawing();
     m_lineDrawing = true;
     m_linePoints.clear();
     m_lineSel = {};
@@ -110,7 +110,7 @@ bool MappingView::pressLine(QMouseEvent *e)
 {
     if (e->button() != Qt::LeftButton) return false;
     Engine::Lock lk(&m_engine->mutex());
-    if (!isLineLayer() || m_maskEditMode || m_drawing) return false;
+    if (!isLineLayer() || m_masks->active() || m_masks->drawing()) return false;
     const QPointF w = e->position();
     if (m_lineDrawing) {
         const QPointF guess = m_linePoints.empty() ? QPointF(0.5, 0.5) : m_linePoints.back();
@@ -197,7 +197,7 @@ bool MappingView::doubleClickLine(QMouseEvent *e)
     std::vector<LinePath> before, after;
     {
         Engine::Lock lk(&m_engine->mutex());
-        if (!isLineLayer() || m_engine->isLocked(m_layer) || m_maskEditMode) return false;
+        if (!isLineLayer() || m_engine->isLocked(m_layer) || m_masks->active()) return false;
         const Layer *l = m_engine->layer(m_layer);
         const QPointF w = e->position();
         // A segment double-clicked: a point there

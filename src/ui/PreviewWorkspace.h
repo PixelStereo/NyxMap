@@ -24,7 +24,8 @@ public:
     QJsonObject state() const;
     void setState(const QJsonObject &o);
     void setUndoStack(QUndoStack *undo);
-    void selectMask(int index); // the mask picked in the inspector's list, shown picked in the views
+    void selectMask(quint64 layer, int index); // the mask picked in the inspector's list, edited in the views that show that layer
+    bool startMaskDrawing(quint64 layer);      // a new mask drawn in the view in Mask mode that shows that layer (false: none)
     void setCurrentLayer(quint64 id); // the 3D views show its handles when it is one of their scene's objects
 
 signals:

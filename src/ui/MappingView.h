@@ -2,6 +2,7 @@
 #include <QJsonObject>
 #include "RhiDraw.h"
 #include "Mapping.h"
+#include "MaskEditor.h"
 #include "Masks.h"
 #include "Fixtures.h"
 #include "LineGenerator.h"
@@ -27,7 +28,7 @@ class PaintOverlay;
 // Magnetism (button next to the zoom): a dragged point is caught by the corners and edges around it — the
 // composition's, its center lines, the viewports' frames, the other layers', the other points of the layer —
 // and a dragged layer or viewport by its edges or center. Hold Shift while dragging to snap; otherwise move freely.
-class MappingView : public QRhiWidget
+class MappingView : public QRhiWidget, public MaskEditorHost
 {
     Q_OBJECT
 public:
@@ -36,7 +37,11 @@ public:
 
     void setLayer(int index);
     void setShowAllOutlines(bool on) { m_showAll = on; update(); }
-    void setUndoStack(QUndoStack *s) { m_undo = s; }
+    void setUndoStack(QUndoStack *s)
+    {
+        m_undo = s;
+        if (m_masks) m_masks->setUndoStack(s);
+    }
     void zoomBy(double factor);           // around the center of the view
     void zoomToFit();
     double zoom() const { return m_zoom; }
@@ -175,7 +180,6 @@ private:
     QToolButton *m_autoSelectButton = nullptr;
     QToolButton *m_maskModeButton = nullptr, *m_channelButton = nullptr;
     int m_channel = 0; // the channel shown: RGB, R, G, B, A
-    bool m_maskEditMode = false;
 
     // Fixtures
     QToolButton *m_fixturesButton = nullptr;
@@ -212,25 +216,22 @@ private:
     void cancelLineDrawing();
     void commitLines(const std::vector<LinePath> &before, const std::vector<LinePath> &after, const QString &text);
 
-    // Masks
-    int m_maskIndex = -1;
-    bool m_drawing = false, m_drawPressing = false;
-    std::vector<MaskNode> m_drawNodes; // the mask being drawn
-    QPointF m_cursor;
-    enum class MaskDrag { None, Node, In, Out, Body } m_maskDrag = MaskDrag::None;
-    int m_maskNode = -1;  // the point dragged, or last clicked
-    std::vector<int> m_maskSelection; // Ctrl/Command-click multiple points for alignment
-    QPointF m_maskLast;   // the frame point of the last move (dragging it whole)
-    std::vector<Mask> m_masksBefore;
-    Mask *editedMask();   // lock held
-    bool maskInComposition(const Mask *k) const;
-    QPointF frameToWidget(bool composition, QPointF q) const;               // lock held
-    QPointF widgetToFrame(bool composition, QPointF w, QPointF guess) const; // lock held
-    QPolygonF maskOutline(const Mask &k) const;                              // in the widget
+    // Masks: the editor of every view (MaskEditor.h); this view is its host
+    MaskEditor *m_masks = nullptr;
+    quint64 maskLayerId() const override;
+    bool maskEditable() const override;
+    bool maskInComposition(const Mask &k) const override;
+    QSize maskFrameSize(const Mask &k) const override;
+    QPointF maskToWidget(bool composition, QPointF q) const override;                          // lock held
+    QPointF maskFromWidget(bool composition, QPointF w, QPointF guess) const override;         // lock held
+    QWidget *maskWidget() override { return this; }
+    bool maskSnapping(Qt::KeyboardModifiers mods) const override { return snapping(mods); }
+    QPointF maskSnap(QPointF widgetPoint, const std::vector<QPointF> &others, bool scene) override;
+    void maskClearGuides() override { clearGuides(); }
+    QPointF frameToWidget(bool composition, QPointF q) const { return maskToWidget(composition, q); }                    // lock held
+    QPointF widgetToFrame(bool composition, QPointF w, QPointF guess) const { return maskFromWidget(composition, w, guess); } // lock held
     void paintMasks();
-    bool pressMask(QMouseEvent *e); // lock held; true: taken by the masks
-    void finishDrawing();
-    void cancelDrawing();
+    QPointF m_cursor; // the pointer, for the line being drawn
 
     double m_zoom = 1.0;
     QPointF m_pan;                // offset of the view center, widget pixels

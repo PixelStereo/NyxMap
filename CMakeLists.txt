@@ -431,7 +431,7 @@ set(UI_SOURCES
   src/ui/LayerInspector.cpp
   src/ui/ParamPanel.cpp
   src/ui/PresetEditor.cpp
-  src/ui/MappingView.cpp src/ui/MappingViewLines.cpp
+  src/ui/MappingView.cpp src/ui/MappingViewLines.cpp src/ui/MaskEditor.cpp
   src/ui/PreviewWorkspace.cpp
   src/ui/Scene3DView.cpp
   src/ui/FixtureOverlay.cpp
