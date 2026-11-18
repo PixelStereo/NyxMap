@@ -4,7 +4,7 @@
 
 The **Controls** tab (Shift+5), next to the Media Bin and the Interactions, holds the operator's own values: a **Slider**
 (range, step, unit, default), a **Toggle**, a **Selector** (a list of choices), a **Button** (1 while it is held down) and a
-**Color**, and a **2D Slider** (a square: two numbers, X and Y, moved by one gesture; double-click puts it back to its
+**Color**, an **ADSR** (an envelope to take in the hand, see below) and a **2D Slider** (a square: two numbers, X and Y, moved by one gesture; double-click puts it back to its
 default). **+ New** makes one; **⋯** edits, duplicates, moves or deletes it, each one undo step. They are saved with the
 project (not in snapshots: a control is the operator's, not the scene's).
 
@@ -16,6 +16,11 @@ A new project starts with an empty Controls panel; its controls belong to the pr
 control or another group into one (or back on the page), **⋯ › Width** sets how many of the group's columns a control takes,
 **⋯ › Columns** the group's own, and **Move up / down** orders what is beside it. The remote's `/control` page shows the same
 groups, columns and widths.
+
+An **ADSR** is four numbers moved by one curve with four points: the attack, the decay, the sustain (the level held) and the release.
+Its times go up to its **Longest time** (⋯ › Edit). Each number is a parameter, `control/<name>/attack`, `decay`, `sustain` and
+`release`, so a timeline, an interaction or a preset reaches it, and OSC sets the four at once: `/control/<name>` takes four floats.
+On the remote page it is a tile with the same curve, a handle for each number.
 
 A control is a value of the show, `control/<name>` (a color: `control/<name>/r`, `g`, `b`; a 2D slider: `control/<name>/x` and
 `y`, a point a timeline draws as an XY track), like a layer's opacity. So:

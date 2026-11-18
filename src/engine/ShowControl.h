@@ -21,8 +21,8 @@
 #include <cmath>
 
 struct ShowControl {
-    enum class Kind { Slider = 0, Toggle, Choice, Button, Color, Pad, Group };
-    static constexpr int kKindCount = 7;
+    enum class Kind { Slider = 0, Toggle, Choice, Button, Color, Pad, Group, Adsr };
+    static constexpr int kKindCount = 8;
     static constexpr int kGridColumns = 12, kGridRowsMax = 400; // the remote page's grid
     quint64 id = 0;
     QString name = QStringLiteral("Control");
@@ -46,6 +46,9 @@ struct ShowControl {
     double value = 0;
     double value2 = 0; // Pad: Y (value is X)
     std::array<double, 3> rgb{{1, 1, 1}}; // Color
+    // Adsr: an envelope's four numbers, control/<key>/attack, decay, sustain (0..1) and release; the times in seconds up to `max`
+    std::array<double, 4> adsr{{0.05, 0.2, 0.7, 0.4}};
+    static constexpr const char *const kAdsrKeys[4] = {"attack", "decay", "sustain", "release"};
 
     // What a remote page may ask for: a short word, a color in #rrggbb; anything else is the default
     static QString cleanWidget(const QString &w)
@@ -64,7 +67,7 @@ struct ShowControl {
     }
     static QString kindKey(Kind k)
     {
-        static const char *const keys[] = {"slider", "toggle", "choice", "button", "color", "pad", "group"};
+        static const char *const keys[] = {"slider", "toggle", "choice", "button", "color", "pad", "group", "adsr"};
         return QString::fromLatin1(keys[std::clamp(int(k), 0, kKindCount - 1)]);
     }
     static Kind kindFromKey(const QString &s)
@@ -75,7 +78,7 @@ struct ShowControl {
     }
     static QString kindName(Kind k)
     {
-        static const char *const names[] = {"Slider", "Toggle", "Selector", "Button", "Color", "2D Slider", "Group"};
+        static const char *const names[] = {"Slider", "Toggle", "Selector", "Button", "Color", "2D Slider", "Group", "ADSR"};
         return QString::fromLatin1(names[std::clamp(int(k), 0, kKindCount - 1)]);
     }
     // The value kept within what the control takes
@@ -89,6 +92,7 @@ struct ShowControl {
         case Kind::Button: return v >= 0.5 ? 1.0 : 0.0;
         case Kind::Choice: return choices.isEmpty() ? 0.0 : std::clamp(std::round(v), 0.0, double(choices.size() - 1));
         case Kind::Color:
+        case Kind::Adsr:
         case Kind::Group: return value;
         }
         return value;
@@ -130,6 +134,10 @@ struct ShowControl {
             break;
         }
         case Kind::Color: o["rgb"] = QJsonArray{rgb[0], rgb[1], rgb[2]}; break;
+        case Kind::Adsr:
+            o["max"] = max;
+            o["adsr"] = QJsonArray{adsr[0], adsr[1], adsr[2], adsr[3]};
+            break;
         }
         return o;
     }
@@ -174,6 +182,14 @@ struct ShowControl {
             break;
         case Kind::Toggle: c.value = o.value("value").toBool() ? 1.0 : 0.0; break;
         case Kind::Button: break;
+        case Kind::Adsr: {
+            c.min = 0;
+            c.max = std::clamp(finite(o.value("max").toDouble(2), 2), 0.1, 60.0);
+            const QJsonArray a = o.value("adsr").toArray();
+            static const double fallback[4] = {0.05, 0.2, 0.7, 0.4};
+            for (int i = 0; i < 4; ++i) c.adsr[size_t(i)] = std::clamp(finite(a.at(i).toDouble(fallback[i]), fallback[i]), 0.0, i == 2 ? 1.0 : c.max);
+            break;
+        }
         case Kind::Choice:
             for (const QJsonValue &v : o.value("choices").toArray()) c.choices << v.toString();
             if (c.choices.isEmpty()) c.choices << QStringLiteral("A") << QStringLiteral("B");

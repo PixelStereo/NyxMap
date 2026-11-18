@@ -215,6 +215,10 @@ quint64 Engine::addControl(const ShowControl &control)
             c.def = std::clamp(c.def, c.min, c.max);
         }
         if (c.kind == ShowControl::Kind::Choice && c.choices.isEmpty()) c.choices = {QStringLiteral("A"), QStringLiteral("B")};
+        if (c.kind == ShowControl::Kind::Adsr) {
+            c.min = 0;
+            c.max = std::clamp(c.max > 1 ? c.max : 2.0, 0.1, 60.0); // the longest of its times
+        }
         id = c.id;
         m_controls.push_back(std::move(c));
         keyAll(m_controls);
@@ -326,6 +330,11 @@ bool Engine::updateControl(quint64 id, const ShowControl &change)
         if (c.kind == ShowControl::Kind::Choice && c.choices.isEmpty()) c.choices = it->choices;
         c.value = c.kind == it->kind ? c.clamped(c.value) : (c.kind == ShowControl::Kind::Slider || c.kind == ShowControl::Kind::Pad ? c.def : 0.0);
         c.value2 = c.kind == ShowControl::Kind::Pad ? (c.kind == it->kind ? c.clamped(c.value2) : c.def) : 0.0;
+        if (c.kind == ShowControl::Kind::Adsr) {
+            c.min = 0;
+            c.max = std::clamp(c.max, 0.1, 60.0);
+            for (int i = 0; i < 4; ++i) c.adsr[size_t(i)] = std::clamp(c.adsr[size_t(i)], 0.0, i == 2 ? 1.0 : c.max);
+        }
         *it = c;
         tidyGroups(m_controls);
         ++m_controlsRevision;
@@ -408,6 +417,22 @@ bool Engine::setControlPoint(quint64 id, double x, double y)
         if (field == next) continue;
         field = next;
         feedControlAction(QStringLiteral("control/") + it->key + (axis == 0 ? QStringLiteral("/x") : QStringLiteral("/y")), next);
+    }
+    return true;
+}
+
+bool Engine::setControlAdsr(quint64 id, const std::array<double, 4> &adsr)
+{
+    Lock lk(&m_mutex);
+    auto it = std::find_if(m_controls.begin(), m_controls.end(), [id](const ShowControl &c) { return c.id == id; });
+    if (it == m_controls.end() || it->kind != ShowControl::Kind::Adsr) return false;
+    for (int i = 0; i < 4; ++i) {
+        if (!std::isfinite(adsr[size_t(i)])) continue;
+        const double next = std::clamp(adsr[size_t(i)], 0.0, i == 2 ? 1.0 : std::max(0.1, it->max));
+        double &field = it->adsr[size_t(i)];
+        if (field == next) continue;
+        field = next;
+        feedControlAction(QStringLiteral("control/") + it->key + QLatin1Char('/') + QLatin1String(ShowControl::kAdsrKeys[i]), next);
     }
     return true;
 }

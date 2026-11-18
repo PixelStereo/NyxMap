@@ -50,6 +50,12 @@ header h1 { flex:1; margin:0 10px 0 0; font-size:16px; font-weight:600; white-sp
 .kval { fill:none; stroke:var(--a); stroke-width:8; stroke-linecap:round; filter:drop-shadow(0 0 3px var(--a)); }
 .kdot { stroke:#f2f2f5; stroke-width:3.5; stroke-linecap:round; }
 .ktx { fill:var(--text); font:600 15px -apple-system, system-ui, sans-serif; text-anchor:middle; font-variant-numeric:tabular-nums; }
+.adsr { position:relative; width:100%; height:100%; align-self:stretch; touch-action:none; }
+.adsr svg { display:block; }
+.aarea { fill:var(--a); opacity:.14; }
+.aline { fill:none; stroke:var(--a); stroke-width:3; stroke-linejoin:round; filter:drop-shadow(0 0 4px var(--a)); }
+.ahdl { fill:#f2f2f5; stroke:var(--a); stroke-width:3; }
+.alab { position:absolute; left:0; right:0; bottom:0; text-align:center; font-size:12px; color:var(--dim); font-variant-numeric:tabular-nums; white-space:pre; }
 .num { display:flex; align-items:center; width:100%; }
 .num button { width:42px; height:42px; border-radius:50%; border:1px solid var(--line); background:var(--panel2); color:var(--text); font-size:22px; line-height:1; }
 .num output { flex:1; text-align:center; font-size:26px; font-weight:600; font-variant-numeric:tabular-nums; }
@@ -165,7 +171,7 @@ inline constexpr char kScriptA[] = R"JS(
       let m; try { m = JSON.parse(e.data); } catch (_) { return; }
       if (m.t === 'controls') {
         controls = m.list || []; byId = {}; $('#title').textContent = m.title || 'NyxMap';
-        controls.forEach(c => { byId[c.id] = c; values[c.id] = c.kind === 'color' ? c.rgb : c.kind === 'pad' ? [c.x, c.y] : c.value; });
+        controls.forEach(c => { byId[c.id] = c; values[c.id] = c.kind === 'color' ? c.rgb : c.kind === 'pad' ? [c.x, c.y] : c.kind === 'adsr' ? c.adsr : c.value; });
         if (busy) again = true; else render();
       } else if (m.t === 'values') { Object.assign(values, m.v || {}); update(); }
     };
@@ -179,9 +185,9 @@ inline constexpr char kScriptA[] = R"JS(
 
 // B: the widgets, in SVG and CSS. Each takes its control and `io` (begin, input(v), end) and gives { el, set(v) }
 inline constexpr char kScriptB[] = R"JS(
-  const wDefault = { slider: 'fader', toggle: 'switch', choice: 'buttons', button: 'hold', color: 'picker', pad: 'pad' };
-  const wChoices = { slider: ['fader', 'vfader', 'knob', 'number'], toggle: ['switch'], choice: ['buttons', 'menu'], button: ['hold', 'tap'], color: ['picker'], pad: ['pad'] };
-  const wName = { fader: 'Fader', vfader: 'Vertical fader', knob: 'Encoder', number: 'Number', switch: 'Switch', buttons: 'Buttons', menu: 'Menu', hold: 'Hold button', tap: 'Tap button', picker: 'Color', pad: 'XY pad' };
+  const wDefault = { slider: 'fader', toggle: 'switch', choice: 'buttons', button: 'hold', color: 'picker', pad: 'pad', adsr: 'adsr' };
+  const wChoices = { slider: ['fader', 'vfader', 'knob', 'number'], toggle: ['switch'], choice: ['buttons', 'menu'], button: ['hold', 'tap'], color: ['picker'], pad: ['pad'], adsr: ['adsr'] };
+  const wName = { fader: 'Fader', vfader: 'Vertical fader', knob: 'Encoder', number: 'Number', switch: 'Switch', buttons: 'Buttons', menu: 'Menu', hold: 'Hold button', tap: 'Tap button', picker: 'Color', pad: 'XY pad', adsr: 'ADSR' };
   const widgetOf = c => (wChoices[c.kind] || []).indexOf(c.widget) >= 0 ? c.widget : wDefault[c.kind];
   function fader(c, io, vertical) {
     const root = el('div', 'fader' + (vertical ? ' v' : '')), trk = el('div', 'trk'), fill = el('div', 'fill'), cap = el('div', 'cap');
@@ -243,13 +249,38 @@ inline constexpr char kScriptB[] = R"JS(
       press(pad, { down: p => { down = true; active.add(c.id); move(p); }, move, up: p => { down = false; active.delete(c.id); send({ t: 'point', id: c.id, xy: at(p) }); } });
       return { el: pad, set: v => { if (!down) draw(v); } };
     }
+    if (c.kind === 'adsr') return adsr(c, io);
     return { el: el('div'), set: () => {} };
+  }
+  // An envelope in the hand: attack, decay, sustain and release, each by its own handle (the times along four slots, the sustain up and down)
+  function adsr(c, io) {
+    const root = el('div', 'adsr'), s = sv('svg', {}, root), area = sv('path', { 'class': 'aarea' }, s), line = sv('path', { 'class': 'aline' }, s);
+    const hs = [0, 1, 2, 3].map(() => sv('circle', { 'class': 'ahdl', r: 9 }, s)), lbl = el('div', 'alab');
+    root.appendChild(lbl);
+    let v = c.adsr.slice(), W = 1, H = 1, grab = -1;
+    const slot = 0.28, hold = 0.72, pad = 12;
+    const pts = () => { const w = W - 2 * pad, h = H - 2 * pad, m = c.max || 2, X = f => pad + w * f, Y = l => pad + h * (1 - l);
+      return [[X(slot * Math.min(1, v[0] / m)), Y(1)], [X(slot + slot * Math.min(1, v[1] / m)), Y(v[2])], [X(hold), Y(v[2])], [X(hold + slot * Math.min(1, v[3] / m)), Y(0)]]; };
+    const draw = () => {
+      W = root.clientWidth || 1; H = (root.clientHeight || 1) - 18; s.setAttribute('viewBox', '0 0 ' + W + ' ' + Math.max(H, 1)); s.setAttribute('width', W); s.setAttribute('height', Math.max(H, 1));
+      const p = pts(), base = H - pad, d = 'M' + pad + ' ' + base + p.map(q => 'L' + q[0] + ' ' + q[1]).join('');
+      line.setAttribute('d', d); area.setAttribute('d', d + 'L' + p[3][0] + ' ' + base + 'Z');
+      p.forEach((q, i) => { hs[i].setAttribute('cx', q[0]); hs[i].setAttribute('cy', q[1]); });
+      lbl.textContent = 'A ' + v[0].toFixed(2) + ' s   D ' + v[1].toFixed(2) + ' s   S ' + v[2].toFixed(2) + '   R ' + v[3].toFixed(2) + ' s';
+    };
+    const apply = p => { const r = s.getBoundingClientRect(), x = p.x - r.left - pad, y = p.y - r.top - pad, w = W - 2 * pad, h = H - 2 * pad, m = c.max || 2, f = a => clamp(a, 0, 1) * m;
+      if (grab === 0) v[0] = f(x / (w * slot)); else if (grab === 1) v[1] = f((x - w * slot) / (w * slot)); else if (grab === 2) v[2] = clamp(1 - y / h, 0, 1); else v[3] = f((x - w * hold) / (w * slot));
+      v = v.map((a, i) => Number(a.toFixed(3))); draw(); io.input(v); };
+    press(root, { down: p => { const r = s.getBoundingClientRect(), q = pts(); let best = 1e9; grab = -1;
+        q.forEach((h, i) => { const dd = Math.hypot(p.x - r.left - h[0], p.y - r.top - h[1]); if (dd < best) { best = dd; grab = i; } });
+        if (best > 40) { grab = -1; return false; } io.begin(); apply(p); }, move: p => { if (grab >= 0) apply(p); }, up: () => { grab = -1; io.end(); } });
+    return { el: root, resize: draw, set: x => { if (grab < 0) { v = x.slice(); draw(); } } };
   }
 )JS";
 
 // C: pages, the grid, the tiles, Edit mode (drag, resize)
 inline constexpr char kScriptC[] = R"JS(
-  const sizeOf = c => { const w = widgetOf(c); return c.kind === 'group' ? [12, 1] : c.kind === 'pad' ? [5, 5] : c.kind === 'choice' ? [6, 2] : c.kind === 'slider' ? (w === 'knob' ? [3, 3] : w === 'vfader' ? [2, 5] : w === 'number' ? [3, 2] : [5, 2]) : [3, 2]; };
+  const sizeOf = c => { const w = widgetOf(c); return c.kind === 'group' ? [12, 1] : c.kind === 'pad' ? [5, 5] : c.kind === 'adsr' ? [6, 3] : c.kind === 'choice' ? [6, 2] : c.kind === 'slider' ? (w === 'knob' ? [3, 3] : w === 'vfader' ? [2, 5] : w === 'number' ? [3, 2] : [5, 2]) : [3, 2]; };
   const minOf = c => c.kind === 'pad' ? [2, 2] : c.kind === 'slider' && widgetOf(c) === 'knob' ? [2, 2] : c.kind === 'slider' && widgetOf(c) === 'vfader' ? [1, 3] : c.kind === 'group' ? [2, 1] : [2, 1];
   const hit = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
   const topOf = c => { let p = c.group; while (p && byId[p] && byId[p].group) p = byId[p].group; return p || 0; };
@@ -273,8 +304,9 @@ inline constexpr char kScriptC[] = R"JS(
   let items = [], cell = 60, rowH = 60, compact = false;
   function geometry() { const w = $('#grid').clientWidth; compact = w < 560; cell = w / 12; rowH = clamp(cell, 46, 84); }
   function place(it, t) {
-    if (compact) { t.el.style.height = (it.h * 54) + 'px'; t.el.style.width = ''; t.el.style.left = t.el.style.top = ''; return; }
+    if (compact) { t.el.style.height = (it.h * 54) + 'px'; t.el.style.width = ''; t.el.style.left = t.el.style.top = ''; if (t.api && t.api.resize) t.api.resize(); return; }
     t.el.style.left = (it.x * cell) + 'px'; t.el.style.top = (it.y * rowH) + 'px'; t.el.style.width = (it.w * cell) + 'px'; t.el.style.height = (it.h * rowH) + 'px';
+    if (t.api && t.api.resize) t.api.resize();
   }
   function placeAll() {
     geometry(); $('#grid').classList.toggle('compact', compact);
@@ -291,7 +323,8 @@ inline constexpr char kScriptC[] = R"JS(
     hd.appendChild(name); if (c.kind === 'slider') hd.appendChild(val); face.appendChild(hd);
     if (c.kind !== 'group' && c.kind !== 'toggle') {
       const bd = el('div', 'bd');
-      const io = { begin: () => active.add(c.id), input: v => { values[c.id] = v; if (val) val.textContent = fmt(c, v); throttled(c.id, () => send({ t: 'set', id: c.id, v })); }, end: () => { active.delete(c.id); send({ t: 'set', id: c.id, v: values[c.id] }); } };
+      const kindMsg = (v) => c.kind === 'adsr' ? { t: 'adsr', id: c.id, v } : { t: 'set', id: c.id, v };
+      const io = { begin: () => active.add(c.id), input: v => { values[c.id] = v; if (val) val.textContent = fmt(c, v); throttled(c.id, () => send(kindMsg(v))); }, end: () => { active.delete(c.id); send(kindMsg(values[c.id])); } };
       t.api = widget(c, io); t.val = val; bd.appendChild(t.api.el); face.appendChild(bd);
     } else if (c.kind === 'toggle') {
       const bd = el('div', 'bd'), io = { begin() {}, input: v => send({ t: 'set', id: c.id, v }), end() {} };
@@ -373,6 +406,7 @@ inline constexpr char kScriptD[] = R"JS(
       const sw = el('div', 'sw8'); accents.forEach(a => { const b = el('button', (c.accent || '') === a ? 'on' : '', ''); b.style.background = a || '#34343b'; b.title = a || 'default'; b.onclick = () => { push({ accent: a }); sw.querySelectorAll('button').forEach(o => o.classList.remove('on')); b.classList.add('on'); }; sw.appendChild(b); });
       field('Accent', sw);
     }
+    if (c.kind === 'adsr') field('Longest time (s)', numeric(c.max, v => push({ max: v })));
     if (c.kind === 'slider') {
       const row = el('div', 'row'), cell2 = (l, n) => { const d = el('div'); d.appendChild(el('label', '', l)); d.appendChild(n); return d; };
       row.appendChild(cell2('Min', numeric(c.min, v => push({ min: v })))); row.appendChild(cell2('Max', numeric(c.max, v => push({ max: v })))); sh.appendChild(row);

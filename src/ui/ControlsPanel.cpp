@@ -1,5 +1,6 @@
 #include "Naming.h"
 #include "ControlsPanel.h"
+#include "AdsrCurve.h"
 #include "ColorPicker.h"
 #include "Engine.h"
 #include "InteractionPanel.h"
@@ -149,6 +150,7 @@ void ControlsPanel::addControl(int kind)
     c.name = ShowControl::kindName(c.kind);
     if (c.kind == ShowControl::Kind::Choice) c.choices = {QStringLiteral("A"), QStringLiteral("B"), QStringLiteral("C")};
     if (c.kind == ShowControl::Kind::Pad) c.def = c.value = c.value2 = 0.5; // the middle of its square
+    if (c.kind == ShowControl::Kind::Adsr) c.max = 2; // the longest of its times, in seconds
     const QJsonArray before = m_engine->controlsJson();
     if (!m_engine->addControl(c)) return;
     m_undo->push(new SetControlsCommand(m_engine, before, m_engine->controlsJson(), QStringLiteral("Add Control")));
@@ -164,13 +166,16 @@ void ControlsPanel::editControl(quint64 id)
     auto *form = new QFormLayout(&dialog);
     auto *name = new QLineEdit(current->name);
     form->addRow(QStringLiteral("Name"), name);
-    if (current->kind == ShowControl::Kind::Pad)
+    if (current->kind == ShowControl::Kind::Adsr)
+        form->addRow(QStringLiteral("Address"), new QLabel(QStringLiteral("/control/%1 (attack, decay, sustain, release) · …/attack · …/decay · …/sustain · …/release").arg(current->key)));
+    else if (current->kind == ShowControl::Kind::Pad)
         form->addRow(QStringLiteral("Address"), new QLabel(QStringLiteral("/control/%1/x · /control/%1/y").arg(current->key)));
     else if (current->kind != ShowControl::Kind::Group)
         form->addRow(QStringLiteral("Address"), new QLabel(QStringLiteral("/control/%1").arg(current->key)));
     QDoubleSpinBox *min = nullptr, *max = nullptr, *step = nullptr, *def = nullptr;
     QLineEdit *unit = nullptr;
     QPlainTextEdit *choices = nullptr;
+    QDoubleSpinBox *longest = nullptr;
     if (current->kind == ShowControl::Kind::Slider || current->kind == ShowControl::Kind::Pad) {
         min = new QDoubleSpinBox;
         max = new QDoubleSpinBox;
@@ -198,6 +203,14 @@ void ControlsPanel::editControl(quint64 id)
         choices = new QPlainTextEdit(current->choices.join(QLatin1Char('\n')));
         choices->setMinimumHeight(90);
         form->addRow(QStringLiteral("Choices\n(one per line)"), choices);
+    } else if (current->kind == ShowControl::Kind::Adsr) {
+        longest = new QDoubleSpinBox;
+        longest->setRange(0.1, 60);
+        longest->setDecimals(2);
+        longest->setSuffix(QStringLiteral(" s"));
+        longest->setValue(current->max);
+        longest->setToolTip(QStringLiteral("The longest attack, decay or release its curve can take"));
+        form->addRow(QStringLiteral("Longest time"), longest);
     }
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     form->addRow(buttons);
@@ -213,6 +226,7 @@ void ControlsPanel::editControl(quint64 id)
         change.def = def->value();
         change.unit = unit->text();
     }
+    if (longest) change.max = longest->value();
     if (choices) {
         QStringList list;
         for (const QString &line : choices->toPlainText().split(QLatin1Char('\n')))
@@ -452,6 +466,19 @@ QWidget *ControlsPanel::makeRow(const ShowControl &c, const std::vector<const Sh
     QWidget *field = nullptr;
     switch (c.kind) {
     case ShowControl::Kind::Group: break; // a frame: makeGroup
+    case ShowControl::Kind::Adsr: {
+        // An envelope to take in the hand (the instruments' and the interactions' own widget): its four numbers are parameters
+        auto *curve = new AdsrCurve;
+        curve->setObjectName(QStringLiteral("control_%1").arg(c.key));
+        curve->shape = AdsrCurve::Shape::Straight;
+        curve->longest = c.max;
+        curve->setMinimumHeight(90);
+        curve->setValues({c.adsr[0], c.adsr[1], c.adsr[2], c.adsr[3]});
+        curve->edited = [this, id](const AdsrCurve::Values &v) { m_engine->setControlAdsr(id, {v.attack, v.decay, v.sustain, v.release}); };
+        field = curve;
+        h->addWidget(curve, 1);
+        break;
+    }
     case ShowControl::Kind::Pad: {
         auto *pad = new XyPad;
         pad->setObjectName(QStringLiteral("control_%1").arg(c.key));
@@ -532,7 +559,9 @@ QWidget *ControlsPanel::makeRow(const ShowControl &c, const std::vector<const Sh
     const QString path = QStringLiteral("control/") + c.key;
     if (field) {
         // Its value as any value: in a preset (Edit mode, a click on its name, right-click), on a timeline, learned by an interaction
-        const QStringList paths = c.kind == ShowControl::Kind::Pad ? QStringList{path + QStringLiteral("/x"), path + QStringLiteral("/y")}
+        const QStringList paths = c.kind == ShowControl::Kind::Adsr
+                                      ? QStringList{path + QStringLiteral("/attack"), path + QStringLiteral("/decay"), path + QStringLiteral("/sustain"), path + QStringLiteral("/release")}
+                                  : c.kind == ShowControl::Kind::Pad ? QStringList{path + QStringLiteral("/x"), path + QStringLiteral("/y")}
                                   : c.kind == ShowControl::Kind::Color
                                       ? QStringList{path + QStringLiteral("/r"), path + QStringLiteral("/g"), path + QStringLiteral("/b")}
                                       : QStringList{path};
@@ -568,7 +597,9 @@ void ControlsPanel::refreshValues()
         const auto it = std::find_if(controls.begin(), controls.end(), [&](const ShowControl &c) { return c.id == row.id; });
         if (it == controls.end()) continue;
         const ShowControl &c = *it;
-        if (auto *pad = qobject_cast<XyPad *>(row.field.data())) {
+        if (auto *curve = dynamic_cast<AdsrCurve *>(row.field.data())) {
+            curve->setValues({c.adsr[0], c.adsr[1], c.adsr[2], c.adsr[3]});
+        } else if (auto *pad = qobject_cast<XyPad *>(row.field.data())) {
             if (!pad->isDragging()) pad->setValue(c.value, c.value2);
         } else if (auto *s = qobject_cast<SliderField *>(row.field.data())) {
             if (!s->isDragging()) {

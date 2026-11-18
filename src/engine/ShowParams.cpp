@@ -280,6 +280,20 @@ const std::vector<std::unique_ptr<Parameter>> &Engine::showParams()
             break;
         }
         case ShowControl::Kind::Group: break; // a frame of the page, not a value
+        case ShowControl::Kind::Adsr:
+            for (int i = 0; i < 4; ++i) {
+                static const double fallback[4] = {0.05, 0.2, 0.7, 0.4};
+                static const char *const names[4] = {" Attack", " Decay", " Sustain", " Release"};
+                add(path + QLatin1Char('/') + QLatin1String(ShowControl::kAdsrKeys[i]), label + QLatin1String(names[i]), T::Float)
+                    .range(0, i == 2 ? 1.0 : std::max(0.1, control.max))
+                    .step(0.01)
+                    .byDefault(fallback[i])
+                    .animatable()
+                    .transient()
+                    .bind(read([i](const ShowControl &c) { return QVariant(c.adsr[size_t(i)]); }, 0.0),
+                          write([i](ShowControl &c, const QVariant &v) { c.adsr[size_t(i)] = std::clamp(v.toDouble(), 0.0, i == 2 ? 1.0 : std::max(0.1, c.max)); }));
+            }
+            break;
         case ShowControl::Kind::Pad:
             for (int axis = 0; axis < 2; ++axis)
                 add(path + (axis == 0 ? "/x" : "/y"), label + (axis == 0 ? " X" : " Y"), T::Float)

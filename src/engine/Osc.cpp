@@ -451,6 +451,20 @@ void OscNamespace::build()
                 n.set = [e, id](const QVariantList &a) { return a.size() >= 2 && e->setControlPoint(id, num(a[0]), num(a[1])); };
                 break;
             }
+            case ShowControl::Kind::Adsr: {
+                // An envelope: attack, decay, sustain, release in one message (the times in seconds up to its range, the sustain 0..1)
+                OscNode &n = add(path, "ffff", 3, c.name + QStringLiteral(" (attack, decay, sustain, release)"));
+                n.range = {minMax(0, c.max), minMax(0, c.max), minMax(0, 1), minMax(0, c.max)};
+                n.clip = "both";
+                n.get = [e, id] {
+                    const auto v = e->control(id);
+                    return QVariantList{v ? v->adsr[0] : 0.0, v ? v->adsr[1] : 0.0, v ? v->adsr[2] : 0.0, v ? v->adsr[3] : 0.0};
+                };
+                n.set = [e, id](const QVariantList &a) {
+                    return a.size() >= 4 && e->setControlAdsr(id, {num(a[0]), num(a[1]), num(a[2]), num(a[3])});
+                };
+                break;
+            }
             case ShowControl::Kind::Color: {
                 OscNode &n = add(path, "fff", 3, c.name);
                 n.range = {minMax(0, 1), minMax(0, 1), minMax(0, 1)};

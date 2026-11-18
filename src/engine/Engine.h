@@ -711,6 +711,7 @@ public:
     // read by an interaction like any show value (an Internal source; both together, an XY input, for a pad)
     void setMousePosition(double x, double y);
     bool setControlPoint(quint64 id, double x, double y); // a 2D slider's two numbers; any thread
+    bool setControlAdsr(quint64 id, const std::array<double, 4> &adsr); // an ADSR control's four numbers (attack, decay, release within its range, sustain 0..1)
     bool setControlColor(quint64 id, double r, double g, double b);
     // The show's musical clock (tempo, bar, position in beats): steps counted in beats and quantized (Sequencer), OSC /clock
     BeatClock &beatClock() { return m_beatClock; }

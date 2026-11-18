@@ -211,7 +211,10 @@ int main(int argc, char **argv)
             engine.addControl(toggle);
             engine.addControl(choice);
             // More to look at: a pad, an encoder, a page of its own (a group) with a nested one
-            ShowControl pad, knob, vfader, page, lights, spot;
+            ShowControl pad, knob, vfader, page, lights, spot, envelope;
+            envelope.name = "Envelope";
+            envelope.kind = ShowControl::Kind::Adsr;
+            engine.addControl(envelope);
             pad.name = "Position";
             pad.kind = ShowControl::Kind::Pad;
             knob.name = "Gain";
@@ -459,6 +462,24 @@ int main(int argc, char **argv)
             phone.pumpUntil([&] { return engine.control(t)->widget.isEmpty(); });
             const ShowControl cleaned = *engine.control(t);
             require(cleaned.widget.isEmpty() && cleaned.accent.isEmpty() && cleaned.curve <= 10.0, "what is not a widget, a color or a sane curve is dropped");
+            // An ADSR: four numbers moved from the phone, kept within their ranges, saved, and a parameter each
+            ShowControl envelope;
+            envelope.name = "Env";
+            envelope.kind = ShowControl::Kind::Adsr;
+            const quint64 e = engine.addControl(envelope);
+            require(engine.control(e) && near(engine.control(e)->max, 2) && near(engine.control(e)->adsr[2], 0.7), "an ADSR control starts with a sane envelope");
+            phone.sendText(QJsonDocument(QJsonObject{{"t", "adsr"}, {"id", QString::number(e)}, {"v", QJsonArray{0.5, 99, 5, 1.25}}}).toJson(QJsonDocument::Compact));
+            phone.pumpUntil([&] { return near(engine.control(e)->adsr[0], 0.5); });
+            const ShowControl env = *engine.control(e);
+            require(near(env.adsr[0], 0.5) && near(env.adsr[1], 2) && near(env.adsr[2], 1) && near(env.adsr[3], 1.25), "its attack, decay, sustain and release set from the phone, within their ranges");
+            const ShowControl envAgain = ShowControl::fromJson(env.toJson());
+            require(envAgain.kind == ShowControl::Kind::Adsr && near(envAgain.adsr[3], 1.25) && near(envAgain.max, 2), "and saved with the project");
+            ParamInfo sustainInfo, releaseInfo;
+            require(engine.parameterInfo(0, "control/env/sustain", &sustainInfo) && near(sustainInfo.max, 1) &&
+                        engine.parameterInfo(0, "control/env/release", &releaseInfo) && near(releaseInfo.max, 2) &&
+                        engine.parameterInfo(0, "control/env/attack", &releaseInfo) && engine.parameterInfo(0, "control/env/decay", &releaseInfo),
+                    "each of its numbers is a parameter of the show, within its range");
+            engine.removeControl(e);
             phone.sendText(QJsonDocument(QJsonObject{{"t", "remove"}, {"id", "424242"}}).toJson(QJsonDocument::Compact));
             require(server.isRunning() && engine.control(t), "removing what is not there does nothing");
             phone.sendText(QJsonDocument(QJsonObject{{"t", "remove"}, {"id", ida}}).toJson(QJsonDocument::Compact));

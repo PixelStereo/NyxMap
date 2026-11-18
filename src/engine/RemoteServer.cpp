@@ -53,10 +53,12 @@ QList<double> valuesOf(const ShowControl &c)
 {
     if (c.kind == ShowControl::Kind::Color) return {c.rgb[0], c.rgb[1], c.rgb[2]};
     if (c.kind == ShowControl::Kind::Pad) return {c.value, c.value2};
+    if (c.kind == ShowControl::Kind::Adsr) return {c.adsr[0], c.adsr[1], c.adsr[2], c.adsr[3]};
     return {c.value};
 }
 QJsonValue jsonOf(const QList<double> &v)
 {
+    if (v.size() == 4) return QJsonArray{v[0], v[1], v[2], v[3]};
     if (v.size() == 3) return QJsonArray{v[0], v[1], v[2]};
     if (v.size() == 2) return QJsonArray{v[0], v[1]};
     return v.value(0);
@@ -220,6 +222,10 @@ QByteArray RemoteServer::controlsMessage() const
         if (c.gw > 0 && c.gh > 0) o["layout"] = QJsonObject{{"x", c.gx}, {"y", c.gy}, {"w", c.gw}, {"h", c.gh}};
         switch (c.kind) {
         case ShowControl::Kind::Group: o["columns"] = c.columns; break;
+        case ShowControl::Kind::Adsr:
+            o["max"] = c.max;
+            o["adsr"] = QJsonArray{c.adsr[0], c.adsr[1], c.adsr[2], c.adsr[3]};
+            break;
         case ShowControl::Kind::Pad:
             o["min"] = c.min;
             o["max"] = c.max;
@@ -377,6 +383,10 @@ void RemoteServer::onFrame(Client &c, int opcode, const QByteArray &payload)
             if (p.value("name").isString()) c.name = p.value("name").toString().left(60);
             if (p.contains("widget")) c.widget = ShowControl::cleanWidget(p.value("widget").toString());
             if (p.contains("accent")) c.accent = ShowControl::cleanAccent(p.value("accent").toString());
+            if (c.kind == ShowControl::Kind::Adsr) {
+                number("max", c.max);
+                c.max = std::clamp(c.max, 0.1, 60.0);
+            }
             if (c.kind == ShowControl::Kind::Slider) {
                 number("min", c.min);
                 number("max", c.max);
@@ -390,7 +400,7 @@ void RemoteServer::onFrame(Client &c, int opcode, const QByteArray &payload)
             if (m_e->updateControl(target, c)) emit layoutEdited();
             return;
         }
-        if (type != QLatin1String("set") && type != QLatin1String("color") && type != QLatin1String("point")) {
+        if (type != QLatin1String("set") && type != QLatin1String("color") && type != QLatin1String("point") && type != QLatin1String("adsr")) {
             onDesk(c, type, o);
             return;
         }
@@ -401,6 +411,9 @@ void RemoteServer::onFrame(Client &c, int opcode, const QByteArray &payload)
         } else if (type == QLatin1String("point")) {
             const QJsonArray xy = o.value("xy").toArray();
             if (xy.size() == 2 && m_e->setControlPoint(id, xy[0].toDouble(), xy[1].toDouble())) emit controlMoved();
+        } else if (type == QLatin1String("adsr")) {
+            const QJsonArray v = o.value("v").toArray();
+            if (v.size() == 4 && m_e->setControlAdsr(id, {v[0].toDouble(), v[1].toDouble(), v[2].toDouble(), v[3].toDouble()})) emit controlMoved();
         } else if (type == QLatin1String("color")) {
             const QJsonArray rgb = o.value("rgb").toArray();
             if (rgb.size() == 3 && m_e->setControlColor(id, rgb[0].toDouble(), rgb[1].toDouble(), rgb[2].toDouble())) emit controlMoved();
