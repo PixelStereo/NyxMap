@@ -703,6 +703,9 @@ public:
     // A control for a parameter, on the page or in a Group (0: the page), and an interaction that makes it drive the parameter:
     // a slider for a number, a switch, a selector, a button, a color (for a color's channel). Its id (0: not a parameter a control can drive)
     quint64 addControlForParameter(quint64 layer, const QString &path, quint64 group);
+    // An interaction that makes a control's number (its `sub` path: "", "x", "p2/y", "3"…) drive a numeric parameter, the control's range
+    // remapped onto the parameter's. Its id (0: not possible)
+    quint64 driveParameterFromControl(quint64 layer, const QString &path, quint64 control, const QString &sub);
     bool updateControl(quint64 id, const ShowControl &change); // a new name also updates the OSC key
     bool removeControl(quint64 id);
     bool moveControl(quint64 id, int to);
@@ -711,6 +714,7 @@ public:
     // read by an interaction like any show value (an Internal source; both together, an XY input, for a pad)
     void setMousePosition(double x, double y);
     bool setControlPoint(quint64 id, double x, double y); // a 2D slider's two numbers; any thread
+    bool setControlPoints(quint64 id, const std::vector<double> &xy); // a Multi-point pad's points: x1, y1, x2, y2…
     bool setControlMulti(quint64 id, const std::vector<double> &values); // a Multi-slider's numbers (as many as it has, kept within its range)
     bool setControlAdsr(quint64 id, const std::array<double, 4> &adsr); // an ADSR control's four numbers (attack, decay, release within its range, sustain 0..1)
     bool setControlColor(quint64 id, double r, double g, double b);

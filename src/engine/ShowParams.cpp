@@ -280,6 +280,22 @@ const std::vector<std::unique_ptr<Parameter>> &Engine::showParams()
             break;
         }
         case ShowControl::Kind::Group: break; // a frame of the page, not a value
+        case ShowControl::Kind::Points:
+            for (int i = 0; i < control.count; ++i)
+                for (int axis = 0; axis < 2; ++axis)
+                    add(path + QStringLiteral("/p%1/%2").arg(i + 1).arg(axis == 0 ? 'x' : 'y'),
+                        label + QStringLiteral(" %1 %2").arg(i + 1).arg(axis == 0 ? 'X' : 'Y'), T::Float)
+                        .range(control.min, control.max)
+                        .step(control.step)
+                        .byDefault(control.def)
+                        .animatable()
+                        .transient()
+                        .pointComponent(axis)
+                        .bind(read([i, axis](const ShowControl &c) { return QVariant(i < int(c.points.size()) ? c.points[size_t(i)][size_t(axis)] : c.def); }, 0.0),
+                              write([i, axis](ShowControl &c, const QVariant &v) {
+                                  if (i < int(c.points.size())) c.points[size_t(i)][size_t(axis)] = std::clamp(v.toDouble(), std::min(c.min, c.max), std::max(c.min, c.max));
+                              }));
+            break;
         case ShowControl::Kind::Multi:
             for (int i = 0; i < control.count; ++i)
                 add(path + QLatin1Char('/') + QString::number(i + 1), label + QStringLiteral(" ") + QString::number(i + 1), T::Float)

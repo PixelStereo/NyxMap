@@ -19,11 +19,12 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <utility>
 #include <vector>
 
 struct ShowControl {
-    enum class Kind { Slider = 0, Toggle, Choice, Button, Color, Pad, Group, Adsr, Multi };
-    static constexpr int kKindCount = 9;
+    enum class Kind { Slider = 0, Toggle, Choice, Button, Color, Pad, Group, Adsr, Multi, Points };
+    static constexpr int kKindCount = 10;
     static constexpr int kGridColumns = 12, kGridRowsMax = 400; // the remote page's grid
     quint64 id = 0;
     QString name = QStringLiteral("Control");
@@ -53,6 +54,9 @@ struct ShowControl {
     int count = 8;
     std::vector<double> multi;
     static constexpr int kMultiMax = 32;
+    // Points: a pad with several points (1..16), each an X and a Y within min..max; control/<key>/p1/x, /p1/y, /p2/x…; `count` is how many
+    std::vector<std::array<double, 2>> points;
+    static constexpr int kPointsMax = 16;
     static constexpr const char *const kAdsrKeys[4] = {"attack", "decay", "sustain", "release"};
 
     // What a remote page may ask for: a short word, a color in #rrggbb; anything else is the default
@@ -70,9 +74,36 @@ struct ShowControl {
             if (!a[i].isDigit() && !(a[i].toLower() >= QLatin1Char('a') && a[i].toLower() <= QLatin1Char('f'))) return QString();
         return a.toLower();
     }
+    // The numbers a parameter can be driven from: {label, path after control/<key> ("" : the control itself)}. Not the switches, the
+    // buttons, the choices, the colors or the groups
+    std::vector<std::pair<QString, QString>> numberSources() const
+    {
+        std::vector<std::pair<QString, QString>> out;
+        switch (kind) {
+        case Kind::Slider: out.push_back({name, QString()}); break;
+        case Kind::Pad:
+            out.push_back({name + QStringLiteral(" X"), QStringLiteral("x")});
+            out.push_back({name + QStringLiteral(" Y"), QStringLiteral("y")});
+            break;
+        case Kind::Adsr:
+            for (int i = 0; i < 4; ++i) out.push_back({QString::fromLatin1(kAdsrKeys[i]), QString::fromLatin1(kAdsrKeys[i])});
+            break;
+        case Kind::Multi:
+            for (int i = 0; i < count; ++i) out.push_back({QStringLiteral("Slider %1").arg(i + 1), QString::number(i + 1)});
+            break;
+        case Kind::Points:
+            for (int i = 0; i < count; ++i) {
+                out.push_back({QStringLiteral("Point %1 X").arg(i + 1), QStringLiteral("p%1/x").arg(i + 1)});
+                out.push_back({QStringLiteral("Point %1 Y").arg(i + 1), QStringLiteral("p%1/y").arg(i + 1)});
+            }
+            break;
+        default: break;
+        }
+        return out;
+    }
     static QString kindKey(Kind k)
     {
-        static const char *const keys[] = {"slider", "toggle", "choice", "button", "color", "pad", "group", "adsr", "multi"};
+        static const char *const keys[] = {"slider", "toggle", "choice", "button", "color", "pad", "group", "adsr", "multi", "points"};
         return QString::fromLatin1(keys[std::clamp(int(k), 0, kKindCount - 1)]);
     }
     static Kind kindFromKey(const QString &s)
@@ -83,7 +114,7 @@ struct ShowControl {
     }
     static QString kindName(Kind k)
     {
-        static const char *const names[] = {"Slider", "Toggle", "Selector", "Button", "Color", "2D Slider", "Group", "ADSR", "Multi-slider"};
+        static const char *const names[] = {"Slider", "Toggle", "Selector", "Button", "Color", "2D Slider", "Group", "ADSR", "Multi-slider", "Multi-point pad"};
         return QString::fromLatin1(names[std::clamp(int(k), 0, kKindCount - 1)]);
     }
     // The value kept within what the control takes
@@ -99,6 +130,7 @@ struct ShowControl {
         case Kind::Color:
         case Kind::Adsr:
         case Kind::Multi:
+        case Kind::Points:
         case Kind::Group: return value;
         }
         return value;
@@ -140,6 +172,17 @@ struct ShowControl {
             break;
         }
         case Kind::Color: o["rgb"] = QJsonArray{rgb[0], rgb[1], rgb[2]}; break;
+        case Kind::Points: {
+            o["count"] = count;
+            o["min"] = min;
+            o["max"] = max;
+            o["step"] = step;
+            o["default"] = def;
+            QJsonArray list;
+            for (const auto &q : points) list.append(QJsonArray{q[0], q[1]});
+            o["points"] = list;
+            break;
+        }
         case Kind::Multi: {
             o["count"] = count;
             o["min"] = min;
@@ -199,6 +242,21 @@ struct ShowControl {
             break;
         case Kind::Toggle: c.value = o.value("value").toBool() ? 1.0 : 0.0; break;
         case Kind::Button: break;
+        case Kind::Points: {
+            c.count = std::clamp(o.value("count").toInt(3), 1, kPointsMax);
+            c.min = finite(o.value("min").toDouble(0), 0);
+            c.max = finite(o.value("max").toDouble(1), 1);
+            if (c.max <= c.min) c.max = c.min + 1;
+            c.step = std::clamp(finite(o.value("step").toDouble(0.01), 0.01), 1e-6, std::max(1e-6, c.max - c.min));
+            c.def = std::clamp(finite(o.value("default").toDouble((c.min + c.max) / 2), (c.min + c.max) / 2), c.min, c.max);
+            const QJsonArray a = o.value("points").toArray();
+            c.points.assign(size_t(c.count), {c.def, c.def});
+            for (int i = 0; i < c.count && i < a.size(); ++i) {
+                const QJsonArray q = a.at(i).toArray();
+                c.points[size_t(i)] = {std::clamp(finite(q.at(0).toDouble(c.def), c.def), c.min, c.max), std::clamp(finite(q.at(1).toDouble(c.def), c.def), c.min, c.max)};
+            }
+            break;
+        }
         case Kind::Multi: {
             c.count = std::clamp(o.value("count").toInt(8), 2, kMultiMax);
             c.min = finite(o.value("min").toDouble(0), 0);

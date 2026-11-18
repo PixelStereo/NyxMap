@@ -211,7 +211,13 @@ int main(int argc, char **argv)
             engine.addControl(toggle);
             engine.addControl(choice);
             // More to look at: a pad, an encoder, a page of its own (a group) with a nested one
-            ShowControl pad, knob, vfader, page, lights, spot, envelope, bars, hbars;
+            ShowControl pad, knob, vfader, page, lights, spot, envelope, bars, hbars, crowd;
+            crowd.name = "Crowd";
+            crowd.kind = ShowControl::Kind::Points;
+            crowd.count = 4;
+            crowd.points = {{0.2, 0.2}, {0.8, 0.2}, {0.2, 0.8}, {0.8, 0.8}};
+            crowd.def = 0.5;
+            engine.addControl(crowd);
             bars.name = "EQ";
             bars.kind = ShowControl::Kind::Multi;
             bars.count = 10;
@@ -472,6 +478,28 @@ int main(int argc, char **argv)
             phone.pumpUntil([&] { return engine.control(t)->widget.isEmpty(); });
             const ShowControl cleaned = *engine.control(t);
             require(cleaned.widget.isEmpty() && cleaned.accent.isEmpty() && cleaned.curve <= 10.0, "what is not a widget, a color or a sane curve is dropped");
+            // A multi-point pad: each point an X and a Y, all in one message, each a parameter, the count changed from the phone
+            ShowControl swarm;
+            swarm.name = "Swarm";
+            swarm.kind = ShowControl::Kind::Points;
+            swarm.count = 3;
+            const quint64 w = engine.addControl(swarm);
+            require(engine.control(w) && engine.control(w)->points.size() == 3, "a multi-point pad has a point for each of its points");
+            phone.sendText(QJsonDocument(QJsonObject{{"t", "points"}, {"id", QString::number(w)}, {"v", QJsonArray{0.1, 0.2, 0.3, 99, 0.5, -4}}}).toJson(QJsonDocument::Compact));
+            phone.pumpUntil([&] { return near(engine.control(w)->points[0][0], 0.1); });
+            const ShowControl swarmNow = *engine.control(w);
+            require(near(swarmNow.points[0][1], 0.2) && near(swarmNow.points[1][0], 0.3) && near(swarmNow.points[1][1], 1) && near(swarmNow.points[2][1], 0),
+                    "its points set from the phone, each coordinate within its range");
+            ParamInfo pointInfo;
+            require(engine.parameterInfo(0, "control/swarm/p1/x", &pointInfo) && pointInfo.pointComponent == 0 && engine.parameterInfo(0, "control/swarm/p3/y", &pointInfo) &&
+                        pointInfo.pointComponent == 1 && !engine.parameterInfo(0, "control/swarm/p4/x", &pointInfo),
+                    "each coordinate is a parameter of the show");
+            phone.sendText(QJsonDocument(QJsonObject{{"t", "edit"}, {"id", QString::number(w)}, {"props", QJsonObject{{"count", 5}}}}).toJson(QJsonDocument::Compact));
+            phone.pumpUntil([&] { return engine.control(w)->count == 5; });
+            require(engine.control(w)->points.size() == 5 && near(engine.control(w)->points[1][0], 0.3), "more points added, the others kept");
+            const ShowControl swarmAgain = ShowControl::fromJson(engine.control(w)->toJson());
+            require(swarmAgain.count == 5 && swarmAgain.points.size() == 5 && near(swarmAgain.points[1][0], 0.3), "and saved with the project");
+            engine.removeControl(w);
             // A multi-slider: its numbers set in one message, each a parameter, the count changed from the phone
             ShowControl eq;
             eq.name = "Bands";

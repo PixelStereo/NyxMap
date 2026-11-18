@@ -299,6 +299,26 @@ int runInteractionFilterTests(Engine &e)
         e.removeControl(control);
     }
 
+    // A parameter driven from one coordinate of a multi-point pad: the control's range remapped onto the parameter's
+    {
+        ShowControl swarm;
+        swarm.name = "Swarm";
+        swarm.kind = ShowControl::Kind::Points;
+        swarm.count = 2;
+        const quint64 control = e.addControl(swarm);
+        const int layerIndex = e.addLayer("Driven");
+        const quint64 layerId = e.layerId(layerIndex);
+        check(e.driveParameterFromControl(layerId, "rotation", control, "p2/y") != 0, "a parameter can follow a point's coordinate");
+        check(e.driveParameterFromControl(layerId, "rotation", control, "p9/y") == 0 && e.driveParameterFromControl(layerId, "nonsense", control, "p1/x") == 0,
+              "but not a point that is not there, nor a parameter that is not");
+        e.setControlPoints(control, {0, 0, 0, 0.75});
+        e.renderFrame();
+        e.renderFrame();
+        check(near(e.parameterValue(layerId, "rotation").toDouble(), 90, 0.5), "the control's 0..1 is remapped onto the parameter's -180..180");
+        for (const Interaction &x : e.interactions()) e.removeInteraction(x.id);
+        e.removeControl(control);
+    }
+
     e.setFadesManual(false);
     if (!failures) std::printf("interaction_filters: OK\n");
     return failures;

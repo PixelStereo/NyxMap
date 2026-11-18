@@ -1128,6 +1128,33 @@ void InteractionPanel::fillValueMenu(QMenu *menu, Engine *e, quint64 layer, cons
             }
         }
     }
+    // Driven from a control's number (a slider, a pad's X or Y, a multi-slider's bar, one coordinate of a multi-point pad, an ADSR's
+    // attack…): the parameter is made to follow it, its range remapped
+    {
+        std::vector<ShowControl> sources;
+        for (const ShowControl &c : e->controls())
+            if (!c.numberSources().empty()) sources.push_back(c);
+        std::vector<ParamInfo> numeric;
+        for (const auto &param : params)
+            if ((param.access & ParamInfo::Write) && param.isNumber()) numeric.push_back(param);
+        if (!sources.empty() && !numeric.empty()) {
+            QMenu *with = menu->addMenu(QStringLiteral("Control with"));
+            const auto fill = [&](QMenu *into, const ParamInfo &param) {
+                for (const ShowControl &c : sources) {
+                    const auto numbers = c.numberSources();
+                    QMenu *own = numbers.size() == 1 ? nullptr : into->addMenu(QStringLiteral("▦ ") + c.name);
+                    for (const auto &[label, sub] : numbers) {
+                        const auto drive = [e, layer, path = param.path, id = c.id, sub = sub] { e->driveParameterFromControl(layer, path, id, sub); };
+                        if (own) own->addAction(label, own, drive);
+                        else into->addAction(QStringLiteral("▦ ") + label, into, drive);
+                    }
+                }
+            };
+            if (numeric.size() == 1) fill(with, numeric.front());
+            else
+                for (const auto &param : numeric) fill(with->addMenu(param.name()), param);
+        }
+    }
     QMenu *addresses = params.size() > 1 ? menu->addMenu(QStringLiteral("Copy OSC Address")) : menu;
     for (const auto &param : params) {
         const QString addr = OscNamespace::addressOf(e, layer, param.path);

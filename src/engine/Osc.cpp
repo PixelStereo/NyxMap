@@ -451,6 +451,25 @@ void OscNamespace::build()
                 n.set = [e, id](const QVariantList &a) { return a.size() >= 2 && e->setControlPoint(id, num(a[0]), num(a[1])); };
                 break;
             }
+            case ShowControl::Kind::Points: {
+                // Every point's X and Y in one message: two floats each, within the range
+                OscNode &n = add(path, QByteArray(c.count * 2, 'f'), 3, c.name + QStringLiteral(" (x1, y1, x2, y2…)"));
+                for (int i = 0; i < c.count * 2; ++i) n.range.push_back(minMax(c.min, c.max));
+                n.clip = "both";
+                n.get = [e, id] {
+                    const auto v = e->control(id);
+                    QVariantList out;
+                    if (v)
+                        for (const auto &q : v->points) out << q[0] << q[1];
+                    return out;
+                };
+                n.set = [e, id](const QVariantList &a) {
+                    std::vector<double> values;
+                    for (const QVariant &x : a) values.push_back(num(x));
+                    return !values.empty() && e->setControlPoints(id, values);
+                };
+                break;
+            }
             case ShowControl::Kind::Multi: {
                 // A row of sliders in one message: a float each, within its range
                 OscNode &n = add(path, QByteArray(c.count, 'f'), 3, c.name);

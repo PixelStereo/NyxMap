@@ -55,6 +55,11 @@ QList<double> valuesOf(const ShowControl &c)
     if (c.kind == ShowControl::Kind::Pad) return {c.value, c.value2};
     if (c.kind == ShowControl::Kind::Adsr) return {c.adsr[0], c.adsr[1], c.adsr[2], c.adsr[3]};
     if (c.kind == ShowControl::Kind::Multi) return QList<double>(c.multi.begin(), c.multi.end());
+    if (c.kind == ShowControl::Kind::Points) {
+        QList<double> flat;
+        for (const auto &q : c.points) flat << q[0] << q[1];
+        return flat;
+    }
     return {c.value};
 }
 QJsonValue jsonOf(const QList<double> &v)
@@ -225,6 +230,15 @@ QByteArray RemoteServer::controlsMessage() const
         if (c.gw > 0 && c.gh > 0) o["layout"] = QJsonObject{{"x", c.gx}, {"y", c.gy}, {"w", c.gw}, {"h", c.gh}};
         switch (c.kind) {
         case ShowControl::Kind::Group: o["columns"] = c.columns; break;
+        case ShowControl::Kind::Points: {
+            o["count"] = c.count;
+            o["min"] = c.min;
+            o["max"] = c.max;
+            QJsonArray list;
+            for (const auto &q : c.points) list.append(QJsonArray{q[0], q[1]});
+            o["points"] = list;
+            break;
+        }
         case ShowControl::Kind::Multi: {
             o["count"] = c.count;
             o["min"] = c.min;
@@ -405,6 +419,14 @@ void RemoteServer::onFrame(Client &c, int opcode, const QByteArray &payload)
                 number("count", n);
                 c.count = std::clamp(int(n), 2, ShowControl::kMultiMax);
             }
+            if (c.kind == ShowControl::Kind::Points) {
+                double n = c.count;
+                number("count", n);
+                c.count = std::clamp(int(n), 1, ShowControl::kPointsMax);
+                number("min", c.min);
+                number("max", c.max);
+                if (!(c.max > c.min)) c.max = c.min + 1;
+            }
             if (c.kind == ShowControl::Kind::Slider || c.kind == ShowControl::Kind::Multi) {
                 number("min", c.min);
                 number("max", c.max);
@@ -418,7 +440,7 @@ void RemoteServer::onFrame(Client &c, int opcode, const QByteArray &payload)
             if (m_e->updateControl(target, c)) emit layoutEdited();
             return;
         }
-        if (type != QLatin1String("set") && type != QLatin1String("color") && type != QLatin1String("point") && type != QLatin1String("adsr") && type != QLatin1String("multi")) {
+        if (type != QLatin1String("set") && type != QLatin1String("color") && type != QLatin1String("point") && type != QLatin1String("adsr") && type != QLatin1String("multi") && type != QLatin1String("points")) {
             onDesk(c, type, o);
             return;
         }
@@ -429,6 +451,11 @@ void RemoteServer::onFrame(Client &c, int opcode, const QByteArray &payload)
         } else if (type == QLatin1String("point")) {
             const QJsonArray xy = o.value("xy").toArray();
             if (xy.size() == 2 && m_e->setControlPoint(id, xy[0].toDouble(), xy[1].toDouble())) emit controlMoved();
+        } else if (type == QLatin1String("points")) {
+            const QJsonArray v = o.value("v").toArray();
+            std::vector<double> values;
+            for (int i = 0; i < v.size() && i < ShowControl::kPointsMax * 2; ++i) values.push_back(v[i].toDouble());
+            if (!values.empty() && m_e->setControlPoints(id, values)) emit controlMoved();
         } else if (type == QLatin1String("multi")) {
             const QJsonArray v = o.value("v").toArray();
             std::vector<double> values;

@@ -4,7 +4,7 @@
 
 The **Controls** tab (Shift+5), next to the Media Bin and the Interactions, holds the operator's own values: a **Slider**
 (range, step, unit, default), a **Toggle**, a **Selector** (a list of choices), a **Button** (1 while it is held down) and a
-**Color**, an **ADSR** (an envelope to take in the hand, see below), a **Multi-slider** (a row of 2 to 32 sliders in one control) and a **2D Slider** (a square: two numbers, X and Y, moved by one gesture; double-click puts it back to its
+**Color**, an **ADSR** (an envelope to take in the hand, see below), a **Multi-slider** (a row of 2 to 32 sliders in one control), a **Multi-point pad** (1 to 16 points on one square) and a **2D Slider** (a square: two numbers, X and Y, moved by one gesture; double-click puts it back to its
 default). **+ New** makes one; **⋯** edits, duplicates, moves or deletes it, each one undo step. They are saved with the
 project (not in snapshots: a control is the operator's, not the scene's).
 
@@ -26,6 +26,12 @@ four numbers from it (**Settings from** under its curve): the envelope of a hit 
 A **Multi-slider** is a row of sliders sharing one range: each is a parameter, `control/<name>/1`, `/2`…, and OSC takes all of them in
 one message (a float each). On the remote page the bars are vertical or horizontal (**Widget**), and a finger swept across them sets
 each bar it crosses; the number of sliders and the range are set in its settings.
+
+A **Multi-point pad** is a square with several points, each an X and a Y: `control/<name>/p1/x`, `/p1/y`, `/p2/x`… (OSC takes
+x1, y1, x2, y2… in one message). On the remote page every finger takes the nearest free point, so several move at once. A point
+drives what you decide: **right-click a parameter › Control with › the pad › Point 2 X** (or Y) makes the parameter follow that
+coordinate, its range remapped; a point can drive an XY parameter with its X and its Y, or two distinct parameters. The same menu
+reaches any control's number (a slider, a multi-slider's bar, an ADSR's attack…).
 
 A control is a value of the show, `control/<name>` (a color: `control/<name>/r`, `g`, `b`; a 2D slider: `control/<name>/x` and
 `y`, a point a timeline draws as an XY track), like a layer's opacity. So:

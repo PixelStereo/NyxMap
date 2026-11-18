@@ -219,6 +219,13 @@ quint64 Engine::addControl(const ShowControl &control)
             c.min = 0;
             c.max = std::clamp(c.max > 1 ? c.max : 2.0, 0.1, 60.0); // the longest of its times
         }
+        if (c.kind == ShowControl::Kind::Points) {
+            c.count = std::clamp(c.count, 1, ShowControl::kPointsMax);
+            if (!(c.max > c.min)) c.max = c.min + 1;
+            c.def = std::clamp(c.def, c.min, c.max);
+            c.points.resize(size_t(c.count), {c.def, c.def});
+            for (auto &q : c.points) q = {std::clamp(q[0], c.min, c.max), std::clamp(q[1], c.min, c.max)};
+        }
         if (c.kind == ShowControl::Kind::Multi) {
             c.count = std::clamp(c.count, 2, ShowControl::kMultiMax);
             if (!(c.max > c.min)) c.max = c.min + 1;
@@ -310,6 +317,27 @@ quint64 Engine::addControlForParameter(quint64 layer, const QString &path, quint
     return id;
 }
 
+quint64 Engine::driveParameterFromControl(quint64 layer, const QString &path, quint64 controlId, const QString &sub)
+{
+    ParamInfo info;
+    if (!parameterInfo(layer, path, &info) || !(info.access & ParamInfo::Write) || !info.isNumber()) return 0;
+    const std::optional<ShowControl> control = this->control(controlId);
+    if (!control) return 0;
+    const auto sources = control->numberSources();
+    if (std::none_of(sources.begin(), sources.end(), [&](const auto &s) { return s.second == sub; })) return 0;
+    Interaction it = Interaction::made(InteractionSource::Internal);
+    it.sourceLayer = 0;
+    it.sourceParam = QStringLiteral("control/") + control->key + (sub.isEmpty() ? QString() : QLatin1Char('/') + sub);
+    it.layer = layer;
+    it.param = path;
+    it.takeover = Takeover::Jump;
+    const double lo = control->kind == ShowControl::Kind::Adsr ? 0.0 : control->min, hi = control->kind == ShowControl::Kind::Adsr
+                                                                                                ? (sub == QLatin1String("sustain") ? 1.0 : control->max)
+                                                                                                : control->max;
+    if (lo != info.min || hi != info.max) it.filters = {InteractionStage::remap(lo, hi, info.min, info.max)};
+    return addInteraction(it);
+}
+
 bool Engine::updateControl(quint64 id, const ShowControl &change)
 {
     bool keyChanged = false;
@@ -337,6 +365,13 @@ bool Engine::updateControl(quint64 id, const ShowControl &change)
         if (c.kind == ShowControl::Kind::Choice && c.choices.isEmpty()) c.choices = it->choices;
         c.value = c.kind == it->kind ? c.clamped(c.value) : (c.kind == ShowControl::Kind::Slider || c.kind == ShowControl::Kind::Pad ? c.def : 0.0);
         c.value2 = c.kind == ShowControl::Kind::Pad ? (c.kind == it->kind ? c.clamped(c.value2) : c.def) : 0.0;
+        if (c.kind == ShowControl::Kind::Points) {
+            c.count = std::clamp(c.count, 1, ShowControl::kPointsMax);
+            if (!(c.max > c.min)) c.max = c.min + 1;
+            c.def = std::clamp(c.def, c.min, c.max);
+            c.points.resize(size_t(c.count), {c.def, c.def});
+            for (auto &q : c.points) q = {std::clamp(q[0], c.min, c.max), std::clamp(q[1], c.min, c.max)};
+        }
         if (c.kind == ShowControl::Kind::Multi) {
             c.count = std::clamp(c.count, 2, ShowControl::kMultiMax);
             if (!(c.max > c.min)) c.max = c.min + 1;
@@ -431,6 +466,23 @@ bool Engine::setControlPoint(quint64 id, double x, double y)
         if (field == next) continue;
         field = next;
         feedControlAction(QStringLiteral("control/") + it->key + (axis == 0 ? QStringLiteral("/x") : QStringLiteral("/y")), next);
+    }
+    return true;
+}
+
+bool Engine::setControlPoints(quint64 id, const std::vector<double> &xy)
+{
+    Lock lk(&m_mutex);
+    auto it = std::find_if(m_controls.begin(), m_controls.end(), [id](const ShowControl &c) { return c.id == id; });
+    if (it == m_controls.end() || it->kind != ShowControl::Kind::Points) return false;
+    if (int(it->points.size()) != it->count) it->points.resize(size_t(it->count), {it->def, it->def});
+    for (size_t i = 0; i < xy.size() && i < it->points.size() * 2; ++i) {
+        if (!std::isfinite(xy[i])) continue;
+        const double next = std::clamp(xy[i], std::min(it->min, it->max), std::max(it->min, it->max));
+        double &field = it->points[i / 2][i % 2];
+        if (field == next) continue;
+        field = next;
+        feedControlAction(QStringLiteral("control/") + it->key + QStringLiteral("/p%1/%2").arg(i / 2 + 1).arg(i % 2 == 0 ? 'x' : 'y'), next);
     }
     return true;
 }

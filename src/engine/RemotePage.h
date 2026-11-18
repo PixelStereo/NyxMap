@@ -86,6 +86,8 @@ input[type=color] { width:100%; height:100%; min-height:40px; max-height:80px; b
 .pad { position:relative; width:100%; height:100%; border-radius:10px; background:var(--panel2); touch-action:none; overflow:hidden; }
 .pad::before, .pad::after { content:""; position:absolute; background:#34343d; }
 .pad::before { left:50%; top:0; bottom:0; width:1px; } .pad::after { top:50%; left:0; right:0; height:1px; }
+.pad i.pt { display:flex; align-items:center; justify-content:center; font:700 12px -apple-system, system-ui, sans-serif; color:#14141a; background:#f2f2f5; border-color:hsl(var(--h),70%,60%); box-shadow:0 0 12px hsl(var(--h),70%,60%); pointer-events:none; }
+.pad i.pt.hot { background:hsl(var(--h),70%,70%); }
 .pad i { position:absolute; width:26px; height:26px; margin:-13px 0 0 -13px; border-radius:50%; background:#f2f2f5; border:4px solid var(--a); box-shadow:0 0 12px var(--a); pointer-events:none; }
 )CSS";
 
@@ -136,7 +138,7 @@ inline constexpr char kScriptA[] = R"JS(
   const sv = (tag, attrs, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs || {}) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; };
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   let pin = new URLSearchParams(location.search).get('pin') || sessionStorage.getItem('nyxmap-pin') || '', needPin = true;
-  let ws = null, opened = false, failures = 0, controls = [], values = {}, byId = {}, pageId = -1, editing = false, busy = 0, again = false, sheetId = 0;
+  let busyAt = 0, ws = null, opened = false, failures = 0, controls = [], values = {}, byId = {}, pageId = -1, editing = false, busy = 0, again = false, sheetId = 0;
   const active = new Set(), sendAt = {}, tiles = {};
   const state = (text, cls) => { const s = $('#state'); s.textContent = text; s.className = cls || ''; };
   const send = obj => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); };
@@ -168,6 +170,25 @@ inline constexpr char kScriptA[] = R"JS(
       });
     }
   }
+  // Several fingers at once on an element: down, move and up each get the finger's own id
+  function presses(elm, h) {
+    const on = {};
+    if (window.PointerEvent) {
+      elm.addEventListener('pointerdown', e => { if (e.button > 0) return; if (h.down({ id: e.pointerId, x: e.clientX, y: e.clientY }) === false) return; on[e.pointerId] = 1; try { elm.setPointerCapture(e.pointerId); } catch (_) {} e.preventDefault(); });
+      elm.addEventListener('pointermove', e => { if (on[e.pointerId]) h.move({ id: e.pointerId, x: e.clientX, y: e.clientY }); });
+      const end = e => { if (on[e.pointerId]) { delete on[e.pointerId]; h.up({ id: e.pointerId, x: e.clientX, y: e.clientY }); } };
+      elm.addEventListener('pointerup', end); elm.addEventListener('pointercancel', end);
+    } else {
+      const each = (e, fn) => { for (let i = 0; i < e.changedTouches.length; i++) { const t = e.changedTouches[i]; fn({ id: 't' + t.identifier, x: t.clientX, y: t.clientY }); } e.preventDefault(); };
+      elm.addEventListener('touchstart', e => each(e, p => { if (h.down(p) !== false) on[p.id] = 1; }), { passive: false });
+      elm.addEventListener('touchmove', e => each(e, p => { if (on[p.id]) h.move(p); }), { passive: false });
+      const tend = e => each(e, p => { if (on[p.id]) { delete on[p.id]; h.up(p); } });
+      elm.addEventListener('touchend', tend, { passive: false }); elm.addEventListener('touchcancel', tend, { passive: false });
+      elm.addEventListener('mousedown', e => { const p = { id: 'm', x: e.clientX, y: e.clientY }; if (on.m || h.down(p) === false) return; on.m = 1; e.preventDefault();
+        const mv = ev => h.move({ id: 'm', x: ev.clientX, y: ev.clientY }), up = ev => { delete on.m; window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up); h.up({ id: 'm', x: ev.clientX, y: ev.clientY }); };
+        window.addEventListener('mousemove', mv); window.addEventListener('mouseup', up); });
+    }
+  }
   function login(message) {
     $('#grid').hidden = true; $('#login').hidden = false;
     if (message) $('#loginText').textContent = message;
@@ -185,8 +206,8 @@ inline constexpr char kScriptA[] = R"JS(
       let m; try { m = JSON.parse(e.data); } catch (_) { return; }
       if (m.t === 'controls') {
         controls = m.list || []; byId = {}; $('#title').textContent = m.title || 'NyxMap';
-        controls.forEach(c => { byId[c.id] = c; values[c.id] = c.kind === 'color' ? c.rgb : c.kind === 'pad' ? [c.x, c.y] : c.kind === 'adsr' ? c.adsr : c.kind === 'multi' ? c.values : c.value; });
-        if (busy) again = true; else render();
+        controls.forEach(c => { byId[c.id] = c; values[c.id] = c.kind === 'color' ? c.rgb : c.kind === 'pad' ? [c.x, c.y] : c.kind === 'adsr' ? c.adsr : c.kind === 'multi' ? c.values : c.kind === 'points' ? [].concat.apply([], c.points) : c.value; });
+        if (busy && Date.now() - busyAt < 4000) again = true; else { busy = 0; render(); } // a gesture that never ended must not freeze the page
       } else if (m.t === 'values') { Object.assign(values, m.v || {}); update(); }
     };
     ws.onclose = () => {
@@ -199,8 +220,8 @@ inline constexpr char kScriptA[] = R"JS(
 
 // B: the widgets, in SVG and CSS. Each takes its control and `io` (begin, input(v), end) and gives { el, set(v) }
 inline constexpr char kScriptB[] = R"JS(
-  const wDefault = { slider: 'fader', toggle: 'switch', choice: 'buttons', button: 'hold', color: 'picker', pad: 'pad', adsr: 'adsr', multi: 'multi' };
-  const wChoices = { slider: ['fader', 'vfader', 'knob', 'number', 'slim', 'vslim'], toggle: ['switch'], choice: ['buttons', 'menu'], button: ['hold', 'tap'], color: ['picker'], pad: ['pad'], adsr: ['adsr'], multi: ['multi', 'hmulti'] };
+  const wDefault = { slider: 'fader', toggle: 'switch', choice: 'buttons', button: 'hold', color: 'picker', pad: 'pad', adsr: 'adsr', multi: 'multi', points: 'pad' };
+  const wChoices = { slider: ['fader', 'vfader', 'knob', 'number', 'slim', 'vslim'], toggle: ['switch'], choice: ['buttons', 'menu'], button: ['hold', 'tap'], color: ['picker'], pad: ['pad'], adsr: ['adsr'], multi: ['multi', 'hmulti'], points: ['pad'] };
   const wName = { fader: 'Fader', vfader: 'Vertical fader', slim: 'Slim fader', vslim: 'Slim vertical fader', knob: 'Encoder', number: 'Number', switch: 'Switch', buttons: 'Buttons', menu: 'Menu', hold: 'Hold button', tap: 'Tap button', picker: 'Color', pad: 'XY pad', adsr: 'ADSR', multi: 'Multi-slider', hmulti: 'Horizontal multi-slider' };
   const widgetOf = c => (wChoices[c.kind] || []).indexOf(c.widget) >= 0 ? c.widget : wDefault[c.kind];
   // The big one, as TouchOSC and Lemur have it: the whole tile is the fader, a finger anywhere puts the level there, and the level is
@@ -277,7 +298,27 @@ inline constexpr char kScriptB[] = R"JS(
     }
     if (c.kind === 'adsr') return adsr(c, io);
     if (c.kind === 'multi') return multi(c, io, w === 'hmulti');
+    if (c.kind === 'points') return pointsPad(c, io);
     return { el: el('div'), set: () => {} };
+  }
+)JS";
+
+// B2: more widgets (a literal stays under the compilers' limit)
+inline constexpr char kScriptB2[] = R"JS(
+  // A pad with several points: each finger takes the nearest free point and moves it (as many at once as there are fingers)
+  function pointsPad(c, io) {
+    const pad = el('div', 'pad'), n = c.count, span = (c.max - c.min) || 1, dots = [], held = {};
+    let v = [].concat.apply([], c.points || []); while (v.length < n * 2) v.push(c.min + span / 2);
+    for (let i = 0; i < n; i++) { const d = el('i', 'pt', String(i + 1)); d.style.setProperty('--h', String(Math.round((190 + 62 * i) % 360))); pad.appendChild(d); dots.push(d); }
+    const draw = () => dots.forEach((d, i) => { d.style.left = ((v[2 * i] - c.min) / span * 100) + '%'; d.style.top = ((1 - (v[2 * i + 1] - c.min) / span) * 100) + '%'; });
+    const at = p => { const r = pad.getBoundingClientRect(); return [c.min + clamp((p.x - r.left) / r.width, 0, 1) * span, c.min + clamp(1 - (p.y - r.top) / r.height, 0, 1) * span]; };
+    const taken = i => Object.keys(held).some(k => held[k] === i);
+    const put = p => { const i = held[p.id]; if (i === undefined) return; const q = at(p); v[2 * i] = Number(q[0].toFixed(4)); v[2 * i + 1] = Number(q[1].toFixed(4)); dots[i].classList.add('hot'); draw(); io.input(v.slice()); };
+    presses(pad, { down: p => { const q = at(p); let best = -1, bd = 1e18;
+        for (let i = 0; i < n; i++) { if (taken(i)) continue; const dx = v[2 * i] - q[0], dy = v[2 * i + 1] - q[1], dd = dx * dx + dy * dy; if (dd < bd) { bd = dd; best = i; } }
+        if (best < 0) return false; if (!Object.keys(held).length) io.begin(); held[p.id] = best; put(p); },
+      move: put, up: p => { put(p); const i = held[p.id]; if (i !== undefined) dots[i].classList.remove('hot'); delete held[p.id]; if (!Object.keys(held).length) io.end(); } });
+    return { el: pad, resize: draw, set: x => { if (!Object.keys(held).length) { v = x.slice(); while (v.length < n * 2) v.push(c.min + span / 2); draw(); } } };
   }
   // A row of sliders in one tile (as Lemur's and NexusUI's multi-slider): a finger across the bars sets each one it crosses
   function multi(c, io, horizontal) {
@@ -327,7 +368,7 @@ inline constexpr char kScriptB[] = R"JS(
 
 // C: pages, the grid, the tiles, Edit mode (drag, resize)
 inline constexpr char kScriptC[] = R"JS(
-  const sizeOf = c => { const w = widgetOf(c); return c.kind === 'group' ? [12, 1] : c.kind === 'pad' ? [5, 5] : c.kind === 'adsr' ? [6, 3] : c.kind === 'multi' ? (widgetOf(c) === 'hmulti' ? [6, 5] : [8, 4]) : c.kind === 'choice' ? [6, 2] : c.kind === 'slider' ? (w === 'knob' ? [3, 3] : w === 'vfader' ? [2, 6] : w === 'vslim' ? [1, 5] : w === 'number' ? [3, 2] : w === 'slim' ? [5, 2] : [6, 3]) : [3, 2]; };
+  const sizeOf = c => { const w = widgetOf(c); return c.kind === 'group' ? [12, 1] : c.kind === 'pad' || c.kind === 'points' ? [5, 5] : c.kind === 'adsr' ? [6, 3] : c.kind === 'multi' ? (widgetOf(c) === 'hmulti' ? [6, 5] : [8, 4]) : c.kind === 'choice' ? [6, 2] : c.kind === 'slider' ? (w === 'knob' ? [3, 3] : w === 'vfader' ? [2, 6] : w === 'vslim' ? [1, 5] : w === 'number' ? [3, 2] : w === 'slim' ? [5, 2] : [6, 3]) : [3, 2]; };
   const minOf = c => c.kind === 'pad' ? [2, 2] : c.kind === 'slider' && widgetOf(c) === 'knob' ? [2, 2] : c.kind === 'slider' && (widgetOf(c) === 'vfader' || widgetOf(c) === 'vslim') ? [1, 3] : c.kind === 'group' ? [2, 1] : [2, 1];
   const hit = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
   const topOf = c => { let p = c.group; while (p && byId[p] && byId[p].group) p = byId[p].group; return p || 0; };
@@ -370,7 +411,7 @@ inline constexpr char kScriptC[] = R"JS(
     hd.appendChild(name); if (c.kind === 'slider') hd.appendChild(val); face.appendChild(hd);
     if (c.kind !== 'group' && c.kind !== 'toggle') {
       const bd = el('div', 'bd');
-      const kindMsg = (v) => c.kind === 'adsr' ? { t: 'adsr', id: c.id, v } : c.kind === 'multi' ? { t: 'multi', id: c.id, v } : { t: 'set', id: c.id, v };
+      const kindMsg = (v) => c.kind === 'adsr' ? { t: 'adsr', id: c.id, v } : c.kind === 'multi' ? { t: 'multi', id: c.id, v } : c.kind === 'points' ? { t: 'points', id: c.id, v } : { t: 'set', id: c.id, v };
       const io = { begin: () => active.add(c.id), input: v => { values[c.id] = v; if (val) val.textContent = fmt(c, v); throttled(c.id, () => send(kindMsg(v))); }, end: () => { active.delete(c.id); send(kindMsg(values[c.id])); } };
       t.api = widget(c, io); t.val = val; bd.appendChild(t.api.el); face.appendChild(bd);
     } else if (c.kind === 'toggle') {
@@ -384,7 +425,7 @@ inline constexpr char kScriptC[] = R"JS(
       gear.addEventListener('click', e => { e.stopPropagation(); openSheet(c.id); });
       gear.addEventListener('touchend', e => { e.stopPropagation(); }, { passive: true });
       shield.addEventListener('dblclick', () => openSheet(c.id));
-      const gesture = (grab, apply) => { let x0 = 0, y0 = 0, o, base; return { down: p => { x0 = p.x; y0 = p.y; o = { x: it.x, y: it.y, w: it.w, h: it.h }; base = items.map(i => ({ i, x: i.x, y: i.y })); busy++; t.el.classList.add('moving'); selectTile(c.id); }, move: p => { base.forEach(b => { if (b.i !== it) { b.i.x = b.x; b.i.y = b.y; } }); apply(o, Math.round((p.x - x0) / cell), Math.round((p.y - y0) / rowH)); resolve(items, it); items.forEach(i => place(i, tiles[i.c.id])); $('#grid').style.height = (Math.max.apply(null, items.map(i => i.y + i.h)) * rowH + rowH * 2) + 'px'; }, up: () => { t.el.classList.remove('moving'); busy--; saveLayout(); } }; };
+      const gesture = (grab, apply) => { let x0 = 0, y0 = 0, o, base; return { down: p => { x0 = p.x; y0 = p.y; o = { x: it.x, y: it.y, w: it.w, h: it.h }; base = items.map(i => ({ i, x: i.x, y: i.y })); busy++; busyAt = Date.now(); t.el.classList.add('moving'); selectTile(c.id); }, move: p => { base.forEach(b => { if (b.i !== it) { b.i.x = b.x; b.i.y = b.y; } }); apply(o, Math.round((p.x - x0) / cell), Math.round((p.y - y0) / rowH)); resolve(items, it); items.forEach(i => place(i, tiles[i.c.id])); $('#grid').style.height = (Math.max.apply(null, items.map(i => i.y + i.h)) * rowH + rowH * 2) + 'px'; }, up: () => { t.el.classList.remove('moving'); busy--; saveLayout(); } }; };
       press(shield, gesture(0, (o, dx, dy) => { it.x = clamp(o.x + dx, 0, 12 - it.w); it.y = Math.max(0, o.y + dy); }));
       const mn = minOf(c);
       press(rz, gesture(1, (o, dx, dy) => { it.w = clamp(o.w + dx, mn[0], 12 - o.x); it.h = clamp(o.h + dy, mn[1], 40); }));
@@ -427,9 +468,10 @@ inline constexpr char kScriptC[] = R"JS(
 // D: the settings of a tile, then the start
 inline constexpr char kScriptD[] = R"JS(
   const accents = ['', '#29c7e0', '#46c46a', '#e5c14a', '#f0883e', '#e5564a', '#d36bd9', '#7b8cff'];
-  let sheetTimer = 0, sheetProps = {};
-  const push = props => { sheetProps = Object.assign(sheetProps, props); clearTimeout(sheetTimer); sheetTimer = setTimeout(() => { send({ t: 'edit', id: sheetId, props: sheetProps }); sheetProps = {}; }, 220); };
-  function closeSheet() { sheetId = 0; $('#sheet').classList.remove('open'); selectTile(0); }
+  let sheetTimer = 0, sheetProps = {}, sheetFor = 0;
+  const flush = () => { clearTimeout(sheetTimer); if (sheetFor && Object.keys(sheetProps).length) send({ t: 'edit', id: sheetFor, props: sheetProps }); sheetProps = {}; };
+  const push = props => { sheetFor = sheetId; sheetProps = Object.assign(sheetProps, props); clearTimeout(sheetTimer); sheetTimer = setTimeout(flush, 220); };
+  function closeSheet() { flush(); sheetId = 0; $('#sheet').classList.remove('open'); selectTile(0); }
   function openSheet(id) {
     const c = byId[id]; if (!c) return;
     sheetId = id; selectTile(id);
@@ -455,6 +497,7 @@ inline constexpr char kScriptD[] = R"JS(
     }
     if (c.kind === 'adsr') field('Longest time (s)', numeric(c.max, v => push({ max: v })));
     if (c.kind === 'multi') field('Sliders', numeric(c.count, v => push({ count: Math.round(v) }), 1));
+    if (c.kind === 'points') { field('Points', numeric(c.count, v => push({ count: Math.round(v) }), 1)); const r3 = el('div', 'row'), c3 = (l, n) => { const d = el('div'); d.appendChild(el('label', '', l)); d.appendChild(n); return d; }; r3.appendChild(c3('Min', numeric(c.min, v => push({ min: v })))); r3.appendChild(c3('Max', numeric(c.max, v => push({ max: v })))); sh.appendChild(r3); }
     if (c.kind === 'slider' || c.kind === 'multi') {
       const row = el('div', 'row'), cell2 = (l, n) => { const d = el('div'); d.appendChild(el('label', '', l)); d.appendChild(n); return d; };
       row.appendChild(cell2('Min', numeric(c.min, v => push({ min: v })))); row.appendChild(cell2('Max', numeric(c.max, v => push({ max: v })))); sh.appendChild(row);
@@ -476,5 +519,5 @@ inline constexpr char kScriptD[] = R"JS(
 )JS";
 
 inline QByteArray style() { return QByteArray(kStyleA) + kStyleB; }
-inline QByteArray script() { return QByteArray(kScriptA) + kScriptB + kScriptC + kScriptD; }
+inline QByteArray script() { return QByteArray(kScriptA) + kScriptB + kScriptB2 + kScriptC + kScriptD; }
 } // namespace remote_page
