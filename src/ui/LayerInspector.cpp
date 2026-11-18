@@ -895,7 +895,6 @@ void LayerInspector::rebuild()
         }
     });
     // Tabs that read as tabs (as the ones above): the current one lighter, underlined with the accent
-    tabs->setStyleSheet(theme::tabStyle());
     bool scene3d = false, merge3d = false;
     quint64 instanceOf = 0; // an Instance: its original
     {

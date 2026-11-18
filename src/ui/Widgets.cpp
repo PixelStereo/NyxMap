@@ -1,3 +1,4 @@
+#include <pxs/Theme.h>
 #include "Widgets.h"
 #include "Mapping.h"
 #include "ColorPicker.h"
@@ -43,7 +44,6 @@
 #include <cmath>
 #include <cstdlib>
 
-QStyle *checkStyle(QStyle *base); // Fusion with the application's check boxes (below)
 
 // ---------------------------------------------------------------------------
 // Accent color
@@ -98,19 +98,6 @@ Notifier *notifier()
 }
 
 } // namespace theme
-
-QString theme::tabStyle()
-{
-    return QStringLiteral("QTabBar::tab { background:#25252b; color:#c3c3cd; padding:5px 9px; margin-right:3px;"
-                          " font-weight:600; border:1px solid #62626e; border-bottom:3px solid #44444e;"
-                          " border-top-left-radius:4px; border-top-right-radius:4px; }"
-                          "QTabBar::tab:selected { background:#4c4c59; color:#ffffff; border-color:#9494a3;"
-                          " border-bottom:3px solid %1; }"
-                          "QTabBar::tab:hover:!selected { background:#383841; color:#ffffff; border-color:#9292a0; }"
-                          "QTabBar::tab:disabled { color:#777782; border-color:#44444e; }"
-                          "QTabWidget::pane { border:1px solid #62626e; }")
-        .arg(css());
-}
 
 QColor theme::cueColor(CueKind kind)
 {
@@ -257,44 +244,40 @@ public:
 };
 } // namespace
 
+// The graphite look shared by every Pixel Stereo application (pxs::theme); the accent stays the one the user chose
+static void applyLook(QApplication &app)
+{
+    pxs::Palette palette = pxs::graphite();
+    palette.link = accent();
+    pxs::apply(app, palette,
+               QStringLiteral("QGroupBox { font-weight: bold; border: 1px solid @border; border-radius: 4px; "
+                                           "margin-top: 10px; padding-top: 8px; } "
+                                           "QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; "
+                                           "color: @link; }"
+                                           "QSplitter::handle { background:@border; margin:1px; }"
+                                           "QSplitter::handle:horizontal { width:7px; }"
+                                           "QSplitter::handle:vertical { height:7px; }"
+                                           "QSplitter::handle:hover { background:@link; }"
+                                           "QHeaderView::section { background:@midlight; color:@text;"
+                                           " border:0; border-right:1px solid @light; border-bottom:1px solid @border; padding:4px 6px; }"
+                                           "QMenu::separator { height:1px; background:@border; margin:5px 8px; }"
+                                           // A button that is on shows it: the accent, not Fusion's barely darker shade
+                                           "QPushButton:checked, QToolButton:checked { background:@link; color:%1; "
+                                           "border:1px solid @link; border-radius:3px; }")
+                   .arg(onAccent().name()));
+    // Selections follow the accent
+    QPalette p = app.palette();
+    p.setColor(QPalette::Highlight, accent());
+    p.setColor(QPalette::HighlightedText, onAccent());
+    app.setPalette(p);
+}
+
 void applyToApplication(QApplication &app)
 {
     app.installEventFilter(new SoftSelection(&app));
-    app.setStyle(checkStyle(QStyleFactory::create(QStringLiteral("Fusion"))));
-    QPalette p;
-    const QColor base(30, 30, 33), window(40, 40, 44), text(225, 225, 228), a = accent();
-    p.setColor(QPalette::Window, window);
-    p.setColor(QPalette::WindowText, text);
-    p.setColor(QPalette::Base, base);
-    p.setColor(QPalette::AlternateBase, window);
-    p.setColor(QPalette::ToolTipBase, base);
-    p.setColor(QPalette::ToolTipText, text);
-    p.setColor(QPalette::Text, text);
-    p.setColor(QPalette::Button, QColor(52, 52, 57));
-    p.setColor(QPalette::ButtonText, text);
-    p.setColor(QPalette::Highlight, a);
-    p.setColor(QPalette::HighlightedText, onAccent());
-    p.setColor(QPalette::Link, a);
-    p.setColor(QPalette::PlaceholderText, QColor(130, 130, 135));
-    p.setColor(QPalette::Disabled, QPalette::Text, QColor(120, 120, 125));
-    p.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(120, 120, 125));
-    p.setColor(QPalette::Disabled, QPalette::WindowText, QColor(120, 120, 125));
-    app.setPalette(p);
-    app.setStyleSheet(tabStyle() + QStringLiteral("QGroupBox { font-weight: bold; border: 1px solid #62626e; border-radius: 4px; "
-                                     "margin-top: 10px; padding-top: 8px; } "
-                                     "QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; "
-                                     "color: %1; }"
-                                     "QSplitter::handle { background:#62626e; margin:1px; }"
-                                     "QSplitter::handle:horizontal { width:7px; }"
-                                     "QSplitter::handle:vertical { height:7px; }"
-                                     "QSplitter::handle:hover { background:%1; }"
-                                     "QHeaderView::section { background:#35353e; color:#e1e1e8;"
-                                     " border:0; border-right:1px solid #555561; border-bottom:1px solid #747480; padding:4px 6px; }"
-                                     "QMenu::separator { height:1px; background:#62626e; margin:5px 8px; }"
-                                     // A button that is on shows it: the accent, not Fusion's barely darker shade
-                                     "QPushButton:checked, QToolButton:checked { background:%1; color:%2; "
-                                     "border:1px solid %1; border-radius:3px; }")
-                          .arg(css(), onAccent().name()));
+    applyLook(app);
+    // A new accent shows at once: the focus, the selection, the checked buttons and the tab underline
+    QObject::connect(notifier(), &Notifier::changed, &app, [&app] { applyLook(app); });
 }
 } // namespace theme
 
@@ -927,16 +910,6 @@ QSize IntBox::sizeHint() const
     return boxHint(this, prefix() + (minimum() < 0 ? QStringLiteral("-") : QString()) + QString::number(big) + suffix());
 }
 
-namespace {
-QColor flagEdge(bool hover, bool enabled)
-{
-    QColor c = hover ? QColor(165, 165, 172) : QColor(105, 105, 112);
-    if (!enabled) c.setAlphaF(0.45f);
-    return c;
-}
-} // namespace
-
-// A check box as a square: its edge, and when it is on, a square of the accent inside it (no tick)
 QColor theme::foldArrowColor() { return QColor(238, 238, 244); }
 
 void theme::paintFoldArrow(QPainter &p, const QPointF &center, bool open)
@@ -950,47 +923,6 @@ void theme::paintFoldArrow(QPainter &p, const QPointF &center, bool open)
     p.drawPolygon(points);
     p.restore();
 }
-
-void theme::paintCheck(QPainter &p, const QRectF &box, bool on, bool partial, bool hover, bool enabled)
-{
-    p.save();
-    p.setRenderHint(QPainter::Antialiasing);
-    QColor accent = theme::accent();
-    if (!enabled) accent.setAlphaF(0.45f);
-    p.setPen(QPen(on || partial ? accent : flagEdge(hover, enabled), 1.2));
-    p.setBrush(QColor(24, 24, 27));
-    p.drawRoundedRect(box.adjusted(0.6, 0.6, -0.6, -0.6), 3, 3);
-    if (on || partial) {
-        p.setPen(Qt::NoPen);
-        p.setBrush(accent);
-        const QRectF inner = box.adjusted(3.2, 3.2, -3.2, -3.2);
-        p.drawRoundedRect(partial && !on ? QRectF(inner.left(), inner.center().y() - 1.5, inner.width(), 3) : inner, 1.5, 1.5);
-    }
-    p.restore();
-}
-
-namespace {
-// The application's style: Fusion, its check boxes drawn as theme::paintCheck (the ones of the lists and the trees too)
-class CheckStyle : public QProxyStyle
-{
-public:
-    using QProxyStyle::QProxyStyle;
-    void drawPrimitive(PrimitiveElement pe, const QStyleOption *o, QPainter *p, const QWidget *w = nullptr) const override
-    {
-        if (pe == PE_IndicatorCheckBox || pe == PE_IndicatorItemViewItemCheck) {
-            const QRectF r(o->rect);
-            const double side = std::min(r.width(), r.height());
-            const QRectF box(r.center().x() - side / 2, r.center().y() - side / 2, side, side);
-            theme::paintCheck(*p, box, o->state & State_On, o->state & State_NoChange, o->state & State_MouseOver,
-                              o->state & State_Enabled);
-            return;
-        }
-        QProxyStyle::drawPrimitive(pe, o, p, w);
-    }
-};
-} // namespace
-
-QStyle *checkStyle(QStyle *base) { return new CheckStyle(base); }
 
 FlagBox::FlagBox(QWidget *parent) : FlagBox(QString(), parent) {}
 FlagBox::FlagBox(const QString &text, QWidget *parent) : QCheckBox(text, parent)
@@ -1026,7 +958,7 @@ void FlagBox::paintEvent(QPaintEvent *)
     p.setRenderHint(QPainter::Antialiasing);
     const bool on = isChecked(), en = isEnabled();
     const QRectF box(1.5, (height() - 14) / 2.0, 14, 14);
-    theme::paintCheck(p, box, on, checkState() == Qt::PartiallyChecked, m_hover, en);
+    pxs::paintCheck(p, box, on, checkState() == Qt::PartiallyChecked, m_hover, en, palette()); // the same box as every check box
     if (!text().isEmpty()) {
         p.setPen(palette().color(en ? QPalette::Active : QPalette::Disabled, QPalette::WindowText));
         p.setFont(font());
