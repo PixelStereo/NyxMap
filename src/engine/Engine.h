@@ -42,6 +42,7 @@
 #include <QMutex>
 #include <QObject>
 #include <QRecursiveMutex>
+#include <QHash>
 #include "AnnotatedMutex.h"
 #include <limits>
 #include <QSet>
@@ -697,6 +698,11 @@ public:
     bool setControlsJson(const QJsonArray &a, QString *error = nullptr, bool remapKeys = false); // replaces them all (undo, project, a remote)
     quint64 controlsRevision() const { return m_controlsRevision; } // changes with the list or a definition, not a value
     quint64 addControl(const ShowControl &control); // its id (0: too many); its key is made from its name
+    // Where the controls are on the remote page (ShowControl::gx…): id -> {x, y, w, h}; unknown ids are ignored. True: something changed
+    bool setControlLayouts(const QHash<quint64, std::array<int, 4>> &places);
+    // A control for a parameter, on the page or in a Group (0: the page), and an interaction that makes it drive the parameter:
+    // a slider for a number, a switch, a selector, a button, a color (for a color's channel). Its id (0: not a parameter a control can drive)
+    quint64 addControlForParameter(quint64 layer, const QString &path, quint64 group);
     bool updateControl(quint64 id, const ShowControl &change); // a new name also updates the OSC key
     bool removeControl(quint64 id);
     bool moveControl(quint64 id, int to);

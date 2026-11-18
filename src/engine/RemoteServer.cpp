@@ -214,6 +214,7 @@ QByteArray RemoteServer::controlsMessage() const
         QJsonObject o{{"id", QString::number(c.id)}, {"name", c.name}, {"key", c.key}, {"kind", ShowControl::kindKey(c.kind)}};
         if (c.group) o["group"] = QString::number(c.group);
         o["span"] = c.span;
+        if (c.gw > 0 && c.gh > 0) o["layout"] = QJsonObject{{"x", c.gx}, {"y", c.gy}, {"w", c.gw}, {"h", c.gh}};
         switch (c.kind) {
         case ShowControl::Kind::Group: o["columns"] = c.columns; break;
         case ShowControl::Kind::Pad:
@@ -346,6 +347,16 @@ void RemoteServer::onFrame(Client &c, int opcode, const QByteArray &payload)
         if (--c.budget < 0) return; // faster than any hand: dropped
         const QJsonObject o = QJsonDocument::fromJson(payload).object();
         const QString type = o.value("t").toString();
+        if (type == QLatin1String("layout")) { // the page laid out again: where each control is, for every device
+            QHash<quint64, std::array<int, 4>> places;
+            const QJsonObject items = o.value("items").toObject();
+            for (auto it = items.begin(); it != items.end() && places.size() < 512; ++it) {
+                const QJsonObject p = it.value().toObject();
+                places.insert(it.key().toULongLong(), {p.value("x").toInt(), p.value("y").toInt(), p.value("w").toInt(1), p.value("h").toInt(1)});
+            }
+            if (m_e->setControlLayouts(places)) emit layoutEdited();
+            return;
+        }
         if (type != QLatin1String("set") && type != QLatin1String("color") && type != QLatin1String("point")) {
             onDesk(c, type, o);
             return;

@@ -3363,6 +3363,7 @@ void MainWindow::startRemote()
             m_composition->syncFromEngine();
             m_inspectorTimer.start(); // as OSC: not during a gesture, a bit later
         });
+        connect(m_remote, &RemoteServer::layoutEdited, this, [this] { markDirty(); }); // the page laid out from a device
         connect(m_remoteThread, &QThread::finished, m_remote, &QObject::deleteLater);
         m_remoteThread->start();
     }

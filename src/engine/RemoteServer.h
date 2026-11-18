@@ -73,6 +73,7 @@ public:
 
 signals:
     void clientsChanged(int count);
+    void layoutEdited(); // a client laid the page out again: the project is modified
     void controlMoved(); // a control was set from a client: the interface follows
     void showDriven();   // the desk played the show or moved a layer: the interface follows
 

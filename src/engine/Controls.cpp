@@ -225,6 +225,80 @@ quint64 Engine::addControl(const ShowControl &control)
     return id;
 }
 
+bool Engine::setControlLayouts(const QHash<quint64, std::array<int, 4>> &places)
+{
+    bool changed = false;
+    {
+        Lock lk(&m_mutex);
+        for (ShowControl &c : m_controls) {
+            const auto it = places.constFind(c.id);
+            if (it == places.cend()) continue;
+            const int w = std::clamp(it.value()[2], 1, ShowControl::kGridColumns), h = std::clamp(it.value()[3], 1, ShowControl::kGridRowsMax);
+            const int x = std::clamp(it.value()[0], 0, ShowControl::kGridColumns - w), y = std::clamp(it.value()[1], 0, ShowControl::kGridRowsMax);
+            if (c.gx == x && c.gy == y && c.gw == w && c.gh == h) continue;
+            c.gx = x;
+            c.gy = y;
+            c.gw = w;
+            c.gh = h;
+            changed = true;
+        }
+        if (changed) ++m_controlsRevision;
+    }
+    if (changed) emit controlsChanged();
+    return changed;
+}
+
+quint64 Engine::addControlForParameter(quint64 layer, const QString &path, quint64 group)
+{
+    ParamInfo info;
+    if (!parameterInfo(layer, path, &info) || !(info.access & ParamInfo::Write) || info.type == ParamInfo::Type::Text) return 0;
+    QString target = path; // what the control drives: the parameter, or a whole color
+    ShowControl c;
+    c.group = group;
+    c.name = info.name();
+    const QJsonValue now = parameterValue(layer, path);
+    if (info.colorComponent >= 0 && path.size() > 2 && path[path.size() - 2] == QLatin1Char('/')) { // a color's channel: the color
+        target = path.left(path.size() - 2);
+        c.kind = ShowControl::Kind::Color;
+        c.name = info.label.section(QStringLiteral(" › "), -1).section(QLatin1Char(' '), 0, -2).trimmed();
+        for (int k = 0; k < 3; ++k) {
+            const QJsonValue v = parameterValue(layer, target + QLatin1Char('/') + QLatin1Char("rgb"[k]));
+            if (v.isDouble()) c.rgb[size_t(k)] = std::clamp(v.toDouble(), 0.0, 1.0);
+        }
+    } else if (info.type == ParamInfo::Type::Bool) {
+        c.kind = ShowControl::Kind::Toggle;
+        c.value = now.toBool() ? 1 : 0;
+    } else if (info.type == ParamInfo::Type::Choice) {
+        c.kind = ShowControl::Kind::Choice;
+        c.choices = info.choices;
+        c.value = std::max(0, int(info.choices.indexOf(now.toString())));
+    } else if (info.type == ParamInfo::Type::Trigger) {
+        c.kind = ShowControl::Kind::Button;
+    } else {
+        c.kind = ShowControl::Kind::Slider;
+        c.min = info.min;
+        c.max = info.max > info.min ? info.max : info.min + 1;
+        c.step = info.type == ParamInfo::Type::Int ? std::max(1.0, info.step) : std::max(1e-6, info.step);
+        c.def = std::clamp(info.defaultValue.isValid() ? info.defaultValue.toDouble() : c.min, c.min, c.max);
+        c.value = std::clamp(now.toDouble(c.def), c.min, c.max);
+        const QString unit = info.label.section(QLatin1Char('('), -1);
+        if (info.label.endsWith(QLatin1Char(')')) && unit.size() < 8) c.unit = QLatin1Char(' ') + unit.chopped(1); // "Rotation (°)" -> " °"
+    }
+    if (c.name.isEmpty()) c.name = info.name();
+    const quint64 id = addControl(c);
+    if (!id) return 0;
+    const std::optional<ShowControl> made = control(id);
+    if (!made) return id;
+    Interaction it = Interaction::made(InteractionSource::Internal);
+    it.sourceLayer = 0;
+    it.sourceParam = QStringLiteral("control/") + made->key;
+    it.layer = layer;
+    it.param = target;
+    it.takeover = Takeover::Jump;
+    addInteraction(it);
+    return id;
+}
+
 bool Engine::updateControl(quint64 id, const ShowControl &change)
 {
     bool keyChanged = false;

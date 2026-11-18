@@ -23,12 +23,16 @@
 struct ShowControl {
     enum class Kind { Slider = 0, Toggle, Choice, Button, Color, Pad, Group };
     static constexpr int kKindCount = 7;
+    static constexpr int kGridColumns = 12, kGridRowsMax = 400; // the remote page's grid
     quint64 id = 0;
     QString name = QStringLiteral("Control");
     QString key; // its address, control/<key>: derived from the name and unique within the show
     Kind kind = Kind::Slider;
     quint64 group = 0; // the Group that holds it (0: the page)
     int span = 1;      // the columns it takes in its group (1..4)
+    // Its place on the remote page (a 12-column grid of square cells; the page is its top-level Group, or the first page for
+    // what is not in one): x, y, w, h in cells. w = 0: not placed yet, the page flows it where it fits
+    int gx = 0, gy = 0, gw = 0, gh = 0;
     int columns = 2;   // Group: how many columns it lays its controls out in (1..4)
     double min = 0, max = 1, step = 0.01; // Slider, Pad (both axes)
     QString unit;                         // Slider: " %", " Hz", " s"
@@ -75,6 +79,7 @@ struct ShowControl {
         QJsonObject o{{"id", QString::number(id)}, {"name", name}, {"key", key}, {"kind", kindKey(kind)}};
         if (group) o["group"] = QString::number(group);
         if (span != 1) o["span"] = span;
+        if (gw > 0 && gh > 0) o["layout"] = QJsonObject{{"x", gx}, {"y", gy}, {"w", gw}, {"h", gh}};
         switch (kind) {
         case Kind::Group: o["columns"] = columns; break;
         case Kind::Pad:
@@ -115,6 +120,12 @@ struct ShowControl {
         c.kind = kindFromKey(o.value("kind").toString());
         c.group = o.value("group").toString().toULongLong();
         c.span = std::clamp(o.value("span").toInt(1), 1, 4);
+        if (const QJsonObject l = o.value("layout").toObject(); l.value("w").toInt() > 0 && l.value("h").toInt() > 0) {
+            c.gw = std::clamp(l.value("w").toInt(), 1, kGridColumns);
+            c.gh = std::clamp(l.value("h").toInt(), 1, kGridRowsMax);
+            c.gx = std::clamp(l.value("x").toInt(), 0, kGridColumns - c.gw);
+            c.gy = std::clamp(l.value("y").toInt(), 0, kGridRowsMax);
+        }
         auto finite = [](double v, double fallback) { return std::isfinite(v) ? v : fallback; };
         switch (c.kind) {
         case Kind::Group: c.columns = std::clamp(o.value("columns").toInt(2), 1, 4); break;
