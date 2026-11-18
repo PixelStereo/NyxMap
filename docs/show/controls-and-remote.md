@@ -12,6 +12,12 @@ project (not in snapshots: a control is the operator's, not the scene's).
 a switch, a selector, a button or a color) with the interaction that makes it drive the parameter, on the page or in the group
 chosen from the list of groups.
 
+With Qt WebEngine (the usual build), the **Controls tab shows the same page a phone gets**: the free grid, pages for the groups, **Edit**
+to lay it out, the big faders, encoders, pads and envelopes. **Page** (top of the tab) switches to the old list of rows and back, **⤢**
+opens the page in a window of its own, large enough to lay it out; **+ New** makes controls as before. The page comes from a small
+server of its own on the loopback (127.0.0.1) with a code of its own: it needs neither the Remote setting nor its PIN, and nothing
+else on the network can reach it. Without a browser the tab is the list of rows.
+
 A new project starts with an empty Controls panel; its controls belong to the project and are cleared when you create a new project. **Group** (also in **+ New**) is a titled frame that lays its controls out in 1 to 4 columns. **⋯ › Move to Group** puts a
 control or another group into one (or back on the page), **⋯ › Width** sets how many of the group's columns a control takes,
 **⋯ › Columns** the group's own, and **Move up / down** orders what is beside it. The remote's `/control` page shows the same

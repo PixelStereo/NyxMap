@@ -2,7 +2,11 @@
 #include "ControlsPanel.h"
 #include "AdsrCurve.h"
 #include "ColorPicker.h"
+#include "ControlsWeb.h"
 #include "Engine.h"
+#include <QSettings>
+#include <QShowEvent>
+#include <QStackedWidget>
 #include "InteractionPanel.h"
 #include "PresetEditor.h"
 #include "TimelinePanel.h"
@@ -241,12 +245,33 @@ ControlsPanel::ControlsPanel(Engine *engine, QUndoStack *undo, QWidget *parent) 
         menu->addAction(ShowControl::kindName(ShowControl::Kind(k)), this, [this, k] { addControl(k); })->setObjectName(QStringLiteral("controlsAdd%1").arg(k));
     add->setMenu(menu);
     head->addWidget(add);
+    // With a browser, the panel is the remote's page (the same grid, Edit mode and widgets a phone has); the list of rows stays as the
+    // other way to see them, and the page can be opened in a window to lay it out on a large area
+    m_pageButton = new QToolButton;
+    m_pageButton->setObjectName(QStringLiteral("controlsPageButton"));
+    m_pageButton->setText(QStringLiteral("Page"));
+    m_pageButton->setCheckable(true);
+    m_pageButton->setToolTip(QStringLiteral("The page of the remote, as a phone shows it: a free grid (Edit to lay it out), pages for the groups, big faders, "
+                                            "encoders, pads. Off: the list of rows"));
+    m_windowButton = new QToolButton;
+    m_windowButton->setObjectName(QStringLiteral("controlsWindowButton"));
+    m_windowButton->setText(QStringLiteral("⤢"));
+    m_windowButton->setToolTip(QStringLiteral("The page in a window of its own"));
+    head->addWidget(m_pageButton);
+    head->addWidget(m_windowButton);
+    m_pageButton->setVisible(controlsweb::available());
+    m_windowButton->setVisible(controlsweb::available());
     v->addLayout(head);
+    m_stack = new QStackedWidget;
+    auto *classic = new QWidget;
+    auto *classicColumn = new QVBoxLayout(classic);
+    classicColumn->setContentsMargins(0, 0, 0, 0);
+    classicColumn->setSpacing(6);
     auto *note = new QLabel(QStringLiteral("Each control is a value of the show: an interaction can follow it or drive it, a timeline can animate it, "
                                            "OSC and the remote can move it."));
     note->setWordWrap(true);
     note->setStyleSheet("color:#888; font-size:11px;");
-    v->addWidget(note);
+    classicColumn->addWidget(note);
     auto *scroll = new QScrollArea;
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
@@ -255,7 +280,12 @@ ControlsPanel::ControlsPanel(Engine *engine, QUndoStack *undo, QWidget *parent) 
     m_list->setContentsMargins(0, 0, 0, 0);
     m_list->setSpacing(4);
     scroll->setWidget(inner);
-    v->addWidget(scroll, 1);
+    classicColumn->addWidget(scroll, 1);
+    m_stack->addWidget(classic); // 0: the rows; 1: the page (made when it is first shown)
+    v->addWidget(m_stack, 1);
+    connect(m_pageButton, &QToolButton::toggled, this, [this](bool on) { showPage(on); });
+    connect(m_windowButton, &QToolButton::clicked, this, &ControlsPanel::openWindow);
+
     m_empty = new QLabel(QStringLiteral("No control yet. Use + New."));
     m_empty->setStyleSheet("color:#888;");
     connect(m_engine, &Engine::controlsChanged, this, &ControlsPanel::rebuild);
@@ -393,6 +423,43 @@ void ControlsPanel::editControl(quint64 id)
     if (!m_engine->updateControl(id, change)) return;
     m_undo->push(new SetControlsCommand(m_engine, before, m_engine->controlsJson(), QStringLiteral("Edit Control")));
     emit edited();
+}
+
+void ControlsPanel::showEvent(QShowEvent *e)
+{
+    QWidget::showEvent(e);
+    if (m_pageTried || !controlsweb::available()) return;
+    m_pageTried = true;
+    if (QSettings().value(QStringLiteral("controls/page"), true).toBool()) m_pageButton->setChecked(true);
+}
+
+void ControlsPanel::showPage(bool page)
+{
+    QSettings().setValue(QStringLiteral("controls/page"), page);
+    if (page && !m_web) {
+        m_web = controlsweb::make(controlsweb::url()); // null: no browser, or its server is not up
+        if (m_web) m_stack->addWidget(m_web);
+    }
+    if (page && !m_web) { // nothing to show it with: the rows
+        const QSignalBlocker block(m_pageButton);
+        m_pageButton->setChecked(false);
+        page = false;
+    }
+    m_stack->setCurrentIndex(page ? 1 : 0);
+}
+
+void ControlsPanel::openWindow()
+{
+    QWidget *view = controlsweb::make(controlsweb::url());
+    if (!view) return;
+    auto *window = new QWidget(this, Qt::Window);
+    window->setAttribute(Qt::WA_DeleteOnClose);
+    window->setWindowTitle(QStringLiteral("Controls"));
+    auto *column = new QVBoxLayout(window);
+    column->setContentsMargins(0, 0, 0, 0);
+    column->addWidget(view);
+    window->resize(1100, 760);
+    window->show();
 }
 
 void ControlsPanel::rebuild()

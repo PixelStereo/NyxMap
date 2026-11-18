@@ -209,6 +209,9 @@ private:
     OscServer *m_osc = nullptr;
     QThread *m_oscThread = nullptr;
     class RemoteServer *m_remote = nullptr;
+    class RemoteServer *m_panelRemote = nullptr; // the Controls page of the panel, on the loopback, with its own code
+    QString m_panelPin;
+    quint16 m_panelPort = 0;
     QThread *m_remoteThread = nullptr;
     QTimer m_recallRefreshTimer;
     QTimer m_statusTimer, m_layerStatusTimer, m_renderTimer, m_autosaveTimer, m_binTimer, m_inspectorTimer;

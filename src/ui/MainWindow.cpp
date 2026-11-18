@@ -22,6 +22,7 @@
 #include "LayerInspector.h"
 #include "LayerTable.h"
 #include "ControlsPanel.h"
+#include "ControlsWeb.h"
 #include "RemoteServer.h"
 #include "InteractionPanel.h"
 #include "MappingView.h"
@@ -3365,7 +3366,27 @@ void MainWindow::startRemote()
         });
         connect(m_remote, &RemoteServer::layoutEdited, this, [this] { markDirty(); }); // the page laid out from a device
         connect(m_remoteThread, &QThread::finished, m_remote, &QObject::deleteLater);
+        // The Controls panel shows the remote's page in a web view (when there is a browser): from a small server of its own, on the
+        // loopback only, with a code of its own
+        if (controlsweb::available()) {
+            m_panelRemote = new RemoteServer(m_engine);
+            m_panelRemote->moveToThread(m_remoteThread);
+            connect(m_panelRemote, &RemoteServer::layoutEdited, this, [this] { markDirty(); });
+            connect(m_remoteThread, &QThread::finished, m_panelRemote, &QObject::deleteLater);
+        }
         m_remoteThread->start();
+        if (m_panelRemote) {
+            m_panelPin = RemoteServer::makePin(10);
+            QMetaObject::invokeMethod(
+                m_panelRemote,
+                [this] {
+                    if (m_panelRemote->start(0, m_panelPin, QStringLiteral("127.0.0.1"))) m_panelPort = m_panelRemote->port();
+                },
+                Qt::BlockingQueuedConnection);
+            controlsweb::setUrlProvider([this] {
+                return m_panelPort ? QStringLiteral("http://127.0.0.1:%1/control?pin=%2").arg(m_panelPort).arg(m_panelPin) : QString();
+            });
+        }
     }
     const bool on = SettingsPanel::remoteEnabled();
     const int port = SettingsPanel::remotePort();

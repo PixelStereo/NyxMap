@@ -427,6 +427,7 @@ set(UI_SOURCES
   src/ui/StatusLine.cpp
   src/ui/ConsolePanel.cpp
   src/ui/ControlsPanel.cpp
+  src/ui/ControlsWeb.cpp
   src/ui/ShowControlPanel.cpp
   src/ui/FxChainPanel.cpp
   src/ui/LayerInspector.cpp
