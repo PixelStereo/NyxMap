@@ -328,8 +328,9 @@ int runColorParameterUiTests(Engine &engine, const QString &root)
           QStringList{shadow + "/r", shadow + "/g", shadow + "/b", shadow + "/a"},
           "Clouds color widgets register only their real RGBA components");
     auto *cloudMenu = openMenu(shadowControl);
-    check(cloudMenu && cloudMenu->actions().size() == 4 && submenu(cloudMenu, "Preset") && submenu(cloudMenu, "Snapshot") &&
-          submenu(cloudMenu, "Animate") && submenu(cloudMenu, "Copy OSC Address"), "parameter context menu has the four requested groups");
+    check(cloudMenu && cloudMenu->actions().size() == 5 && submenu(cloudMenu, "Preset") && submenu(cloudMenu, "Snapshot") &&
+          submenu(cloudMenu, "Animate") && submenu(cloudMenu, "Add to Controls Page") && submenu(cloudMenu, "Copy OSC Address"),
+          "parameter context menu has the four requested groups, and Add to Controls Page");
     auto *animateMenu = submenu(cloudMenu, "Animate");
     check(submenu(animateMenu, "Layer Animation") && submenu(animateMenu, "Timeline") && submenu(animateMenu, "Interaction"),
           "Animate offers local animation, timeline and interaction protocols");
