@@ -1786,6 +1786,23 @@ void InteractionPanel::rebuildSettings()
                     }, QStringLiteral("filter%1/curve").arg(k));
                 };
                 bf->addRow(curve);
+                // Its four numbers from an ADSR control (Controls › + New › ADSR): moved on a remote page, by a timeline, in a preset
+                auto *from = new QComboBox;
+                from->setObjectName(QStringLiteral("filterAdsrControl%1").arg(k));
+                from->addItem(QStringLiteral("This filter"), QString());
+                for (const ShowControl &c : m_engine->controls())
+                    if (c.kind == ShowControl::Kind::Adsr) from->addItem(QStringLiteral("ADSR · %1").arg(c.name), c.key);
+                if (const int at = from->findData(f.adsrControl); at >= 0) from->setCurrentIndex(at);
+                else if (!f.adsrControl.isEmpty()) {
+                    from->addItem(QStringLiteral("ADSR · %1 (gone)").arg(f.adsrControl), f.adsrControl);
+                    from->setCurrentIndex(from->count() - 1);
+                }
+                from->setToolTip(QStringLiteral("Where Attack, Decay, Sustain and Release come from: this filter's own fields, or an ADSR control"));
+                bf->addRow(QStringLiteral("Settings from"), from);
+                connect(from, qOverload<int>(&QComboBox::activated), this, [editStage, k, from](int) {
+                    const QString key = from->currentData().toString();
+                    editStage(k, QStringLiteral("Envelope Settings From"), [key](InteractionStage &s) { s.adsrControl = key; });
+                });
             }
             if (f.kind == InteractionFilter::Curve) {
                 // The animations' curve editor, its whole square shown (0..1 in, 0..1 out, a margin around); the first

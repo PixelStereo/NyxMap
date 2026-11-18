@@ -311,7 +311,7 @@ InteractionStage InteractionStage::remap(double inMin, double inMax, double outM
 
 bool InteractionStage::operator==(const InteractionStage &o) const
 {
-    if (kind != o.kind || name != o.name || enabled != o.enabled || a != o.a || b != o.b || c != o.c || d != o.d || op != o.op ||
+    if (kind != o.kind || name != o.name || enabled != o.enabled || a != o.a || b != o.b || c != o.c || d != o.d || op != o.op || adsrControl != o.adsrControl ||
         curve.keys.size() != o.curve.keys.size())
         return false;
     for (size_t k = 0; k < curve.keys.size(); ++k) {
@@ -365,6 +365,7 @@ QJsonObject InteractionStage::toJson() const
         if (!interactionFilterSetting(kind, w).name.isEmpty()) o[QString(QChar('a' + w))] = setting(w);
     if (kind == InteractionFilter::Math) o["op"] = QString::fromLatin1(kMathOps[std::clamp(int(op), 0, kMathOpCount - 1)]);
     if (kind == InteractionFilter::Curve) o["curve"] = curveToJson(curve);
+    if (kind == InteractionFilter::Envelope && !adsrControl.isEmpty()) o["adsr_control"] = adsrControl;
     return o;
 }
 
@@ -379,6 +380,7 @@ InteractionStage InteractionStage::fromJson(const QJsonObject &o)
     }
     s.op = MathOp(keyIndex(kMathOps, o.value("op").toString(), int(MathOp::Multiply)));
     if (s.kind == InteractionFilter::Curve) s.curve = curveFromJson(o.value("curve").toArray());
+    if (s.kind == InteractionFilter::Envelope) s.adsrControl = o.value("adsr_control").toString();
     return s;
 }
 

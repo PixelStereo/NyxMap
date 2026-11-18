@@ -3,6 +3,7 @@
 // settings reached as values (presets, snapshots, OSC).
 // Standalone CTest area: nyxmap_tests --area interaction_filters.
 #include "EngineInternal.h"
+#include "ShowControl.h"
 
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -268,6 +269,35 @@ int runInteractionFilterTests(Engine &e)
     check(e.interactions().back().filters.size() == 1 && e.interactions().back().filters[0].kind == InteractionFilter::Steps &&
               near(e.interactions().back().filters[0].a, 5),
           "recalled: the list and its values");
+
+    // An Envelope filter that takes its four numbers from an ADSR control: they follow it, and the link is saved
+    {
+        ShowControl envelope;
+        envelope.name = "Hit shape";
+        envelope.kind = ShowControl::Kind::Adsr;
+        const quint64 control = e.addControl(envelope);
+        const QString key = e.control(control)->key;
+        Interaction it = Interaction::made(InteractionSource::Keyboard);
+        InteractionStage linked = InteractionStage::made(InteractionFilter::Envelope);
+        linked.adsrControl = key;
+        it.filters = {linked};
+        const quint64 id = e.addInteraction(it);
+        e.setControlAdsr(control, {0.25, 0.5, 0.4, 1.5});
+        e.renderFrame();
+        InteractionStage seen;
+        for (const Interaction &x : e.interactions())
+            if (x.id == id) seen = x.filters.front();
+        check(near(seen.a, 0.25) && near(seen.b, 0.5) && near(seen.c, 0.4) && near(seen.d, 1.5), "an Envelope takes Attack, Decay, Sustain and Release from its ADSR control");
+        const InteractionStage again = InteractionStage::fromJson(seen.toJson());
+        check(again.adsrControl == key, "and the link is saved");
+        e.setControlAdsr(control, {0.1, 0.2, 0.9, 0.3});
+        e.renderFrame();
+        for (const Interaction &x : e.interactions())
+            if (x.id == id) seen = x.filters.front();
+        check(near(seen.a, 0.1) && near(seen.c, 0.9), "and follows it when it moves");
+        e.removeInteraction(id);
+        e.removeControl(control);
+    }
 
     e.setFadesManual(false);
     if (!failures) std::printf("interaction_filters: OK\n");

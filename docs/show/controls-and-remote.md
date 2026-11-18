@@ -20,7 +20,8 @@ groups, columns and widths.
 An **ADSR** is four numbers moved by one curve with four points: the attack, the decay, the sustain (the level held) and the release.
 Its times go up to its **Longest time** (⋯ › Edit). Each number is a parameter, `control/<name>/attack`, `decay`, `sustain` and
 `release`, so a timeline, an interaction or a preset reaches it, and OSC sets the four at once: `/control/<name>` takes four floats.
-On the remote page it is a tile with the same curve, a handle for each number.
+On the remote page it is a tile with the same curve, a handle for each number. An interaction's **Envelope** filter can take its
+four numbers from it (**Settings from** under its curve): the envelope of a hit is then moved from the page, a timeline or a preset.
 
 A control is a value of the show, `control/<name>` (a color: `control/<name>/r`, `g`, `b`; a 2D slider: `control/<name>/x` and
 `y`, a point a timeline draws as an XY track), like a layer's opacity. So:
