@@ -122,8 +122,11 @@ class ReleaseMetadataTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "cmake").mkdir()
-            for name in ("Version.cmake", "PixelStereoBuildId.cmake"):
-                (root / "cmake" / name).write_text((ROOT / "cmake" / name).read_text())
+            (root / "cmake/Version.cmake").write_text((ROOT / "cmake/Version.cmake").read_text())
+            shared = root / "third_party/pxs/cmake"
+            shared.mkdir(parents=True)
+            (shared / "PixelStereoBuildId.cmake").write_text(
+                (ROOT / "third_party/pxs/cmake/PixelStereoBuildId.cmake").read_text())
             (root / "VERSION").write_text("0.2.1\n")
             if git_repo:
                 subprocess.run(["git", "init", "-q", str(root)], check=True)
