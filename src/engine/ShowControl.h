@@ -33,6 +33,10 @@ struct ShowControl {
     // Its place on the remote page (a 12-column grid of square cells; the page is its top-level Group, or the first page for
     // what is not in one): x, y, w, h in cells. w = 0: not placed yet, the page flows it where it fits
     int gx = 0, gy = 0, gw = 0, gh = 0;
+    // How the remote page draws it (the tile's own settings): a widget among those of its kind ("": the default one), the curve
+    // of its gesture (a Slider: 1 linear, above 1 fine at the low end, below 1 fine at the high end) and its accent color ("#rrggbb")
+    QString widget, accent;
+    double curve = 1;
     int columns = 2;   // Group: how many columns it lays its controls out in (1..4)
     double min = 0, max = 1, step = 0.01; // Slider, Pad (both axes)
     QString unit;                         // Slider: " %", " Hz", " s"
@@ -43,6 +47,21 @@ struct ShowControl {
     double value2 = 0; // Pad: Y (value is X)
     std::array<double, 3> rgb{{1, 1, 1}}; // Color
 
+    // What a remote page may ask for: a short word, a color in #rrggbb; anything else is the default
+    static QString cleanWidget(const QString &w)
+    {
+        if (w.size() > 12) return QString();
+        for (const QChar ch : w)
+            if (!ch.isLetter()) return QString();
+        return w.toLower();
+    }
+    static QString cleanAccent(const QString &a)
+    {
+        if (a.size() != 7 || a[0] != QLatin1Char('#')) return QString();
+        for (int i = 1; i < 7; ++i)
+            if (!a[i].isDigit() && !(a[i].toLower() >= QLatin1Char('a') && a[i].toLower() <= QLatin1Char('f'))) return QString();
+        return a.toLower();
+    }
     static QString kindKey(Kind k)
     {
         static const char *const keys[] = {"slider", "toggle", "choice", "button", "color", "pad", "group"};
@@ -79,6 +98,9 @@ struct ShowControl {
         QJsonObject o{{"id", QString::number(id)}, {"name", name}, {"key", key}, {"kind", kindKey(kind)}};
         if (group) o["group"] = QString::number(group);
         if (span != 1) o["span"] = span;
+        if (!widget.isEmpty()) o["widget"] = widget;
+        if (!accent.isEmpty()) o["accent"] = accent;
+        if (curve != 1) o["curve"] = curve;
         if (gw > 0 && gh > 0) o["layout"] = QJsonObject{{"x", gx}, {"y", gy}, {"w", gw}, {"h", gh}};
         switch (kind) {
         case Kind::Group: o["columns"] = columns; break;
@@ -120,6 +142,9 @@ struct ShowControl {
         c.kind = kindFromKey(o.value("kind").toString());
         c.group = o.value("group").toString().toULongLong();
         c.span = std::clamp(o.value("span").toInt(1), 1, 4);
+        c.widget = cleanWidget(o.value("widget").toString());
+        c.accent = cleanAccent(o.value("accent").toString());
+        c.curve = std::isfinite(o.value("curve").toDouble(1)) ? std::clamp(o.value("curve").toDouble(1), 0.1, 10.0) : 1.0;
         if (const QJsonObject l = o.value("layout").toObject(); l.value("w").toInt() > 0 && l.value("h").toInt() > 0) {
             c.gw = std::clamp(l.value("w").toInt(), 1, kGridColumns);
             c.gh = std::clamp(l.value("h").toInt(), 1, kGridRowsMax);

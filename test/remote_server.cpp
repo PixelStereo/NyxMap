@@ -93,7 +93,13 @@ struct Client {
         const char mask[4] = {0x12, 0x34, 0x56, 0x78};
         QByteArray f;
         f.append(char(0x81));
-        f.append(char(0x80 | payload.size()));
+        if (payload.size() < 126) {
+            f.append(char(0x80 | payload.size()));
+        } else { // a longer frame: its length in two more bytes, as a browser sends it
+            f.append(char(0x80 | 126));
+            f.append(char(payload.size() >> 8));
+            f.append(char(payload.size() & 0xFF));
+        }
         f.append(mask, 4);
         for (int i = 0; i < payload.size(); ++i) f.append(char(payload[i] ^ mask[i & 3]));
         socket.write(f);
@@ -204,6 +210,35 @@ int main(int argc, char **argv)
             choice.choices = {"Intro", "Verse", "Drop"};
             engine.addControl(toggle);
             engine.addControl(choice);
+            // More to look at: a pad, an encoder, a page of its own (a group) with a nested one
+            ShowControl pad, knob, vfader, page, lights, spot;
+            pad.name = "Position";
+            pad.kind = ShowControl::Kind::Pad;
+            knob.name = "Gain";
+            knob.min = -24;
+            knob.max = 12;
+            knob.step = 0.5;
+            knob.unit = " dB";
+            knob.widget = "knob";
+            knob.accent = "#46c46a";
+            vfader.name = "Master";
+            vfader.widget = "vfader";
+            vfader.accent = "#f0883e";
+            page.name = "Lights";
+            page.kind = ShowControl::Kind::Group;
+            engine.addControl(pad);
+            engine.addControl(knob);
+            engine.addControl(vfader);
+            const quint64 pageId = engine.addControl(page);
+            lights.name = "Dimmer";
+            lights.group = pageId;
+            lights.widget = "knob";
+            lights.accent = "#e5c14a";
+            spot.name = "Spot color";
+            spot.kind = ShowControl::Kind::Color;
+            spot.group = pageId;
+            engine.addControl(lights);
+            engine.addControl(spot);
             RemoteServer demo(&engine);
             demo.start(8799, qEnvironmentVariableIsSet("NYXMAP_REMOTE_NOCODE") ? QString() : QStringLiteral("482913"), "127.0.0.1");
             std::cerr << "DEMO http://127.0.0.1:8799/show?pin=482913\n";
@@ -238,7 +273,7 @@ int main(int argc, char **argv)
             require(!reply.contains("482913"), "the PIN is nowhere in the page");
             require(reply.contains("id=\"go\"") && reply.contains("Connect"), "the login has a button: a phone's keypad may have no Enter key");
             // The hash is that of the code served
-            const QByteArray scriptHash = "'sha256-" + QCryptographicHash::hash(QByteArray(remote_page::kScript), QCryptographicHash::Sha256).toBase64() + "'";
+            const QByteArray scriptHash = "'sha256-" + QCryptographicHash::hash(remote_page::script(), QCryptographicHash::Sha256).toBase64() + "'";
             require(reply.contains(scriptHash), "the policy's hash is the script's");
         }
         {
@@ -395,6 +430,46 @@ int main(int argc, char **argv)
         require(near(engine.control(a)->value, 10), "a value beyond the range is kept in it");
         require(server.isRunning(), "junk is ignored, nothing falls");
 
+        // The page laid out from the phone: where each tile is, its widget, its range and curve; kept by the show
+        {
+            ShowControl tileControl;
+            tileControl.name = "Tile";
+            tileControl.max = 10;
+            tileControl.step = 0.5;
+            const quint64 t = engine.addControl(tileControl);
+            const QString ida = QString::number(t), idb = QString::number(b);
+            phone.sendText(QJsonDocument(QJsonObject{{"t", "layout"}, {"items", QJsonObject{{ida, QJsonObject{{"x", 2}, {"y", 3}, {"w", 4}, {"h", 2}}},
+                                                                                           {idb, QJsonObject{{"x", 99}, {"y", 0}, {"w", 3}, {"h", 2}}}}}})
+                               .toJson(QJsonDocument::Compact));
+            phone.pumpUntil([&] { return engine.control(t)->gw == 4; });
+            const ShowControl placed = *engine.control(t), kept = *engine.control(b);
+            require(placed.gx == 2 && placed.gy == 3 && placed.gw == 4 && placed.gh == 2, "a tile placed from the phone is where it was put");
+            require(kept.gx + kept.gw <= ShowControl::kGridColumns && kept.gx >= 0, "a place beyond the grid is brought back into it");
+            const ShowControl again = ShowControl::fromJson(placed.toJson());
+            require(again.gx == 2 && again.gy == 3 && again.gw == 4 && again.gh == 2, "the layout is saved with the control");
+            phone.sendText(QJsonDocument(QJsonObject{{"t", "edit"}, {"id", ida},
+                                                     {"props", QJsonObject{{"widget", "knob"}, {"accent", "#E5564A"}, {"curve", 2.5}, {"min", -5}, {"max", 5}, {"step", 0.25}, {"unit", " dB"}, {"name", "Gain"}}}})
+                               .toJson(QJsonDocument::Compact));
+            phone.pumpUntil([&] { return engine.control(t)->widget == "knob"; });
+            const ShowControl edited = *engine.control(t);
+            require(edited.widget == "knob" && edited.accent == "#e5564a" && near(edited.curve, 2.5) && near(edited.min, -5) && near(edited.max, 5) &&
+                        edited.name == "Gain" && edited.unit == " dB" && edited.gw == 4,
+                    "a tile's widget, accent, curve, range and name set from the phone, its place kept");
+            phone.sendText(QJsonDocument(QJsonObject{{"t", "edit"}, {"id", ida}, {"props", QJsonObject{{"widget", "<script>"}, {"accent", "red"}, {"curve", 99}}}}).toJson(QJsonDocument::Compact));
+            phone.pumpUntil([&] { return engine.control(t)->widget.isEmpty(); });
+            const ShowControl cleaned = *engine.control(t);
+            require(cleaned.widget.isEmpty() && cleaned.accent.isEmpty() && cleaned.curve <= 10.0, "what is not a widget, a color or a sane curve is dropped");
+            phone.sendText(QJsonDocument(QJsonObject{{"t", "remove"}, {"id", "424242"}}).toJson(QJsonDocument::Compact));
+            require(server.isRunning() && engine.control(t), "removing what is not there does nothing");
+            phone.sendText(QJsonDocument(QJsonObject{{"t", "remove"}, {"id", ida}}).toJson(QJsonDocument::Compact));
+            phone.pumpUntil([&] { return !engine.control(t); });
+            require(!engine.control(t), "a control removed from the phone is gone");
+            phone.pumpUntil([&] {
+                for (const QJsonObject &m : phone.messages())
+                    if (m.value("t").toString() == "controls" && m.value("list").toArray().size() == 3) return true;
+                return false;
+            });
+        }
         // From the show to the phone
         phone.in.clear();
         engine.setControlValue(a, 2.5);
@@ -403,6 +478,13 @@ int main(int argc, char **argv)
         phone.pumpUntil([&] {
             values = {};
             for (const QJsonObject &m : phone.messages()) {
+                if (m.value("t").toString() == "controls") { // the whole list again (the page was laid out meanwhile): its values too
+                    for (const QJsonValue &item : m.value("list").toArray()) {
+                        const QJsonObject o = item.toObject();
+                        values[o.value("id").toString()] = o.contains("rgb") ? o.value("rgb") : o.value("value");
+                    }
+                    continue;
+                }
                 if (m.value("t").toString() != "values") continue;
                 const QJsonObject v = m.value("v").toObject();
                 for (auto it = v.begin(); it != v.end(); ++it) values[it.key()] = it.value();

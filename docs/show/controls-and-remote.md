@@ -8,6 +8,10 @@ The **Controls** tab (Shift+5), next to the Media Bin and the Interactions, hold
 default). **+ New** makes one; **⋯** edits, duplicates, moves or deletes it, each one undo step. They are saved with the
 project (not in snapshots: a control is the operator's, not the scene's).
 
+**Right-click any parameter › Add to Controls Page › Page, or a group**: a control is made for it (a slider with the parameter's range,
+a switch, a selector, a button or a color) with the interaction that makes it drive the parameter, on the page or in the group
+chosen from the list of groups.
+
 A new project starts with an empty Controls panel; its controls belong to the project and are cleared when you create a new project. **Group** (also in **+ New**) is a titled frame that lays its controls out in 1 to 4 columns. **⋯ › Move to Group** puts a
 control or another group into one (or back on the page), **⋯ › Width** sets how many of the group's columns a control takes,
 **⋯ › Columns** the group's own, and **Move up / down** orders what is beside it. The remote's `/control` page shows the same
@@ -39,12 +43,20 @@ leads to `/control`.
 
 * **`http://<this machine>:8765/control`** shows each control as something a thumb can use (sliders, big switches, selector
   buttons, hold buttons, color pickers, 2D sliders), and follows the show live: what moves in NyxMap moves on the phone, and back.
+* **`http://<this machine>:8765/control`** is laid out as you want it: a free grid of 12 columns, **a page (a tab) for each group**
+  (what is not in a group is the first page). **Edit** turns the layout on: drag a tile to move it (the tiles it lands on make room),
+  drag its corner to resize it, and the **⚙** of a tile opens its settings: its name, its **widget** (a slider as a fader, a vertical
+  fader, an encoder or a number; a selector as buttons or a menu; a button held or tapped), its **accent** color, and for a slider
+  its **range, step, unit and curve** (fine at the low or at the high end). A tile can be deleted there too (its OSC address goes
+  with it). The layout and the settings are saved with the project and are the same on every device; on a phone the page is one
+  column in the order of the grid, without Edit. It runs on tablets of 2013 (iOS 12) and later.
 * **`http://<this machine>:8765/show`** is the show desk: see [Show Control](#show-control) below.
 
 Safety, because it is a door into a show:
 
-* it **plays the show and moves live values** (controls, cues, snapshots, presets, timelines, any layer's values); it cannot open,
-  save or edit the project, and it reaches nothing else of the OSC namespace;
+* it **plays the show and moves live values** (controls, cues, snapshots, presets, timelines, any layer's values), and in Edit mode
+  it lays out, sets and deletes **controls**; it cannot open or save the project, edit anything else in it, and it reaches nothing
+  else of the OSC namespace;
 * a **PIN** of 4 to 32 letters or digits (made at first use, **Random** to change it), compared in constant time; eight wrong
   codes lock an address out for a minute. Without a code, anyone on the network can play the show;
 * the WebSocket is accepted only from a page this server served (same origin), so a page of another site cannot reach it;

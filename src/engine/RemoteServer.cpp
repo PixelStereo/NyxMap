@@ -68,7 +68,7 @@ QByteArray RemoteServer::page()
     return QByteArray("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
                       "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1,viewport-fit=cover\">"
                       "<title>NyxMap remote</title><style>") +
-           remote_page::kStyle + "</style></head><body>" + remote_page::kBody + "<script>" + remote_page::kScript + "</script></body></html>";
+           remote_page::style() + "</style></head><body>" + remote_page::kBody + "<script>" + remote_page::script() + "</script></body></html>";
 }
 
 QByteArray RemoteServer::showPage()
@@ -85,7 +85,7 @@ RemoteServer::RemoteServer(Engine *engine, QObject *parent) : QObject(parent), m
         return "default-src 'none'; script-src " + hash(script) + "; style-src " + hash(style) +
                "; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
     };
-    m_csp = policy(remote_page::kScript, remote_page::kStyle);
+    m_csp = policy(remote_page::script().constData(), remote_page::style().constData());
     m_cspShow = policy(show_page::kScript, show_page::kStyle);
     m_timer.setInterval(50);
     connect(&m_timer, &QTimer::timeout, this, &RemoteServer::push);
@@ -214,6 +214,9 @@ QByteArray RemoteServer::controlsMessage() const
         QJsonObject o{{"id", QString::number(c.id)}, {"name", c.name}, {"key", c.key}, {"kind", ShowControl::kindKey(c.kind)}};
         if (c.group) o["group"] = QString::number(c.group);
         o["span"] = c.span;
+        if (!c.widget.isEmpty()) o["widget"] = c.widget;
+        if (!c.accent.isEmpty()) o["accent"] = c.accent;
+        if (c.curve != 1) o["curve"] = c.curve;
         if (c.gw > 0 && c.gh > 0) o["layout"] = QJsonObject{{"x", c.gx}, {"y", c.gy}, {"w", c.gw}, {"h", c.gh}};
         switch (c.kind) {
         case ShowControl::Kind::Group: o["columns"] = c.columns; break;
@@ -355,6 +358,36 @@ void RemoteServer::onFrame(Client &c, int opcode, const QByteArray &payload)
                 places.insert(it.key().toULongLong(), {p.value("x").toInt(), p.value("y").toInt(), p.value("w").toInt(1), p.value("h").toInt(1)});
             }
             if (m_e->setControlLayouts(places)) emit layoutEdited();
+            return;
+        }
+        if (type == QLatin1String("edit") || type == QLatin1String("remove")) { // a tile's settings changed on the page, or the control removed
+            const quint64 target = o.value("id").toString().toULongLong();
+            if (!target) return;
+            if (type == QLatin1String("remove")) {
+                if (m_e->removeControl(target)) emit layoutEdited();
+                return;
+            }
+            std::optional<ShowControl> found = m_e->control(target);
+            if (!found) return;
+            ShowControl c = *found;
+            const QJsonObject p = o.value("props").toObject();
+            auto number = [&](const char *key, double &into) {
+                if (p.value(key).isDouble() && std::isfinite(p.value(key).toDouble())) into = p.value(key).toDouble();
+            };
+            if (p.value("name").isString()) c.name = p.value("name").toString().left(60);
+            if (p.contains("widget")) c.widget = ShowControl::cleanWidget(p.value("widget").toString());
+            if (p.contains("accent")) c.accent = ShowControl::cleanAccent(p.value("accent").toString());
+            if (c.kind == ShowControl::Kind::Slider) {
+                number("min", c.min);
+                number("max", c.max);
+                number("step", c.step);
+                number("default", c.def);
+                if (p.value("unit").isString()) c.unit = p.value("unit").toString().left(8);
+                number("curve", c.curve);
+                c.curve = std::clamp(c.curve, 0.1, 10.0);
+                c.step = std::clamp(c.step, 1e-6, std::max(1e-6, std::abs(c.max - c.min)));
+            }
+            if (m_e->updateControl(target, c)) emit layoutEdited();
             return;
         }
         if (type != QLatin1String("set") && type != QLatin1String("color") && type != QLatin1String("point")) {
