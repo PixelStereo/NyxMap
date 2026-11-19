@@ -328,6 +328,10 @@ bool Engine::setControlPoint(quint64 id, double x, double y)
 {
     Lock lk(&m_mutex);
     const ShowControl *c = pxs::controls::find(m_controls, id);
+    if (c && !c->boundParam2.isEmpty()) { // a pad over two parameters
+        EngineParameterSource source(this);
+        return pxs::controls::setBoundPoint(*c, source, x, y);
+    }
     return c && pxs::controls::setPoint(m_controls, id, x, y, EngineParameterSource::feed(this, c->key));
 }
 
