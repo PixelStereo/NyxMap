@@ -476,6 +476,8 @@ void Engine::stepAnimations(double dt)
             if (!fx.enabled) continue;
             if (fx.kind == Fx3d::FollowPath && fx.s.layer && fx.s.speed != 0) // a 3D object's Follow Path FX
                 fx.travel = std::fmod(fx.travel + double(fx.s.speed) * dt, 2.0);
+            else if (fx.kind == Fx3d::Spin && fx.s.speed != 0) // a Spin turning: its turns, kept within one
+                fx.travel = std::fmod(fx.travel + double(fx.s.speed) * dt, 1.0);
             else if (fx.kind == Fx3d::Noise && fx.s.rate != 0) // a Noise changing its values: its steps, as many as it has gone through
                 fx.travel = std::fmod(fx.travel + double(fx.s.rate) * dt, 1048576.0);
         }

@@ -79,7 +79,7 @@ The **shape FX** move the points of a model's mesh, in list order (a taper then 
 
 A shape FX needs points to move: a primitive is cut finer on its own (`model/detail` sets the least); an imported model keeps its own mesh.
 
-The **placement FX** then place it, in list order: **Transform 3D** (`position`, `rotation` and `scale` on top of its Spatial values), **Duplicate** and **Follow Path**, below. A model has all of them; an Instance has the placement ones (it shows its original's shape); a Merge 3D, a light and a camera have Follow Path.
+The **placement FX** then place it, in list order: **Transform 3D** (`position`, `rotation` and `scale` on top of its Spatial values), **Spin**, **Duplicate** and **Follow Path**, below. A model has all of them; an Instance has the placement ones (it shows its original's shape); a Merge 3D, a light and a camera have Follow Path.
 
 ## Looking at a scene or a Merge 3D
 
@@ -88,6 +88,10 @@ In the viewer's source menu (**Layers**), a 3D scene and a Merge 3D are layers l
 ## Follow Path (3D FX)
 
 A model, a Merge 3D or an Empty, a camera or a light has a **Follow Path** 3D FX (its **FX** list): add it, choose a Path of the scene, place the object on it (`position`, 0 to 1) and set it moving (`speed`, turns per second). **Turned Along It** (`orient`) turns the object to face the way it goes. A camera or a light sits on the path's point; a model's or a Merge 3D's own transform applies from there, so a Merge 3D on a path carries everything it holds.
+
+## Spin (3D FX)
+
+A model or an Instance has a **Spin** 3D FX (its **FX** list): a rotation that goes on by itself. **Speed** (`speed`) is in turns per second (negative turns the other way), **Start Angle** (`angle`) is where it starts, **Around Axis** (`axis`) is X, Y or Z. **Around** (`pivot`) is the object's own centre, or a point (`point/x`, `y`, `z`, in the space of what holds it). Spin only changes where the object is: its meshes are not rebuilt. It composes in list order with the other placement FX: before a Duplicate, the copies stand on the Path's points; after it, each copy turns on itself.
 
 ## Duplicate (3D FX)
 

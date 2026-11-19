@@ -579,6 +579,15 @@ std::vector<QMatrix4x4> Engine::placementFrames(const Layer &object, const QMatr
         } else if (fx.kind == Fx3d::Transform) {
             const QMatrix4x4 t = fx.s.transform();
             for (QMatrix4x4 &frame : frames) frame *= t;
+        } else if (fx.kind == Fx3d::Spin) {
+            QVector3D centre; // its own centre, in the space of its frame
+            if (const auto model = object.type == SourceType::Model ? modelOf(object) : nullptr) {
+                ModelPlacement p = object.modelPlacement;
+                if (const Layer *o = object.instanceOf ? originalOf(object) : nullptr) p.fit = o->modelPlacement.fit;
+                centre = model->matrix(p).map(model->center());
+            }
+            const QMatrix4x4 t = fx.s.spin(fx.travel, centre);
+            for (QMatrix4x4 &frame : frames) frame *= t;
         } else if (fx.kind == Fx3d::Duplicate && copies) {
             std::vector<QMatrix4x4> next;
             for (const QMatrix4x4 &frame : frames)

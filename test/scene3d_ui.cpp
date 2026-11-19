@@ -412,7 +412,7 @@ int runScene3dUiTests(Engine &engine)
                         int kindsInMenu = 0;
                         for (QAction *action : menu->actions())
                             if (!action->isSeparator() && !action->text().isEmpty()) ++kindsInMenu;
-                        check(kindsInMenu == 9, "the menu offers every kind of 3D FX, the ones already listed too");
+                        check(kindsInMenu == kFx3dCount, "the menu offers every kind of 3D FX, the ones already listed too");
                         menu->close();
                     }
             });
