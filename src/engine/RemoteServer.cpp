@@ -3,83 +3,42 @@
 #include "RemotePage.h"
 #include "ShowDesk.h"
 #include "ShowPage.h"
-#include "WebSocketFrame.h"
 
-#include <QCryptographicHash>
-#include <QDateTime>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QNetworkInterface>
-#include <QFileInfo>
-#include <QRandomGenerator>
-#include <QUrlQuery>
-#include <QTcpServer>
 #include <QTcpSocket>
-#include <QUrl>
 #include <cmath>
 
-namespace {
-constexpr int kMaxClients = 16;
-constexpr int kMaxHeader = 16384;
-constexpr quint64 kMaxFrame = 4096;
-constexpr int kMaxFailures = 8;
-constexpr qint64 kLockMs = 60'000;
-
-QByteArray response(int status, const QByteArray &body, const QByteArray &type, const QByteArray &extra = {})
+// What the pxs server asks of the show: its controls, as the engine has them, and what the page sets
+class EngineBackend final : public pxs::controls::Backend
 {
-    static const QHash<int, QByteArray> text = {{200, "OK"}, {302, "Found"}, {400, "Bad Request"}, {403, "Forbidden"}, {404, "Not Found"}, {429, "Too Many Requests"}};
-    QByteArray r = "HTTP/1.1 " + QByteArray::number(status) + ' ' + text.value(status, "Error") + "\r\n";
-    r += "Content-Type: " + type + "\r\nContent-Length: " + QByteArray::number(body.size()) + "\r\n";
-    r += "Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nX-Frame-Options: DENY\r\n";
-    r += extra + "Connection: close\r\n\r\n";
-    return r + body;
-}
-
-QByteArray hash(const char *text)
-{
-    return "'sha256-" + QCryptographicHash::hash(QByteArray(text), QCryptographicHash::Sha256).toBase64() + "'";
-}
-
-// Same time whatever the digits: a wrong PIN says nothing of how close it was
-bool sameBytes(const QByteArray &a, const QByteArray &b)
-{
-    int diff = a.size() ^ b.size();
-    for (int i = 0; i < std::max(a.size(), b.size()); ++i) diff |= (i < a.size() ? a[i] : 0) ^ (i < b.size() ? b[i] : 0);
-    return diff == 0;
-}
-
-QList<double> valuesOf(const ShowControl &c)
-{
-    if (c.kind == ShowControl::Kind::Color) return {c.rgb[0], c.rgb[1], c.rgb[2]};
-    if (c.kind == ShowControl::Kind::Pad) return {c.value, c.value2};
-    if (c.kind == ShowControl::Kind::Adsr) return {c.adsr[0], c.adsr[1], c.adsr[2], c.adsr[3]};
-    if (c.kind == ShowControl::Kind::Multi) return QList<double>(c.multi.begin(), c.multi.end());
-    if (c.kind == ShowControl::Kind::Points) {
-        QList<double> flat;
-        for (const auto &q : c.points) flat << q[0] << q[1];
-        return flat;
+public:
+    explicit EngineBackend(Engine *engine) : m_e(engine) {}
+    std::vector<pxs::controls::Control> controls() const override { return m_e->controls(); }
+    std::optional<pxs::controls::Control> control(quint64 id) const override { return m_e->control(id); }
+    quint64 revision() const override { return m_e->controlsRevision(); }
+    QString title() const override
+    {
+        const QString name = QFileInfo(m_e->projectPath()).completeBaseName();
+        return name.isEmpty() ? QStringLiteral("NyxMap") : name;
     }
-    return {c.value};
-}
-QJsonValue jsonOf(const QList<double> &v)
-{
-    if (v.size() > 1) {
-        QJsonArray a;
-        for (double x : v) a.append(x);
-        return a;
-    }
-    return v.value(0);
-}
-} // namespace
+    bool setValue(quint64 id, double v) override { return m_e->setControlValue(id, v); }
+    bool setPoint(quint64 id, double x, double y) override { return m_e->setControlPoint(id, x, y); }
+    bool setPoints(quint64 id, const std::vector<double> &xy) override { return m_e->setControlPoints(id, xy); }
+    bool setMulti(quint64 id, const std::vector<double> &v) override { return m_e->setControlMulti(id, v); }
+    bool setAdsr(quint64 id, const std::array<double, 4> &v) override { return m_e->setControlAdsr(id, v); }
+    bool setColor(quint64 id, double r, double g, double b) override { return m_e->setControlColor(id, r, g, b); }
+    bool setLayouts(const QHash<quint64, std::array<int, 4>> &places) override { return m_e->setControlLayouts(places); }
+    bool update(quint64 id, const pxs::controls::Control &changed) override { return m_e->updateControl(id, changed); }
+    bool remove(quint64 id) override { return m_e->removeControl(id); }
 
-QByteArray RemoteServer::page()
-{
-    return QByteArray("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
-                      "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1,viewport-fit=cover\">"
-                      "<title>NyxMap remote</title><style>") +
-           remote_page::style() + "</style></head><body>" + remote_page::kBody + "<script>" + remote_page::script() + "</script></body></html>";
-}
+private:
+    Engine *m_e;
+};
+
+QByteArray RemoteServer::page() { return pxs::controls::Server::page(QStringLiteral("NyxMap remote")); }
 
 QByteArray RemoteServer::showPage()
 {
@@ -89,404 +48,59 @@ QByteArray RemoteServer::showPage()
            show_page::kStyle + "</style></head><body>" + show_page::kBody + "<script>" + show_page::kScript + "</script></body></html>";
 }
 
-RemoteServer::RemoteServer(Engine *engine, QObject *parent) : QObject(parent), m_e(engine), m_ns(engine)
+RemoteServer::RemoteServer(Engine *engine, QObject *parent)
+    : pxs::controls::Server(nullptr, parent), m_e(engine), m_backend(new EngineBackend(engine)), m_ns(engine)
 {
-    const auto policy = [](const char *script, const char *style) {
-        return "default-src 'none'; script-src " + hash(script) + "; style-src " + hash(style) +
-               "; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
-    };
-    m_csp = policy(remote_page::script().constData(), remote_page::style().constData());
+    setBackend(m_backend);
+    setPageTitle(QStringLiteral("NyxMap remote"));
     m_cspShow = policy(show_page::kScript, show_page::kStyle);
-    m_timer.setInterval(50);
-    connect(&m_timer, &QTimer::timeout, this, &RemoteServer::push);
 }
 
-RemoteServer::~RemoteServer() { stop(); }
-
-QString RemoteServer::makePin(int digits)
-{
-    QString pin;
-    for (int i = 0; i < std::clamp(digits, 5, 12); ++i) pin += QChar('0' + QRandomGenerator::system()->bounded(10));
-    return pin;
-}
-
-bool RemoteServer::pinValid(const QString &pin)
-{
-    if (pin.size() < 4 || pin.size() > 32) return false;
-    for (const QChar c : pin)
-        if (c.unicode() > 127 || !c.isLetterOrNumber()) return false; // letters and digits: it travels in an address
-    return true;
-}
-
-bool RemoteServer::start(quint16 port, const QString &pin, const QString &listen)
+RemoteServer::~RemoteServer()
 {
     stop();
-    if (!pin.isEmpty() && !pinValid(pin)) {
-        m_status = QStringLiteral("Remote: the code has to be 4 to 32 letters or digits");
-        return false;
-    }
-    m_pin = pin;
-    m_server = new QTcpServer(this);
-    const QHostAddress address = listen.isEmpty() ? QHostAddress(QHostAddress::Any) : QHostAddress(listen);
-    if (!m_server->listen(address, port)) {
-        m_status = QStringLiteral("Remote: port %1 is not available (%2)").arg(port).arg(m_server->errorString());
-        delete m_server;
-        m_server = nullptr;
-        return false;
-    }
-    connect(m_server, &QTcpServer::newConnection, this, &RemoteServer::onConnection);
-    m_timer.start();
-    const QStringList list = urls();
-    m_status = QStringLiteral("Remote on port %1").arg(m_server->serverPort()) + (m_pin.isEmpty() ? QStringLiteral(" (no code)") : QString()) + (list.isEmpty() ? QString() : QStringLiteral(": ") + list.join(QStringLiteral("  ")));
-    return true;
+    delete m_backend;
 }
 
-void RemoteServer::stop()
-{
-    m_timer.stop();
-    for (auto it = m_clients.begin(); it != m_clients.end(); ++it)
-        if (it->socket) {
-            it->socket->disconnect(this);
-            it->socket->abort();
-            it->socket->deleteLater();
-        }
-    m_clients.clear();
-    if (m_server) {
-        m_server->close();
-        m_server->deleteLater();
-        m_server = nullptr;
-    }
-    m_attempts.clear();
-    emit clientsChanged(0);
-}
-
-bool RemoteServer::isRunning() const { return m_server && m_server->isListening(); }
-quint16 RemoteServer::port() const { return m_server ? m_server->serverPort() : 0; }
-
-int RemoteServer::clientCount() const
-{
-    int n = 0;
-    for (const Client &c : m_clients) n += c.websocket;
-    return n;
-}
-
+// The desk and the controls: one address each, per network interface
 QStringList RemoteServer::urls() const
 {
     QStringList out;
-    if (!m_server) return out;
-    for (const QNetworkInterface &nif : QNetworkInterface::allInterfaces()) {
-        if (!(nif.flags() & QNetworkInterface::IsUp) || (nif.flags() & QNetworkInterface::IsLoopBack)) continue;
-        for (const QNetworkAddressEntry &e : nif.addressEntries())
-            if (e.ip().protocol() == QAbstractSocket::IPv4Protocol) {
-                const QString base = QStringLiteral("http://%1:%2").arg(e.ip().toString()).arg(m_server->serverPort());
-                out << base + QStringLiteral("/show") << base + QStringLiteral("/control");
-            }
+    for (const QString &control : pxs::controls::Server::urls()) {
+        out << control.chopped(8) + QStringLiteral("/show");
+        out << control;
     }
     return out;
 }
 
-bool RemoteServer::authorized(const QByteArray &presented) const { return m_pin.isEmpty() || sameBytes(presented, m_pin.toUtf8()); }
-
-void RemoteServer::onConnection()
+bool RemoteServer::servePage(const QString &path, QByteArray *html, QByteArray *csp)
 {
-    while (QTcpSocket *s = m_server->nextPendingConnection()) {
-        if (m_clients.size() >= kMaxClients * 2) { // a flood: no more room
-            s->abort();
-            s->deleteLater();
-            continue;
-        }
-        Client c;
-        c.socket = s;
-        m_clients.insert(s, c);
-        connect(s, &QTcpSocket::readyRead, this, [this, s] { onData(s); });
-        connect(s, &QTcpSocket::disconnected, this, [this, s] {
-            const bool was = m_clients.value(s).websocket;
-            m_clients.remove(s);
-            s->deleteLater();
-            if (was) emit clientsChanged(clientCount());
-        });
-    }
+    if (path != QLatin1String("/show")) return false;
+    *html = showPage();
+    *csp = m_cspShow;
+    return true;
 }
 
-void RemoteServer::send(QTcpSocket *s, const QByteArray &frame) const
+bool RemoteServer::message(QTcpSocket *client, const QString &type, const QJsonObject &o)
 {
-    if (s->bytesToWrite() > (1 << 20)) { // a client that does not read: dropped, not buffered without end
-        s->abort();
-        return;
-    }
-    s->write(frame);
+    onDesk(client, type, o);
+    return true;
 }
 
-QByteArray RemoteServer::controlsMessage() const
-{
-    QJsonArray list;
-    for (const ShowControl &c : m_e->controls()) {
-        QJsonObject o{{"id", QString::number(c.id)}, {"name", c.name}, {"key", c.key}, {"kind", ShowControl::kindKey(c.kind)}};
-        if (c.group) o["group"] = QString::number(c.group);
-        o["span"] = c.span;
-        if (!c.widget.isEmpty()) o["widget"] = c.widget;
-        if (!c.accent.isEmpty()) o["accent"] = c.accent;
-        if (c.curve != 1) o["curve"] = c.curve;
-        if (c.gw > 0 && c.gh > 0) o["layout"] = QJsonObject{{"x", c.gx}, {"y", c.gy}, {"w", c.gw}, {"h", c.gh}};
-        switch (c.kind) {
-        case ShowControl::Kind::Group: o["columns"] = c.columns; break;
-        case ShowControl::Kind::Points: {
-            o["count"] = c.count;
-            o["min"] = c.min;
-            o["max"] = c.max;
-            QJsonArray list;
-            for (const auto &q : c.points) list.append(QJsonArray{q[0], q[1]});
-            o["points"] = list;
-            break;
-        }
-        case ShowControl::Kind::Multi: {
-            o["count"] = c.count;
-            o["min"] = c.min;
-            o["max"] = c.max;
-            o["step"] = c.step;
-            QJsonArray list;
-            for (double v : c.multi) list.append(v);
-            o["values"] = list;
-            break;
-        }
-        case ShowControl::Kind::Adsr:
-            o["max"] = c.max;
-            o["adsr"] = QJsonArray{c.adsr[0], c.adsr[1], c.adsr[2], c.adsr[3]};
-            break;
-        case ShowControl::Kind::Pad:
-            o["min"] = c.min;
-            o["max"] = c.max;
-            o["x"] = c.value;
-            o["y"] = c.value2;
-            break;
-        case ShowControl::Kind::Slider:
-            o["min"] = c.min;
-            o["max"] = c.max;
-            o["step"] = c.step;
-            o["unit"] = c.unit;
-            o["value"] = c.value;
-            break;
-        case ShowControl::Kind::Choice: o["choices"] = QJsonArray::fromStringList(c.choices); [[fallthrough]];
-        case ShowControl::Kind::Toggle:
-        case ShowControl::Kind::Button: o["value"] = c.value; break;
-        case ShowControl::Kind::Color: o["rgb"] = QJsonArray{c.rgb[0], c.rgb[1], c.rgb[2]}; break;
-        }
-        list.append(o);
-    }
-    const QString title = QFileInfo(m_e->projectPath()).completeBaseName();
-    return QJsonDocument(QJsonObject{{"t", "controls"}, {"title", title.isEmpty() ? QStringLiteral("NyxMap") : title}, {"list", list}}).toJson(QJsonDocument::Compact);
-}
+void RemoteServer::tick() { pushDesk(); }
 
-void RemoteServer::onData(QTcpSocket *s)
-{
-    auto it = m_clients.find(s);
-    if (it == m_clients.end()) return;
-    Client &c = *it;
-    c.buffer += s->readAll();
-    if (!c.websocket) {
-        const int end = c.buffer.indexOf("\r\n\r\n");
-        if (end < 0) {
-            if (c.buffer.size() > kMaxHeader) s->abort();
-            return;
-        }
-        const QList<QByteArray> lines = c.buffer.left(end).split('\n');
-        c.buffer.remove(0, end + 4);
-        const QList<QByteArray> request = lines.value(0).trimmed().split(' ');
-        QHash<QByteArray, QByteArray> headers;
-        for (int k = 1; k < lines.size(); ++k) {
-            const int colon = lines[k].indexOf(':');
-            if (colon > 0) headers.insert(lines[k].left(colon).trimmed().toLower(), lines[k].mid(colon + 1).trimmed());
-        }
-        if (request.value(0) != "GET" || request.size() < 2) {
-            send(s, response(400, {}, "text/plain"));
-            s->disconnectFromHost();
-            return;
-        }
-        const QUrl url = QUrl::fromEncoded(request.value(1));
-        const QString path = url.path();
-        if (headers.value("upgrade").toLower() == "websocket") {
-            const QString who = s->peerAddress().toString();
-            Attempts &a = m_attempts[who];
-            const qint64 now = QDateTime::currentMSecsSinceEpoch();
-            if (a.until > now) {
-                send(s, response(429, {}, "text/plain", "Retry-After: 60\r\n"));
-                s->disconnectFromHost();
-                return;
-            }
-            // Only the page this server served opens it: a page of another site must not reach the show from a phone's browser
-            const QByteArray origin = headers.value("origin");
-            const bool sameOrigin = origin.isEmpty() || QUrl(QString::fromUtf8(origin)).authority() == QString::fromUtf8(headers.value("host"));
-            const QByteArray pin = QUrl::fromPercentEncoding(QUrlQuery(url).queryItemValue(QStringLiteral("pin"), QUrl::FullyEncoded).toUtf8()).toUtf8();
-            int clients = 0;
-            for (const Client &other : std::as_const(m_clients)) clients += other.websocket;
-            if (path != QLatin1String("/ws") || !sameOrigin || !authorized(pin)) {
-                if (path == QLatin1String("/ws") && sameOrigin && ++a.failures >= kMaxFailures) {
-                    a.failures = 0;
-                    a.until = now + kLockMs;
-                }
-                send(s, response(403, {}, "text/plain"));
-                s->disconnectFromHost();
-                return;
-            }
-            if (clients >= kMaxClients) {
-                send(s, response(429, {}, "text/plain"));
-                s->disconnectFromHost();
-                return;
-            }
-            a.failures = 0;
-            const QByteArray accept = QCryptographicHash::hash(headers.value("sec-websocket-key") + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11",
-                                                               QCryptographicHash::Sha1).toBase64();
-            s->write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + accept + "\r\n\r\n");
-            c.websocket = true;
-            emit clientsChanged(clientCount());
-            push(); // its first picture of the controls
-        } else if (path == QLatin1String("/info")) { // whether it asks a code: nothing else
-            send(s, response(200, m_pin.isEmpty() ? "{\"pin\":false}" : "{\"pin\":true}", "application/json"));
-            s->disconnectFromHost();
-            return;
-        } else if (path == QLatin1String("/")) {
-            send(s, response(302, {}, "text/plain", "Location: /control\r\n"));
-            s->disconnectFromHost();
-            return;
-        } else if (path == QLatin1String("/control")) {
-            send(s, response(200, page(), "text/html; charset=utf-8", "Content-Security-Policy: " + m_csp + "\r\n"));
-            s->disconnectFromHost();
-            return;
-        } else if (path == QLatin1String("/show")) {
-            send(s, response(200, showPage(), "text/html; charset=utf-8", "Content-Security-Policy: " + m_cspShow + "\r\n"));
-            s->disconnectFromHost();
-            return;
-        } else {
-            send(s, response(404, {}, "text/plain"));
-            s->disconnectFromHost();
-            return;
-        }
-    }
-    while (c.websocket) {
-        int opcode = 0;
-        QByteArray payload;
-        const int got = websocket::decode(c.buffer, &opcode, &payload, kMaxFrame);
-        if (got == 0) return;
-        if (got < 0) {
-            s->abort();
-            return;
-        }
-        onFrame(c, opcode, payload);
-        if (!m_clients.contains(s)) return;
-    }
-}
+void RemoteServer::clientGone(QTcpSocket *client) { m_desks.remove(client); }
 
-void RemoteServer::onFrame(Client &c, int opcode, const QByteArray &payload)
+void RemoteServer::onDesk(QTcpSocket *client, const QString &type, const QJsonObject &o)
 {
-    switch (opcode) {
-    case websocket::Text: {
-        if (--c.budget < 0) return; // faster than any hand: dropped
-        const QJsonObject o = QJsonDocument::fromJson(payload).object();
-        const QString type = o.value("t").toString();
-        if (type == QLatin1String("layout")) { // the page laid out again: where each control is, for every device
-            QHash<quint64, std::array<int, 4>> places;
-            const QJsonObject items = o.value("items").toObject();
-            for (auto it = items.begin(); it != items.end() && places.size() < 512; ++it) {
-                const QJsonObject p = it.value().toObject();
-                places.insert(it.key().toULongLong(), {p.value("x").toInt(), p.value("y").toInt(), p.value("w").toInt(1), p.value("h").toInt(1)});
-            }
-            if (m_e->setControlLayouts(places)) emit layoutEdited();
-            return;
-        }
-        if (type == QLatin1String("edit") || type == QLatin1String("remove")) { // a tile's settings changed on the page, or the control removed
-            const quint64 target = o.value("id").toString().toULongLong();
-            if (!target) return;
-            if (type == QLatin1String("remove")) {
-                if (m_e->removeControl(target)) emit layoutEdited();
-                return;
-            }
-            std::optional<ShowControl> found = m_e->control(target);
-            if (!found) return;
-            ShowControl c = *found;
-            const QJsonObject p = o.value("props").toObject();
-            auto number = [&](const char *key, double &into) {
-                if (p.value(key).isDouble() && std::isfinite(p.value(key).toDouble())) into = p.value(key).toDouble();
-            };
-            if (p.value("name").isString()) c.name = p.value("name").toString().left(60);
-            if (p.contains("widget")) c.widget = ShowControl::cleanWidget(p.value("widget").toString());
-            if (p.contains("accent")) c.accent = ShowControl::cleanAccent(p.value("accent").toString());
-            if (c.kind == ShowControl::Kind::Adsr) {
-                number("max", c.max);
-                c.max = std::clamp(c.max, 0.1, 60.0);
-            }
-            if (c.kind == ShowControl::Kind::Multi) {
-                double n = c.count;
-                number("count", n);
-                c.count = std::clamp(int(n), 2, ShowControl::kMultiMax);
-            }
-            if (c.kind == ShowControl::Kind::Points) {
-                double n = c.count;
-                number("count", n);
-                c.count = std::clamp(int(n), 1, ShowControl::kPointsMax);
-                number("min", c.min);
-                number("max", c.max);
-                if (!(c.max > c.min)) c.max = c.min + 1;
-            }
-            if (c.kind == ShowControl::Kind::Slider || c.kind == ShowControl::Kind::Multi) {
-                number("min", c.min);
-                number("max", c.max);
-                number("step", c.step);
-                number("default", c.def);
-                if (p.value("unit").isString()) c.unit = p.value("unit").toString().left(8);
-                number("curve", c.curve);
-                c.curve = std::clamp(c.curve, 0.1, 10.0);
-                c.step = std::clamp(c.step, 1e-6, std::max(1e-6, std::abs(c.max - c.min)));
-            }
-            if (m_e->updateControl(target, c)) emit layoutEdited();
-            return;
-        }
-        if (type != QLatin1String("set") && type != QLatin1String("color") && type != QLatin1String("point") && type != QLatin1String("adsr") && type != QLatin1String("multi") && type != QLatin1String("points")) {
-            onDesk(c, type, o);
-            return;
-        }
-        const quint64 id = o.value("id").toString().toULongLong();
-        if (!id) return;
-        if (type == QLatin1String("set") && o.value("v").isDouble()) {
-            if (m_e->setControlValue(id, o.value("v").toDouble())) emit controlMoved();
-        } else if (type == QLatin1String("point")) {
-            const QJsonArray xy = o.value("xy").toArray();
-            if (xy.size() == 2 && m_e->setControlPoint(id, xy[0].toDouble(), xy[1].toDouble())) emit controlMoved();
-        } else if (type == QLatin1String("points")) {
-            const QJsonArray v = o.value("v").toArray();
-            std::vector<double> values;
-            for (int i = 0; i < v.size() && i < ShowControl::kPointsMax * 2; ++i) values.push_back(v[i].toDouble());
-            if (!values.empty() && m_e->setControlPoints(id, values)) emit controlMoved();
-        } else if (type == QLatin1String("multi")) {
-            const QJsonArray v = o.value("v").toArray();
-            std::vector<double> values;
-            for (int i = 0; i < v.size() && i < ShowControl::kMultiMax; ++i) values.push_back(v[i].toDouble());
-            if (!values.empty() && m_e->setControlMulti(id, values)) emit controlMoved();
-        } else if (type == QLatin1String("adsr")) {
-            const QJsonArray v = o.value("v").toArray();
-            if (v.size() == 4 && m_e->setControlAdsr(id, {v[0].toDouble(), v[1].toDouble(), v[2].toDouble(), v[3].toDouble()})) emit controlMoved();
-        } else if (type == QLatin1String("color")) {
-            const QJsonArray rgb = o.value("rgb").toArray();
-            if (rgb.size() == 3 && m_e->setControlColor(id, rgb[0].toDouble(), rgb[1].toDouble(), rgb[2].toDouble())) emit controlMoved();
-        }
-        break;
-    }
-    case websocket::Close:
-        send(c.socket, websocket::encode(websocket::Close, {}));
-        c.socket->disconnectFromHost();
-        break;
-    case websocket::Ping: send(c.socket, websocket::encode(websocket::Pong, payload.left(125))); break;
-    default: break;
-    }
-}
-
-void RemoteServer::onDesk(Client &c, const QString &type, const QJsonObject &o)
-{
+    Desk &c = m_desks[client];
     const QLatin1String layerRoot("/show/layer/by-id/");
     const QString path = o.value("path").toString();
     if (type == QLatin1String("desk")) {
         c.desk = true;
+        leaveControls(client); // the desk has its own pages: the controls are not pushed to it
         c.catalog = QJsonDocument(showdesk::catalog(m_e)).toJson(QJsonDocument::Compact); // its first picture
-        send(c.socket, websocket::encode(websocket::Text, "{\"t\":\"catalog\",\"catalog\":" + c.catalog + "}"));
+        sendText(client, "{\"t\":\"catalog\",\"catalog\":" + c.catalog + "}");
     } else if (type == QLatin1String("do")) {
         if (showdesk::command(m_e, o)) emit showDriven();
     } else if (type == QLatin1String("layer")) {
@@ -494,8 +108,8 @@ void RemoteServer::onDesk(Client &c, const QString &type, const QJsonObject &o)
         if (id.toULongLong() == 0) return;
         m_ns.refresh();
         c.treeSeen = m_ns.signature();
-        send(c.socket, websocket::encode(websocket::Text, QJsonDocument(QJsonObject{{"t", "layer"}, {"id", id},
-            {"tree", m_ns.toJson(layerRoot + id)}}).toJson(QJsonDocument::Compact)));
+        sendText(client, QJsonDocument(QJsonObject{{"t", "layer"}, {"id", id},
+            {"tree", m_ns.toJson(layerRoot + id)}}).toJson(QJsonDocument::Compact));
     } else if (!path.startsWith(layerRoot)) {
         return; // a layer's values, nothing else of the namespace
     } else if (type == QLatin1String("listen")) {
@@ -533,24 +147,24 @@ void RemoteServer::onDesk(Client &c, const QString &type, const QJsonObject &o)
 // The desks: the project's lists when they changed (twice a second), the show's state, the values shown
 void RemoteServer::pushDesk()
 {
-    bool any = false;
-    for (const Client &c : std::as_const(m_clients)) any |= c.websocket && c.desk;
-    if (!any) return;
+    if (m_desks.isEmpty()) return;
     ++m_tick;
     QByteArray state, catalog;
     if (m_tick % 2 == 0) state = QJsonDocument(showdesk::state(m_e)).toJson(QJsonDocument::Compact);
     const bool slow = m_tick % 10 == 0;
     if (slow) catalog = QJsonDocument(showdesk::catalog(m_e)).toJson(QJsonDocument::Compact);
     QString signature;
-    for (Client &c : m_clients) {
-        if (!c.websocket || !c.desk) continue;
+    for (QTcpSocket *client : websockets()) {
+        const auto found = m_desks.find(client);
+        if (found == m_desks.end() || !found->desk) continue;
+        Desk &c = *found;
         if (slow && c.catalog != catalog) {
             c.catalog = catalog;
-            send(c.socket, websocket::encode(websocket::Text, "{\"t\":\"catalog\",\"catalog\":" + catalog + "}"));
+            sendText(client, "{\"t\":\"catalog\",\"catalog\":" + catalog + "}");
         }
         if (!state.isEmpty() && c.state != state) {
             c.state = state;
-            send(c.socket, websocket::encode(websocket::Text, "{\"t\":\"state\",\"state\":" + state + "}"));
+            sendText(client, "{\"t\":\"state\",\"state\":" + state + "}");
         }
         if (c.listening.isEmpty()) continue;
         if (signature.isEmpty()) {
@@ -561,7 +175,7 @@ void RemoteServer::pushDesk()
             c.treeSeen = signature;
             c.listening.clear();
             c.params.clear();
-            send(c.socket, websocket::encode(websocket::Text, "{\"t\":\"changed\"}"));
+            sendText(client, "{\"t\":\"changed\"}");
             continue;
         }
         QJsonObject changed;
@@ -577,41 +191,7 @@ void RemoteServer::pushDesk()
             changed[path] = values;
         }
         if (!changed.isEmpty())
-            send(c.socket, websocket::encode(websocket::Text, QJsonDocument(QJsonObject{{"t", "params"}, {"v", changed}}).toJson(QJsonDocument::Compact)));
+            sendText(client, QJsonDocument(QJsonObject{{"t", "params"}, {"v", changed}}).toJson(QJsonDocument::Compact));
     }
 }
 
-// Every 50 ms: the list to a client that has not got its latest form, then the values that changed
-void RemoteServer::push()
-{
-    bool any = false;
-    for (const Client &c : std::as_const(m_clients)) any |= c.websocket;
-    if (!any) return;
-    pushDesk();
-    const std::vector<ShowControl> controls = m_e->controls();
-    const quint64 revision = m_e->controlsRevision();
-    QByteArray list;
-    for (Client &c : m_clients) {
-        if (!c.websocket) continue;
-        c.budget = std::min(300.0, c.budget + 15); // 300 a second
-        if (c.desk) continue;
-        if (c.controlsSeen != revision) {
-            if (list.isEmpty()) list = websocket::encode(websocket::Text, controlsMessage());
-            send(c.socket, list);
-            c.controlsSeen = revision;
-            c.sent.clear();
-            for (const ShowControl &control : controls) c.sent.insert(control.id, valuesOf(control));
-            continue;
-        }
-        QJsonObject changed;
-        for (const ShowControl &control : controls) {
-            const QList<double> now = valuesOf(control);
-            auto found = c.sent.find(control.id);
-            if (found != c.sent.end() && found.value() == now) continue;
-            c.sent.insert(control.id, now);
-            changed[QString::number(control.id)] = jsonOf(now);
-        }
-        if (!changed.isEmpty())
-            send(c.socket, websocket::encode(websocket::Text, QJsonDocument(QJsonObject{{"t", "values"}, {"v", changed}}).toJson(QJsonDocument::Compact)));
-    }
-}
