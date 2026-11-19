@@ -1017,6 +1017,7 @@ private:
     void takeOverFades(quint64 id, const QSet<QString> &paths, bool all = false);
     void applyParams(Layer &l, const QJsonObject &params, const QJsonObject &timing, const QJsonObject &easing, double fade,
                      FadeJob &job, bool showing, bool hiding, bool chain, const QJsonObject &delays = {});
+    friend class EngineParameterSource; // the show's parameters, as the controls' views drive them (Controls.cpp)
     friend class RenderThread;
     friend class RhiRenderer;
     friend class Sequencer;
@@ -1296,8 +1297,6 @@ private:
     std::vector<ShowControl> m_controls;
     quint64 m_nextControlId = 1;
     std::atomic<quint64> m_controlsRevision{0}; // read by the remote's thread
-    void fillBound(ShowControl &c);                    // a view of a parameter shows its value, range and choices; lock held
-    bool setBound(const ShowControl &c, double value); // and sets it; lock held
     ShowControl *controlLocked(quint64 id);
     void remapControlKeys(const QHash<QString, QString> &keys); // lock held
     Sequencer *m_sequencer = nullptr; // a child QObject
