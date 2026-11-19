@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Lyrical Designer: 60 s of one-drop dub at 72 BPM in A minor, for words, lines and 3D lights.
+"""Lyrical Designer: 60 s of one-drop dub at 72 BPM in A minor, for lines and 3D lights.
 
     python3 examples/lyrical-designer/source/build_show.py [--autoplay]
 
-An original piece inspired by "Lyrical Designer" (Dub-Stuy, Ras Demo): its tempo, key, bass line and words are made up here, not taken
+An original piece inspired by "Lyrical Designer" (Dub-Stuy, Ras Demo): its tempo, key and bass line are made up here, not taken
 from any recording. Everything that sounds is a Faust instrument of NyxMap, in its audio callback, played by one timeline: no sound file.
-Everything that shows is words, lines and lights: a 3D tunnel of glowing lines, spots in its fog, NyxMap's own shaders (found in its
-library, not copied) and a Text layer. Each voice's gate drives its own picture, so a pulse falls with its note.
+Everything that shows is lines and lights: a 3D tunnel of glowing lines, spots in its fog and NyxMap's own shaders (found in its
+library, not copied): no text. Each voice's gate drives its own picture, so a pulse falls with its note.
 
 The musical choices are the constants below: change them and run it again.
 """
@@ -146,22 +146,6 @@ def generator(name, sh, params=None, opacity=0.0):
     return lid
 
 
-def words(bar, step, text, beats=6.0, level=0.92):
-    """A few words rise, stay, and go: short phrases of our own, nothing quoted. A timeline moves numbers, not text, so each phrase
-    is a Text layer of its own, on top of everything, and the timeline only fades it in and out."""
-    t, length = at(bar, step), beats * BEAT
-    lid = new_id()
-    layers.insert(0, {"id": lid, "name": f"Words: {text.title()}", "enable": True, "locked": False, "viewports": {}, "fx": [], "source": {"type": "text"},
-                      "params": {"opacity": 0.0, "blend_mode": "add", "text/content": text, "text/font": "Helvetica Neue", "text/size": 170, "text/align": "center",
-                                 "text/v_align": "middle", "text/bold": True, "text/letter_spacing": 24}})
-    if t > 0.01:
-        key(lid, "opacity", 0, 0.0)
-    key(lid, "opacity", t, 0.0, 0)  # (a curve is how a key goes to the next one)
-    key(lid, "opacity", t + 0.45, level, 0)
-    key(lid, "opacity", t + length - 0.7, level * 0.8, 0)
-    key(lid, "opacity", t + length, 0.0)
-
-
 THREAD = generator("Thread", "Fil", {"x": 0.5, "reach": 1, "amp": 0.05, "width": 0.0008, "glow": 0.2, "count": 1, "spread": 0.012}, opacity=1)
 BARS = generator("Snare Bars", "Light Bars", {"count": 9, "width": 0.05, "speed": 0, "angle": 0, "mirror": True, "spread": 1})
 SCAN = generator("Skank Lines", "Lines", {"spacing": 0.09, "line_width": 0.0035, "angle": 0, "shift": 0, "color1/r": 1, "color1/g": 1, "color1/b": 1, "color1/a": 1, "color2/r": 0, "color2/g": 0, "color2/b": 0, "color2/a": 0})
@@ -295,9 +279,7 @@ for lid in (STAB_R, STAB_T, STAB_F):
     key(lid, f"audio_fx/{lid}-delay/wet", 0, 0.04)
 key(SNARE, f"audio_fx/{SNARE}-delay/wet", 0, 0)
 
-# The intro: the words, the air, a skank thrown into its echo, the bass alone
-words(0, 0, "LYRICAL", 3.5)
-words(1, 0, "DESIGNER", 3.5)
+# The intro: the air, a skank thrown into its echo, the bass alone
 skank(0, AM, (2, 10))
 for lid in (STAB_R, STAB_T, STAB_F):
     throw(lid, at(0, 10))
@@ -366,8 +348,6 @@ melodica(MEL, [(0, 4, A4_), (6, 2, C5), (8, 6, E5)])
 melodica(MEL + 1, [(0, 3, D5), (4, 2, C5), (8, 8, A4_)])
 melodica(B, [(0, 2, E5), (2, 2, D5), (4, 4, C5), (8, 6, A4_)])
 melodica(B + 2, [(0, 4, C5), (6, 2, D5), (8, 4, E5), (12, 4, A4_)])
-words(MEL, 0, "SLOW IT DOWN", 4)
-words(MEL + 1, 0, "LET THE BASS SPEAK", 3.5)
 
 # The dub-out: the beat gone, the bass and the snare thrown into the echo, the skank open
 for bar in range(DUB, B):
@@ -382,10 +362,6 @@ for bar, s in ((DUB, 8), (DUB, 14), (DUB + 1, 4), (DUB + 1, 12)):
 for lid in (STAB_R, STAB_T, STAB_F):
     for bar, s in ((DUB, 10), (DUB + 1, 10)):
         throw(lid, at(bar, s), S16 * 3)
-words(DUB, 0, "ECHO", 3)
-words(DUB + 1, 0, "HOLD THE ROOM", 3.5)
-words(B, 0, "ONE DROP", 6)
-words(B + 2, 0, "STEP IT", 5)
 for s in (0, 2, 4):
     horn(at(B, s))
 horn(at(B + 2, 0), 0.4)
@@ -394,7 +370,6 @@ horn(at(B + 2, 0), 0.4)
 sub(at(BREAK, 0), 8, A1)
 sub(at(BREAK, 8), 8, A1)
 wave(at(BREAK, 0), 0.5, fall=1.8, speed=0.08)
-words(BREAK, 0, "NOTHING BUT WEIGHT", 7)
 for s in (0, 3, 6):
     horn(at(BREAK, s), 0.2)
 horn(at(BREAK + 1, 6), S16 * 0.9)
@@ -417,7 +392,6 @@ for lid, f in zip((STAB_R, STAB_T, STAB_F), AM):
     key(lid, "synth/frequency", END_HIT - 0.002, f)
     hit(lid, END_HIT, 0.05)
     throw(lid, END_HIT, wet=0.9)
-words(OUT, 8, "LYRICAL DESIGNER", 5)
 wave(END_HIT, 1.5, fall=2.0, speed=0.06, base=0)
 key(THREAD, "param/reach", END_HIT + 0.6, 1.0, "hold")
 key(THREAD, "param/reach", TOTAL - 0.1, 0.0, 0)
