@@ -428,6 +428,7 @@ void ControlsPanel::editControl(quint64 id)
 void ControlsPanel::showEvent(QShowEvent *e)
 {
     QWidget::showEvent(e);
+    refreshWeb();
     if (m_pageTried || !controlsweb::available()) return;
     m_pageTried = true;
     if (QSettings().value(QStringLiteral("controls/page"), true).toBool()) m_pageButton->setChecked(true);
@@ -446,6 +447,15 @@ void ControlsPanel::showPage(bool page)
         page = false;
     }
     m_stack->setCurrentIndex(page ? 1 : 0);
+    refreshWeb();
+}
+
+// A page hidden (another tab, the rows) is throttled or frozen by the browser and may miss a control added meanwhile: it is loaded again
+void ControlsPanel::refreshWeb()
+{
+    if (!m_web || !m_webStale || !m_web->isVisible()) return;
+    m_webStale = false;
+    QMetaObject::invokeMethod(m_web, "reload");
 }
 
 void ControlsPanel::openWindow()
@@ -465,6 +475,7 @@ void ControlsPanel::openWindow()
 void ControlsPanel::rebuild()
 {
     m_filling = true;
+    if (m_web && !m_web->isVisible()) m_webStale = true;
     while (QLayoutItem *item = m_list->takeAt(0)) {
         if (QWidget *w = item->widget()) {
             if (w == m_empty) w->hide();

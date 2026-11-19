@@ -54,6 +54,8 @@ private:
     QUndoStack *m_undo;
     QStackedWidget *m_stack = nullptr;
     QWidget *m_web = nullptr;
+    bool m_webStale = false; // the list changed while the page was hidden: it is loaded again when it is seen
+    void refreshWeb();
     bool m_pageTried = false;
     QToolButton *m_pageButton = nullptr, *m_windowButton = nullptr;
     QVBoxLayout *m_list = nullptr;
