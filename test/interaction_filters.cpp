@@ -325,10 +325,10 @@ int runInteractionFilterTests(Engine &e)
         const quint64 layerId = e.layerId(layerIndex);
         const size_t interactionsBefore = e.interactions().size();
         const quint64 control = e.addControlForParameter(layerId, "opacity", 0);
-        check(control != 0 && e.control(control)->boundParam == "opacity" && e.control(control)->boundLayer == layerId, "a control added from a parameter knows it");
+        check(control != 0 && e.control(control)->boundParam == "opacity" && e.control(control)->boundScope == layerId, "a control added from a parameter knows it");
         check(e.interactions().size() == interactionsBefore, "and makes no interaction");
         const ShowControl again = ShowControl::fromJson(e.control(control)->toJson());
-        check(again.boundParam == "opacity" && again.boundLayer == layerId, "saved with it");
+        check(again.boundParam == "opacity" && again.boundScope == layerId, "saved with it");
         e.setParameter(layerId, "opacity", 0.3);
         check(near(e.control(control)->value, 0.3, 1e-6), "a change of the parameter anywhere shows in the control at once");
         e.setControlValue(control, 0.8);
