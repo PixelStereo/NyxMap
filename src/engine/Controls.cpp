@@ -306,7 +306,7 @@ quint64 Engine::addControlForParameter(quint64 layer, const QString &path, quint
         if (info.label.endsWith(QLatin1Char(')')) && unit.size() < 8) c.unit = QLatin1Char(' ') + unit.chopped(1); // "Rotation (°)" -> " °"
     }
     if (c.name.isEmpty()) c.name = info.name();
-    c.boundLayer = layer;
+    c.boundScope = layer;
     c.boundParam = target;
     const quint64 id = addControl(c);
     if (!id) return 0;
@@ -525,9 +525,9 @@ bool Engine::setControlColor(quint64 id, double r, double g, double b)
         const double v[3] = {r, g, b};
         bool any = false;
         for (int k = 0; k < 3; ++k)
-            if (Parameter *p = findParameter(it->boundLayer, it->boundParam + QLatin1Char('/') + QLatin1Char("rgb"[k])); p && std::isfinite(v[k])) {
+            if (Parameter *p = findParameter(it->boundScope, it->boundParam + QLatin1Char('/') + QLatin1Char("rgb"[k])); p && std::isfinite(v[k])) {
                 any |= p->setNumber(std::clamp(v[k], 0.0, 1.0));
-                if (it->boundLayer) releaseFromFades(it->boundLayer, it->boundParam + QLatin1Char('/') + QLatin1Char("rgb"[k]));
+                if (it->boundScope) releaseFromFades(it->boundScope, it->boundParam + QLatin1Char('/') + QLatin1Char("rgb"[k]));
             }
         return any;
     }
@@ -559,11 +559,11 @@ void Engine::fillBound(ShowControl &c)
 {
     if (c.kind == ShowControl::Kind::Color) {
         for (int k = 0; k < 3; ++k)
-            if (const Parameter *p = findParameter(c.boundLayer, c.boundParam + QLatin1Char('/') + QLatin1Char("rgb"[k])); p && p->isNumber())
+            if (const Parameter *p = findParameter(c.boundScope, c.boundParam + QLatin1Char('/') + QLatin1Char("rgb"[k])); p && p->isNumber())
                 c.rgb[size_t(k)] = std::clamp(p->number(), 0.0, 1.0);
         return;
     }
-    const Parameter *p = findParameter(c.boundLayer, c.boundParam);
+    const Parameter *p = findParameter(c.boundScope, c.boundParam);
     if (!p) return;
     const ParamInfo &info = p->info();
     switch (c.kind) {
@@ -586,7 +586,7 @@ void Engine::fillBound(ShowControl &c)
 // What a view of a parameter sets: the parameter itself (lock held). False: it is not there, or does not take it
 bool Engine::setBound(const ShowControl &c, double value)
 {
-    Parameter *p = findParameter(c.boundLayer, c.boundParam);
+    Parameter *p = findParameter(c.boundScope, c.boundParam);
     if (!p || !(p->info().access & ParamInfo::Write)) return false;
     bool ok = false;
     switch (c.kind) {
@@ -601,7 +601,7 @@ bool Engine::setBound(const ShowControl &c, double value)
     case ShowControl::Kind::Button: ok = value >= 0.5 && p->setJson(true); break; // a trigger: sent when it is pressed
     default: break;
     }
-    if (ok && c.boundLayer) releaseFromFades(c.boundLayer, c.boundParam);
+    if (ok && c.boundScope) releaseFromFades(c.boundScope, c.boundParam);
     return ok;
 }
 

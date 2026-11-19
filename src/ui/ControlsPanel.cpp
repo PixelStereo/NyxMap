@@ -807,7 +807,7 @@ QWidget *ControlsPanel::makeRow(const ShowControl &c, const std::vector<const Sh
         QStringList pointPaths;
         for (int i = 0; i < c.count && c.kind == ShowControl::Kind::Points; ++i)
             pointPaths << path + QStringLiteral("/p%1/x").arg(i + 1) << path + QStringLiteral("/p%1/y").arg(i + 1);
-        const quint64 layer = c.boundParam.isEmpty() ? 0 : c.boundLayer; // a view of a parameter is that parameter, wherever it is
+        const quint64 layer = c.boundParam.isEmpty() ? 0 : c.boundScope; // a view of a parameter is that parameter, wherever it is
         const QStringList paths = !c.boundParam.isEmpty() ? (c.kind == ShowControl::Kind::Color
                                                                  ? QStringList{c.boundParam + QStringLiteral("/r"), c.boundParam + QStringLiteral("/g"), c.boundParam + QStringLiteral("/b")}
                                                                  : QStringList{c.boundParam})
