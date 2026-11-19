@@ -50,6 +50,7 @@ signals:
     void showDriven(); // the desk played the show or moved a layer: the interface follows
 
 protected:
+    bool hasShowPage() const override { return true; } // the page links to /show
     bool servePage(const QString &path, QByteArray *html, QByteArray *csp) override;
     bool message(QTcpSocket *client, const QString &type, const QJsonObject &o) override;
     void tick() override;
