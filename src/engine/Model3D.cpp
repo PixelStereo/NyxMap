@@ -137,6 +137,7 @@ Fx3dSettings Fx3dSettings::defaults(Fx3d kind)
     case Fx3d::Transform:
     case Fx3d::Duplicate:
     case Fx3d::FollowPath: break;
+    case Fx3d::Spin: d.speed = 0.25f; d.axis = 1; d.align = 0; break;
     }
     return d;
 }
@@ -150,8 +151,19 @@ QMatrix4x4 Fx3dSettings::transform() const
     return p.transform();
 }
 
-static const char *const kFx3dKeys[kFx3dCount] = {"displace", "bend", "twist", "taper", "wave", "noise", "transform", "duplicate", "follow_path"};
-static const char *const kFx3dNames[kFx3dCount] = {"Displace", "Bend", "Twist", "Taper", "Wave", "Noise", "Transform 3D", "Duplicate", "Follow Path"};
+QMatrix4x4 Fx3dSettings::spin(double turns, const QVector3D &centre) const
+{
+    const QVector3D pivot = align == 1 ? QVector3D(move[0], move[1], move[2]) : centre;
+    const QVector3D around(axis == 0 ? 1.f : 0.f, axis == 1 ? 1.f : 0.f, axis == 2 ? 1.f : 0.f);
+    QMatrix4x4 m;
+    m.translate(pivot);
+    m.rotate(float(std::fmod(turns, 1.0) * 360.0) + angle, around);
+    m.translate(-pivot);
+    return m;
+}
+
+static const char *const kFx3dKeys[kFx3dCount] = {"displace", "bend", "twist", "taper", "wave", "noise", "transform", "duplicate", "follow_path", "spin"};
+static const char *const kFx3dNames[kFx3dCount] = {"Displace", "Bend", "Twist", "Taper", "Wave", "Noise", "Transform 3D", "Duplicate", "Follow Path", "Spin"};
 QString fx3dKey(Fx3d k) { return QString::fromLatin1(kFx3dKeys[int(k)]); }
 QString fx3dName(Fx3d k) { return QString::fromLatin1(kFx3dNames[int(k)]); }
 std::optional<Fx3d> fx3dFromKey(const QString &key)

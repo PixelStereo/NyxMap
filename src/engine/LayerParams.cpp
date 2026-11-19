@@ -784,7 +784,7 @@ const std::vector<Parameter *> &Layer::parameters()
                 .bind([self, id, field, names] { const Fx3dEntry *e = self->fx3dById(id); return QVariant(names.value(e ? e->s.*field : 0)); },
                       [self, id, field, names](const QVariant &v) { if (Fx3dEntry *e = self->fx3dById(id)) e->s.*field = std::max(0, int(names.indexOf(v.toString()))); });
         };
-        static const QStringList kAxes{QStringLiteral("X"), QStringLiteral("Y"), QStringLiteral("Z")};
+        static const QStringList kAxes{QStringLiteral("x"), QStringLiteral("y"), QStringLiteral("z")}; // a choice's keys are lower case
         switch (entry.kind) {
         case Fx3d::Displace:
             number(QStringLiteral("amount"), QStringLiteral("Amount"), -2, 2, &Fx3dSettings::amount);
@@ -843,6 +843,18 @@ const std::vector<Parameter *> &Layer::parameters()
                       [self, id](const QVariant &v) { if (Fx3dEntry *e = self->fx3dById(id)) e->s.seed = std::clamp(v.toInt(), 0, 99999); });
             break;
         }
+        case Fx3d::Spin:
+            number(QStringLiteral("speed"), QStringLiteral("Speed (turns/s)"), -10, 10, &Fx3dSettings::speed, 0.001);
+            number(QStringLiteral("angle"), QStringLiteral("Start Angle (°)"), -360, 360, &Fx3dSettings::angle, 0.1).ramp(Parameter::Ramp::Angle);
+            choice(QStringLiteral("axis"), QStringLiteral("Around Axis"), kAxes, &Fx3dSettings::axis);
+            choice(QStringLiteral("pivot"), QStringLiteral("Around"), QStringList{QStringLiteral("its own centre"), QStringLiteral("a point")}, &Fx3dSettings::align);
+            for (int a = 0; a < 3; ++a) {
+                const QString axis = QString(QChar("xyz"[a])), axisName = QString(QChar("XYZ"[a]));
+                add(at + QStringLiteral("point/") + axis, name + QStringLiteral(" › Point ") + axisName, T::Float).range(-10, 10).byDefault(0.0).step(0.01)
+                    .bind([self, id, a] { const Fx3dEntry *e = self->fx3dById(id); return QVariant(e ? double(e->s.move[size_t(a)]) : 0.0); },
+                          [self, id, a](const QVariant &v) { if (Fx3dEntry *e = self->fx3dById(id)) e->s.move[size_t(a)] = float(v.toDouble()); });
+            }
+            break;
         case Fx3d::FollowPath:
             number(QStringLiteral("position"), QStringLiteral("Position"), 0, 1, &Fx3dSettings::position, 0.001);
             number(QStringLiteral("speed"), QStringLiteral("Speed (turns/s)"), -2, 2, &Fx3dSettings::speed, 0.001);

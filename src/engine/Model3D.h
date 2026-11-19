@@ -39,9 +39,9 @@ inline constexpr const char *materialMapNames[] = {"base_color", "roughness", "m
 
 // The 3D FX of a 3D object, listed in the inspector (none by default) and applied in the order they are listed. The shape
 // FX (up to Noise) move the points of a model's mesh, in the shader; the placement FX place it afterwards: Transform 3D,
-// Duplicate (a copy on each point of a Path) and Follow Path
-enum class Fx3d { Displace, Bend, Twist, Taper, Wave, Noise, Transform, Duplicate, FollowPath };
-inline constexpr int kFx3dCount = 9;
+// Duplicate (a copy on each point of a Path), Follow Path and Spin (a rotation that goes on by itself)
+enum class Fx3d { Displace, Bend, Twist, Taper, Wave, Noise, Transform, Duplicate, FollowPath, Spin };
+inline constexpr int kFx3dCount = 10;
 inline bool isShapeFx3d(Fx3d k) { return k <= Fx3d::Noise; }
 QString fx3dKey(Fx3d k);                      // its name in a project: "displace", "bend", "follow_path"…
 QString fx3dName(Fx3d k);                     // as the inspector says it: "Displace", "Follow Path"…
@@ -84,6 +84,7 @@ struct ModelPlacement {
 //   Transform 3D: move, turn, size
 //   Duplicate: layer (the Path), align, scale (of each copy), randomScale, randomRotation, seed
 //   Follow Path: layer (the Path), position (0 to 1), speed (turns per second), orient
+//   Spin: axis, speed (turns per second), angle (° it starts at), align (0 around its own centre, 1 around the point `move`)
 struct Fx3dSettings {
     float amount = 0, mid = 0, angle = 0, length = 0.5f, phase = 0, scale = 1, rate = 0;
     float randomScale = 0, randomRotation = 0, position = 0, speed = 0;
@@ -94,6 +95,7 @@ struct Fx3dSettings {
     int stage = -1; // where that layer's picture is taken (as an FX mask's)
     static Fx3dSettings defaults(Fx3d kind);
     QMatrix4x4 transform() const; // Transform 3D: a position, a rotation and a size
+    QMatrix4x4 spin(double turns, const QVector3D &centre) const; // Spin: its start angle and `turns` more, around its axis through `centre` (or `move`)
 };
 
 // One 3D FX of a 3D object: several of a kind can follow each other. Its id is its own within the layer, and the address
@@ -103,7 +105,7 @@ struct Fx3dEntry {
     Fx3d kind = Fx3d::Bend;
     bool enabled = true;
     Fx3dSettings s;
-    double travel = 0; // how far its speed or rate has taken it (Follow Path: turns; Noise: steps). Not kept in a project
+    double travel = 0; // how far its speed or rate has taken it (Follow Path, Spin: turns; Noise: steps). Not kept in a project
 };
 
 struct Material3D {
