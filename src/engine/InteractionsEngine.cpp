@@ -621,7 +621,7 @@ bool Engine::writeInteractionOutput(const QString &path, double value, bool acti
         const auto id = output.destination.toULongLong();
         const auto *configured = m_fixtures.findOutput(id);
         if (!configured || !configured->enabled) return true;
-        const bool sacn = configured->protocol == DmxOutput::Protocol::Sacn;
+        const bool sacn = configured->protocol == pxs::dmx::Protocol::Sacn;
         if (output.channel >= 1 && output.channel <= 512 &&
             output.number >= (sacn ? 1 : 0) && output.number <= (sacn ? 63999 : 32767)) {
             auto &values = action ? m_actionDmx : m_interactionDmx;

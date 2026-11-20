@@ -107,19 +107,19 @@ int main(int argc, char **argv)
             mode->setCurrentIndex(1);
             emit mode->activated(1);
             wait(100);
-            check(engine.fixturePatch().outputs[0].unicast && addresses->isVisibleTo(&outputs), "unicast: the IP addresses");
+            check(engine.fixturePatch().outputs[0].delivery == pxs::dmx::Delivery::Unicast && addresses->isVisibleTo(&outputs), "unicast: the IP addresses");
             addresses->setText("2.0.0.10, 2.0.0.11");
             emit addresses->editingFinished();
             check(engine.fixturePatch().outputs[0].destinations == QStringList({"2.0.0.10", "2.0.0.11"}), "several IP addresses");
-            cmd::editFixtures(&undo, &engine, {}, [](FixturePatch &q) { q.outputs[0].protocol = DmxOutput::Protocol::Sacn; });
+            cmd::editFixtures(&undo, &engine, {}, [](FixturePatch &q) { q.outputs[0].protocol = pxs::dmx::Protocol::Sacn; });
             wait(100);
             check(mode->itemText(0) == "Multicast" && priority->isVisibleTo(&outputs), "sACN: multicast or unicast, a priority");
             priority->setValue(150);
             check(engine.fixturePatch().outputs[0].priority == 150, "the priority set");
             for (int k = 0; k < 4; ++k) undo.undo(); // back to Art-Net broadcast
             wait(100);
-            check(!engine.fixturePatch().outputs[0].unicast &&
-                      engine.fixturePatch().outputs[0].protocol == DmxOutput::Protocol::ArtNet,
+            check(engine.fixturePatch().outputs[0].delivery == pxs::dmx::Delivery::Group &&
+                      engine.fixturePatch().outputs[0].protocol == pxs::dmx::Protocol::ArtNet,
                   "the output's edits are undone");
         }
     }

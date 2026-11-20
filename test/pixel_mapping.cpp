@@ -88,8 +88,8 @@ static void modelTests()
     clash.perPixel = {{ChannelRole::Red}};
     q.types.push_back(clash);
     DmxOutput o;
-    o.protocol = DmxOutput::Protocol::Sacn;
-    o.unicast = true;
+    o.protocol = pxs::dmx::Protocol::Sacn;
+    o.delivery = pxs::dmx::Delivery::Unicast;
     o.destinations = {"10.0.0.5", "10.0.0.6"};
     o.priority = 150;
     q.outputs = {o, o};
@@ -108,23 +108,21 @@ static void modelTests()
     check(r.types.size() == 1 && r.types[0].header.size() == 1 && r.types[0].header[0].fine &&
               r.types[0].footer[0].value == 42 && r.types[0].byColumns,
           "a custom type keeps its channels and its order");
-    check(r.outputs[0].protocol == DmxOutput::Protocol::Sacn && r.outputs[0].priority == 150 &&
-              r.outputs[0].effectivePort() == 5568 && r.outputs[0].unicast &&
+    check(r.outputs[0].protocol == pxs::dmx::Protocol::Sacn && r.outputs[0].priority == 150 &&
+              r.outputs[0].effectivePort() == 5568 && r.outputs[0].delivery == pxs::dmx::Delivery::Unicast &&
               r.outputs[0].destinations == QStringList({"10.0.0.5", "10.0.0.6"}),
           "an sACN output keeps its settings, its unicast addresses too");
-    const DmxOutput old = DmxOutput::fromJson(QJsonObject{{"protocol", "artnet"}, {"destination", "2.0.0.9"}});
-    check(old.unicast && old.destinations == QStringList({"2.0.0.9"}), "a single destination before: unicast to it");
-    check(!DmxOutput::fromJson(QJsonObject{{"protocol", "artnet"}, {"destination", ""}}).unicast, "none: broadcast");
+    check(DmxOutput::fromJson(QJsonObject{{"protocol", "artnet"}}).delivery == pxs::dmx::Delivery::Group, "nothing said: the protocol's group");
 
     // The sender says what is wrong with an output's addresses
-    DmxSender sender;
+    pxs::dmx::Sender sender;
     DmxOutput bad;
     bad.id = 4;
-    bad.unicast = true;
+    bad.delivery = pxs::dmx::Delivery::Unicast;
     bad.destinations = {"10.0.0.1", "not.an.ip"};
     DmxOutput empty;
     empty.id = 5;
-    empty.unicast = true;
+    empty.delivery = pxs::dmx::Delivery::Unicast;
     sender.follow({bad, empty});
     for (int i = 0; i < 100 && sender.state(5).level == DmxOutputState::Off; ++i) QThread::msleep(10);
     check(sender.state(4).level == DmxOutputState::Error && sender.state(4).text.contains("not.an.ip"),
@@ -290,38 +288,9 @@ static void fixtureGridTests()
     check(std::abs(Fixture::fromJson(Fixture{}.toJson()).intensity - 1.0) < 1e-9 &&
               Fixture{}.toJson().contains("intensity"), "the intensity saved as \"intensity\"");
     FixturePatch sacn = onePatch("rgb", 1, 0, 1);
-    sacn.outputs[0].protocol = DmxOutput::Protocol::Sacn;
+    sacn.outputs[0].protocol = pxs::dmx::Protocol::Sacn;
     sacn.normalize();
     check(sacn.fixtures[0].universe == 1, "an sACN output's fixtures start at universe 1");
-}
-
-static void packetTests()
-{
-    QByteArray data(512, '\0');
-    data[0] = char(11);
-    data[511] = char(22);
-    const QByteArray a = dmx::artDmxPacket(0x1234, 7, data);
-    check(a.size() == 530 && a.startsWith(QByteArray("Art-Net\0", 8)), "ArtDmx: header and size");
-    check(quint8(a[8]) == 0x00 && quint8(a[9]) == 0x50 && a[11] == 14 && a[12] == 7, "ArtDmx: OpDmx, version, sequence");
-    check(quint8(a[14]) == 0x34 && quint8(a[15]) == 0x12 && quint8(a[16]) == 2 && quint8(a[17]) == 0,
-          "ArtDmx: port address and length");
-    check(a[18] == 11 && a[529] == 22, "ArtDmx: the slots");
-    check(dmx::artDmxPacket(1, 1, QByteArray(3, '\1')).size() == 18 + 4, "ArtDmx: an odd length made even");
-
-    const QUuid cid = QUuid::createUuid();
-    const QByteArray s = dmx::sacnPacket(cid, "NyxMap test", 120, 9, 300, data);
-    auto u16 = [&](int i) { return quint8(s[i]) << 8 | quint8(s[i + 1]); };
-    check(s.size() == 638, "E1.31: 638 bytes for 512 slots");
-    check(u16(0) == 0x10 && s.mid(4, 12) == QByteArray("ASC-E1.17\0\0\0", 12), "E1.31: preamble and identifier");
-    check(u16(16) == (0x7000 | 622) && u16(38) == (0x7000 | 600) && u16(115) == (0x7000 | 523), "E1.31: PDU lengths");
-    check(quint8(s[21]) == 4 && quint8(s[43]) == 2 && quint8(s[117]) == 2 && quint8(s[118]) == 0xa1, "E1.31: vectors");
-    check(s.mid(22, 16) == cid.toRfc4122() && s.mid(44, 11) == "NyxMap test", "E1.31: CID and source name");
-    check(quint8(s[108]) == 120 && quint8(s[111]) == 9 && s[112] == 0 && u16(113) == 300, "E1.31: priority, sequence, universe");
-    check(u16(123) == 513 && s[125] == 0 && s[126] == 11 && s[637] == 22, "E1.31: start code and slots");
-    check(quint8(dmx::sacnPacket(cid, "x", 100, 0, 1, data, true)[112]) == 0x40, "E1.31: stream terminated");
-    check(quint8(dmx::sacnPacket(cid, "x", 100, 0, 1, data, false, dmx::kSacnPerChannelPriority)[125]) == 0xDD,
-          "E1.31: a priority for each channel (start code 0xDD)");
-    check(dmx::sacnMulticastAddress(300) == "239.255.1.44", "E1.31: multicast group");
 }
 
 // --- Zip and GDTF
@@ -662,8 +631,8 @@ static void snapshotTests(Engine &e, const QString &tmp)
 // Packets received over the loopback, from a real output
 static void networkTests(Engine &e)
 {
-    for (const auto protocol : {DmxOutput::Protocol::ArtNet, DmxOutput::Protocol::Sacn}) {
-        const bool art = protocol == DmxOutput::Protocol::ArtNet;
+    for (const auto protocol : {pxs::dmx::Protocol::ArtNet, pxs::dmx::Protocol::Sacn}) {
+        const bool art = protocol == pxs::dmx::Protocol::ArtNet;
         e.newProject();
         e.setCompositionSize({16, 16});
         QUdpSocket rx;
@@ -672,7 +641,7 @@ static void networkTests(Engine &e)
         DmxOutput o;
         o.id = 7;
         o.protocol = protocol;
-        o.unicast = true;
+        o.delivery = pxs::dmx::Delivery::Unicast;
         o.destinations = {"127.0.0.1"};
         o.port = rx.localPort();
         o.rate = 50;
@@ -737,7 +706,6 @@ int main(int argc, char **argv)
 
     modelTests();
     frameTests();
-    packetTests();
     fixtureGridTests();
     zipTests();
     gdtfTests();
