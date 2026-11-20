@@ -313,7 +313,12 @@ bool Engine::setControlValue(quint64 id, double value)
         EngineParameterSource source(this);
         return pxs::controls::setBound(*c, source, value);
     }
-    return pxs::controls::setValue(m_controls, id, value, EngineParameterSource::feed(this, c->key));
+    const bool kept = pxs::controls::setValue(m_controls, id, value, EngineParameterSource::feed(this, c->key));
+    if (c->macro()) { // a macro: its value goes to each parameter it sends to, in that one's range and curve
+        EngineParameterSource source(this);
+        return pxs::controls::setTargets(*c, source, value, 0, c->widget != QLatin1String("tap")) || kept;
+    }
+    return kept;
 }
 
 void Engine::setMousePosition(double x, double y)
@@ -332,7 +337,13 @@ bool Engine::setControlPoint(quint64 id, double x, double y)
         EngineParameterSource source(this);
         return pxs::controls::setBoundPoint(*c, source, x, y);
     }
-    return c && pxs::controls::setPoint(m_controls, id, x, y, EngineParameterSource::feed(this, c->key));
+    const bool kept = c && pxs::controls::setPoint(m_controls, id, x, y, EngineParameterSource::feed(this, c->key));
+    if (c && c->macro()) { // a macro pad: X and Y each go to their targets
+        EngineParameterSource source(this);
+        const bool a = pxs::controls::setTargets(*c, source, x, 0), b = pxs::controls::setTargets(*c, source, y, 1);
+        return a || b || kept;
+    }
+    return kept;
 }
 
 bool Engine::setControlPoints(quint64 id, const std::vector<double> &xy)
