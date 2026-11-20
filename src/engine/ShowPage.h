@@ -319,7 +319,7 @@ inline constexpr char kScript[] = R"JS(
     const self = { selected: '' };
     let entries = [], nodes = [], section = '', locked = false, listening = new Set(), updaters = new Map();
     const current = () => entries.find(e => e.id === self.selected);
-    const openWhenLocked = path => ['enable', 'solo', 'testcard', 'locked', 'play', 'restart', 'time'].includes(path);
+    const openWhenLocked = path => ['enable', 'solo', 'testcard', 'locked', 'play', 'rewind', 'time'].includes(path);
     const tuple = node => {
       const c = node.CONTENTS || {};
       if (/^ffff?$/.test(node.TYPE) && c.r && c.g && c.b) return { type: 'rgb', keys: node.TYPE.length === 4 ? ['r', 'g', 'b', 'a'] : ['r', 'g', 'b'] };
@@ -335,7 +335,7 @@ inline constexpr char kScript[] = R"JS(
       if (/^(color|temp|tint|add|remove|mask)(\/|$)/.test(path) || (node.DESCRIPTION || '').startsWith('Color ›')) return ['color', 'Color'];
       if (/^(param|source|text|clock|tc|tox|web)(\/|$)/.test(path) || ['file', 'source_layer', 'source_tap'].includes(path)) return ['source', 'Source'];
       if (/^(viewport|output)(\/|$)/.test(path)) return ['routing', 'Output & routing'];
-      if (['play', 'restart', 'time', 'duration', 'speed', 'in', 'out', 'play_mode', 'volume', 'mute'].includes(path)) return ['playback', 'Playback'];
+      if (['play', 'rewind', 'time', 'duration', 'speed', 'in', 'out', 'play_mode', 'volume', 'mute'].includes(path)) return ['playback', 'Playback'];
       return ['general', 'General'];
     };
     const setStatus = (text, warn) => { const s = $('#layerStatus'); s.textContent = text; s.classList.toggle('locked', !!warn); };

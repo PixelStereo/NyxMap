@@ -31,7 +31,7 @@ The Media Bin lists **Countdown**, **Chronometer** and **Clock** under Generator
 | `clock/play` | Countdown, Chronometer | Running or paused (stored in snapshots and presets). |
 | `clock/elapsed` | Countdown, Chronometer | Seconds run since the start (stored; a recall leaves a clock that is already running untouched). |
 | `clock/start`, `clock/pause`, `clock/reset` | Countdown, Chronometer | Actions. Reset returns to the start and pauses; starting a countdown that finished starts it again from its full duration. |
-| `clock/restart` | Countdown, Chronometer | "Restart on recall": a snapshot or preset holding it on starts the clock from the beginning. |
+| `clock/rewind` | Countdown, Chronometer | Action: a snapshot or preset holding it starts the clock again from the beginning. |
 | `clock/value`, `clock/zero` | Read only | The time shown in seconds; whether a countdown reached zero. An internal interaction can follow `clock/zero` to drive another parameter at zero. |
 
 Countdowns and chronometers follow real time (not the composition speed). Only their own transport and **STOP ALL** pause them. A project saves the elapsed time and running state; on load, a running clock continues from the saved value.

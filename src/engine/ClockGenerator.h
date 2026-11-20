@@ -68,7 +68,7 @@ public:
     void start() { setRunning(true); }
     void pause() { setRunning(false); }
     void reset();   // back to its start (its duration, its offset; a time of day aimed at again), paused
-    void restart(); // back to its start, running
+    void rewind(); // back to its start, running
     double elapsed() const; // seconds it ran since its start (a countdown from a duration, a stopwatch)
     void setElapsed(double seconds);
 

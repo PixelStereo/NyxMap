@@ -5780,7 +5780,7 @@
           "play": false,
           "fx": [],
           "params": {
-            "restart": true,
+            "rewind": true,
             "play": true,
             "play_mode": "oneshot",
             "volume": 1

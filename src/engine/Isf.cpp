@@ -377,8 +377,8 @@ std::vector<Parameter> IsfInstance::parameters(const QString &title) const
     out.emplace_back(QStringLiteral("speed"), cat + QStringLiteral("Speed"), T::Float);
     out.back().range(0, 10).step(0.01).byDefault(1.0).bind([self] { return self->speed; },
                                                            [self](const QVariant &v) { self->speed = v.toDouble(); });
-    // Restart: from its first frame, as when it was loaded (an action: a preset or a cue can hold it)
-    out.emplace_back(QStringLiteral("restart"), cat + QStringLiteral("Restart"), T::Trigger);
+    // Rewind: from its first frame, as when it was loaded (an action: a preset or a cue can hold it)
+    out.emplace_back(QStringLiteral("rewind"), cat + QStringLiteral("Rewind"), T::Trigger);
     out.back().bind(nullptr, [self](const QVariant &) { self->requestRestart(); });
     out.emplace_back(QStringLiteral("enable"), cat + QStringLiteral("Enable"), T::Bool);
     out.back().byDefault(true).bind([self] { return self->enabled; }, [self](const QVariant &v) { self->enabled = v.toBool(); });

@@ -295,7 +295,7 @@ void ClockGenerator::reset()
     resetLocked();
 }
 
-void ClockGenerator::restart()
+void ClockGenerator::rewind()
 {
     reset();
     setRunning(true);
