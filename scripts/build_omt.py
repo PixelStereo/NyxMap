@@ -65,7 +65,10 @@ def build_vmx(src: Path, out: Path):
         arm.unlink()
         x86.unlink()
     elif system == "Windows":
+        # The runner's MSVC STL asks for a newer Clang than the one shipped with it; libvmx only uses the C++
+        # standard library headers, so the documented escape hatch is enough
         run(["clang++", "-O3", "-std=c++17", "-fdeclspec", "-mlzcnt", "-mavx2", "-mbmi", "-shared",
+             "-D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH",
              f"-Wl,/DEF:{src / 'exports.def'}", s / "vmxcodec_x86.cpp", s / "vmxcodec_avx2.cpp", s / "vmxcodec.cpp",
              "-o", out / "libvmx.dll"], src)
     else:
