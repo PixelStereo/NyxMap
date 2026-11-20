@@ -1,5 +1,5 @@
 #pragma once
-// The DMX outputs of the pixel mapping (Fixtures.h, Dmx.h), in the Composition tab: a list (on, name, protocol, live
+// The DMX outputs of the pixel mapping (Fixtures.h, pxs/DmxOut.h), in the Composition tab: a list (on, name, protocol, live
 // state) and the selected output's settings — the network card it sends from (a menu of this machine's), broadcast
 // or unicast to IP addresses (Art-Net), multicast or unicast (sACN), the sACN priority and source name, the rate.
 // Only the settings of its protocol and mode are shown. Every edit is undoable.
@@ -15,7 +15,7 @@ class QLineEdit;
 class QTableWidget;
 class QTimer;
 class QUndoStack;
-struct DmxOutput;
+#include "Fixtures.h"
 
 class DmxOutputsPanel : public QGroupBox
 {
@@ -39,9 +39,9 @@ private:
     QTableWidget *m_table;
     QWidget *m_editor;
     QFormLayout *m_form;
-    QComboBox *m_interface, *m_mode;
+    QComboBox *m_interface, *m_mode, *m_transmission;
     QLineEdit *m_addresses, *m_sourceName;
-    IntBox *m_priority, *m_rate;
+    IntBox *m_priority, *m_rate, *m_port;
     QTimer *m_refreshTimer, *m_stateTimer;
     bool m_updating = false;
 };

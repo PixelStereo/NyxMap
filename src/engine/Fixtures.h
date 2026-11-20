@@ -1,6 +1,6 @@
 #pragma once
 // Pixel mapping: light fixtures placed on the composition, their pixels sampled at every frame and sent as DMX
-// (Art-Net, sACN: Dmx.h). This file holds the model only — the types of fixture (their channels and their grid of
+// (Art-Net, sACN: pxs/DmxOut.h). This file holds the model only — the types of fixture (their channels and their grid of
 // pixels), the fixtures placed and patched, the DMX outputs — and the two pure steps between a picture and DMX:
 // where each pixel is sampled, and the universes the sampled colours make. No GPU, no network.
 //
@@ -8,6 +8,7 @@
 // (Art-Net: the 15-bit port address, from 0; sACN: 1..63999). Addresses: 1..512.
 
 #include <QByteArray>
+#include <pxs/DmxOut.h>
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QPointF>
@@ -140,28 +141,11 @@ struct FixtureGroup {
     static FixtureGroup fromJson(const QJsonObject &o);
 };
 
-struct DmxOutput {
-    enum class Protocol { ArtNet, Sacn };
-    quint64 id = 0;
-    QString name;
-    Protocol protocol = Protocol::ArtNet;
-    bool enabled = true;
-    // Unicast: to each of these IP addresses. Otherwise Art-Net broadcasts (on the chosen card's network), sACN sends
-    // to each universe's multicast group
-    bool unicast = false;
-    QStringList destinations;
-    QString interfaceAddress; // the local address sent from (its network card); empty: any
-    int port = 0;        // 0: the protocol's (6454, 5568)
-    double rate = 40;    // packets per second and universe
-    int priority = 100;  // sACN: 0..200
-    QString sourceName = QStringLiteral("NyxMap"); // sACN
-
-    int effectivePort() const { return port > 0 ? port : protocol == Protocol::ArtNet ? 6454 : 5568; }
-    bool operator==(const DmxOutput &o) const;
-    bool operator!=(const DmxOutput &o) const { return !(*this == o); }
-    QJsonObject toJson() const;
-    static DmxOutput fromJson(const QJsonObject &o);
-};
+// A DMX output is pxs's: Art-Net or sACN, unicast or the protocol's group, the card, a port, a rate, the sACN priority and
+// source name, full or partial frames (pxs/DmxOut.h). The fixtures address an output and a network universe directly, so
+// its universe map (firstSourceUniverse...) is not used here.
+using DmxOutput = pxs::dmx::Output;
+using DmxOutputState = pxs::dmx::OutputState;
 
 // The whole pixel mapping of a project
 struct FixturePatch {

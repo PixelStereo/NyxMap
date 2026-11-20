@@ -1,5 +1,5 @@
 // Pixel mapping: the fixtures of the project (Fixtures.h) sampled in the composition at every frame (PixelSampler.h),
-// their universes built from the colours read back and handed to the DMX sender (Dmx.h).
+// their universes built from the colours read back and handed to the DMX sender (pxs/DmxOut.h).
 #include "EngineInternal.h"
 
 FixturePatch Engine::fixturePatch() const
@@ -226,7 +226,19 @@ void Engine::stepPixelMapping()
         }
         std::lock_guard<std::mutex> lk(m_dmxMutex);
         if (frame != m_dmxLast || owned != m_dmxOwnedLast) {
-            m_dmx.submit(frame, owned);
+            // An output that sends partial frames gets each universe up to its last channel that is ours
+            DmxFrame toSend = frame;
+            for (auto &[key, data] : toSend) {
+                const DmxOutput *out = m_fixtures.findOutput(key.first);
+                if (!out || out->transmission != pxs::dmx::Transmission::Partial) continue;
+                const auto mine = owned.find(key);
+                int last = -1;
+                if (mine != owned.end())
+                    for (int k = int(mine->second.size()) - 1; k >= 0; --k)
+                        if (mine->second[k]) { last = k; break; }
+                data.truncate(std::max(2, last + 1));
+            }
+            m_dmx.submit(std::move(toSend), owned);
             m_dmxLast = std::move(frame);
             m_dmxOwnedLast = std::move(owned);
         }

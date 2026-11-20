@@ -88,6 +88,19 @@ DmxOutputsPanel::DmxOutputsPanel(Engine *engine, QUndoStack *undo, QWidget *pare
     m_sourceName->setObjectName(QStringLiteral("dmxOutputSourceName"));
     m_sourceName->setToolTip(QStringLiteral("The name receivers show for this source"));
     m_form->addRow(QStringLiteral("Source name"), m_sourceName);
+    m_port = new IntBox;
+    m_port->setObjectName(QStringLiteral("dmxOutputPort"));
+    m_port->setRange(0, 65535);
+    m_port->setSpecialValueText(QStringLiteral("Protocol default"));
+    m_port->setKeyboardTracking(false);
+    m_port->setToolTip(QStringLiteral("UDP port to send to: Art-Net 6454, sACN 5568 unless a receiver listens elsewhere"));
+    m_form->addRow(QStringLiteral("Port"), m_port);
+    m_transmission = new QComboBox;
+    m_transmission->setObjectName(QStringLiteral("dmxOutputTransmission"));
+    m_transmission->addItems({QStringLiteral("Full (512 channels)"), QStringLiteral("Partial (used channels)")});
+    m_transmission->setToolTip(QStringLiteral("Partial sends each universe only up to its last channel a fixture uses: less traffic, for the "
+                                              "receivers that take a short frame"));
+    m_form->addRow(QStringLiteral("Frames"), m_transmission);
     m_rate = new IntBox;
     m_rate->setObjectName(QStringLiteral("dmxOutputRate"));
     m_rate->setRange(1, 120);
@@ -104,7 +117,8 @@ DmxOutputsPanel::DmxOutputsPanel(Engine *engine, QUndoStack *undo, QWidget *pare
 
     connect(add, &QPushButton::clicked, this, [this] {
         cmd::editFixtures(m_undo, m_engine, QStringLiteral("New DMX Output"), [](FixturePatch &p) {
-            DmxOutput o;
+            DmxOutput o = DmxOutput::defaults(pxs::dmx::Protocol::ArtNet);
+            o.sourceName = QStringLiteral("NyxMap");
             o.name = QStringLiteral("Art-Net %1").arg(p.outputs.size() + 1);
             p.outputs.push_back(o);
         });
@@ -150,7 +164,7 @@ DmxOutputsPanel::DmxOutputsPanel(Engine *engine, QUndoStack *undo, QWidget *pare
         editOutput(QStringLiteral("Output Interface"), {}, [&](DmxOutput &o) { o.interfaceAddress = ip; });
     });
     connect(m_mode, &QComboBox::activated, this, [this](int i) {
-        editOutput(QStringLiteral("Output Mode"), {}, [&](DmxOutput &o) { o.unicast = i == 1; });
+        editOutput(QStringLiteral("Output Mode"), {}, [&](DmxOutput &o) { o.delivery = i == 1 ? pxs::dmx::Delivery::Unicast : pxs::dmx::Delivery::Group; });
     });
     connect(m_addresses, &QLineEdit::editingFinished, this, [this] {
         const QStringList ips = parseAddresses(m_addresses->text());
@@ -162,6 +176,14 @@ DmxOutputsPanel::DmxOutputsPanel(Engine *engine, QUndoStack *undo, QWidget *pare
     connect(m_sourceName, &QLineEdit::editingFinished, this, [this] {
         const QString name = m_sourceName->text().trimmed();
         editOutput(QStringLiteral("Output Source Name"), {}, [&](DmxOutput &o) { o.sourceName = name.isEmpty() ? QStringLiteral("NyxMap") : name; });
+    });
+    connect(m_port, &QSpinBox::valueChanged, this, [this](int v) {
+        editOutput(QStringLiteral("Output Port"), QStringLiteral("port"), [&](DmxOutput &o) { o.port = v; });
+    });
+    connect(m_transmission, &QComboBox::activated, this, [this](int i) {
+        editOutput(QStringLiteral("Output Frames"), {}, [&](DmxOutput &o) {
+            o.transmission = i == 1 ? pxs::dmx::Transmission::Partial : pxs::dmx::Transmission::Full;
+        });
     });
     connect(m_rate, &QSpinBox::valueChanged, this, [this](int v) {
         editOutput(QStringLiteral("Output Rate"), QStringLiteral("rate"), [&](DmxOutput &o) { o.rate = v; });
@@ -228,12 +250,12 @@ void DmxOutputsPanel::refresh()
         m_table->setItem(r, Name, name);
         auto *proto = new QComboBox;
         proto->addItems({QStringLiteral("Art-Net"), QStringLiteral("sACN")});
-        proto->setCurrentIndex(o.protocol == DmxOutput::Protocol::Sacn ? 1 : 0);
+        proto->setCurrentIndex(o.protocol == pxs::dmx::Protocol::Sacn ? 1 : 0);
         const quint64 id = o.id;
         connect(proto, &QComboBox::activated, this, [this, id](int index) {
             cmd::editFixtures(m_undo, m_engine, QStringLiteral("Output Protocol"), [&](FixturePatch &q) {
                 for (DmxOutput &x : q.outputs)
-                    if (x.id == id) x.protocol = index == 1 ? DmxOutput::Protocol::Sacn : DmxOutput::Protocol::ArtNet;
+                    if (x.id == id) x.protocol = index == 1 ? pxs::dmx::Protocol::Sacn : pxs::dmx::Protocol::ArtNet;
             });
             emit projectEdited();
         });
@@ -255,9 +277,9 @@ void DmxOutputsPanel::refreshEditor()
     const DmxOutput *o = p.findOutput(selectedOutput());
     m_editor->setVisible(o != nullptr);
     if (!o) return;
-    const bool sacn = o->protocol == DmxOutput::Protocol::Sacn;
+    const bool sacn = o->protocol == pxs::dmx::Protocol::Sacn;
     m_updating = true;
-    QSignalBlocker b1(m_interface), b2(m_mode), b3(m_priority), b4(m_rate);
+    QSignalBlocker b1(m_interface), b2(m_mode), b3(m_priority), b4(m_rate), b5(m_port), b6(m_transmission);
 
     // This machine's network cards (up, with an IPv4 address), and the one chosen if it is not here
     m_interface->clear();
@@ -277,21 +299,25 @@ void DmxOutputsPanel::refreshEditor()
 
     m_mode->clear();
     m_mode->addItems({sacn ? QStringLiteral("Multicast") : QStringLiteral("Broadcast"), QStringLiteral("Unicast")});
-    m_mode->setCurrentIndex(o->unicast ? 1 : 0);
+    const bool unicast = o->delivery == pxs::dmx::Delivery::Unicast;
+    m_mode->setCurrentIndex(unicast ? 1 : 0);
     m_mode->setToolTip(sacn ? QStringLiteral("Multicast: each universe to its group (239.255.x.y); unicast: to the IP addresses given")
                             : QStringLiteral("Broadcast: to every node of the interface's network; unicast: to the IP addresses given"));
     if (!m_addresses->hasFocus()) m_addresses->setText(o->destinations.join(QStringLiteral(", ")));
     QStringList bad;
     for (const QString &ip : o->destinations)
         if (QHostAddress(ip).isNull()) bad << ip;
-    m_addresses->setStyleSheet(bad.isEmpty() && !(o->unicast && o->destinations.isEmpty())
+    m_addresses->setStyleSheet(bad.isEmpty() && !(unicast && o->destinations.isEmpty())
                                    ? QString() : QStringLiteral("QLineEdit { border: 1px solid #c55; }"));
     m_addresses->setToolTip(!bad.isEmpty() ? QStringLiteral("Not IP addresses: %1").arg(bad.join(QStringLiteral(", ")))
                                            : QStringLiteral("One or more IP addresses, separated by commas"));
     m_priority->setValue(o->priority);
     if (!m_sourceName->hasFocus()) m_sourceName->setText(o->sourceName);
+    m_rate->setRange(1, int(o->maxRate())); // Art-Net stops at 44, sACN at 120
     m_rate->setValue(int(std::lround(o->rate)));
-    setRowShown(m_addresses, o->unicast);
+    m_port->setValue(o->port);
+    m_transmission->setCurrentIndex(o->transmission == pxs::dmx::Transmission::Partial ? 1 : 0);
+    setRowShown(m_addresses, unicast);
     setRowShown(m_priority, sacn);
     setRowShown(m_sourceName, sacn);
     m_updating = false;

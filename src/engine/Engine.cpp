@@ -6,6 +6,10 @@
 #include <pthread/qos.h>
 #endif
 #include "EngineInternal.h"
+
+#include <QCoreApplication>
+#include <QSettings>
+#include <QUuid>
 #include "RhiDevice.h"
 #include "RhiRenderer.h"
 #include "Midi.h"
@@ -44,6 +48,16 @@ Engine::Engine(QObject *parent)
     : QObject(parent), m_audio(std::make_unique<AudioOutput>()), m_sequencer(new Sequencer(*this, m_mutex)),
       m_tcRouter(std::make_unique<TimecodeRouter>())
 {
+    // The sACN identity is NyxMap's own, and stays the same from one run to the next
+    if (!QCoreApplication::organizationName().isEmpty()) {
+        QSettings s;
+        QUuid cid(s.value(QStringLiteral("dmx/cid")).toString());
+        if (cid.isNull()) {
+            cid = QUuid::createUuid();
+            s.setValue(QStringLiteral("dmx/cid"), cid.toString());
+        }
+        m_dmx.setCid(cid);
+    }
     connect(this, &Engine::timecodeRoutingChanged, this, &Engine::updateTimecodeRouting);
     connect(this, &Engine::layersChanged, this, &Engine::updateTimecodeRouting); // a layer gone, or back (undo)
 }

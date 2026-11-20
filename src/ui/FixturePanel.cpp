@@ -56,7 +56,7 @@ QToolButton *barButton(const QString &text, const QString &tip)
 std::pair<int, int> nextFree(const FixturePatch &p, quint64 output, int channels)
 {
     const DmxOutput *out = p.findOutput(output);
-    int universe = out && out->protocol == DmxOutput::Protocol::Sacn ? 1 : 0, address = 1;
+    int universe = out && out->protocol == pxs::dmx::Protocol::Sacn ? 1 : 0, address = 1;
     bool any = false;
     for (const Fixture &f : p.fixtures) {
         const std::optional<FixtureType> t = p.resolvedType(f);

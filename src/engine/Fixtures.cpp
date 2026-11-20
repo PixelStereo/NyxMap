@@ -367,50 +367,6 @@ Fixture Fixture::fromJson(const QJsonObject &o)
     return f;
 }
 
-bool DmxOutput::operator==(const DmxOutput &o) const
-{
-    return id == o.id && name == o.name && protocol == o.protocol && enabled == o.enabled &&
-           unicast == o.unicast && destinations == o.destinations && interfaceAddress == o.interfaceAddress && port == o.port &&
-           rate == o.rate && priority == o.priority && sourceName == o.sourceName;
-}
-
-QJsonObject DmxOutput::toJson() const
-{
-    QJsonObject o{{"id", QString::number(id)}, {"name", name},
-                  {"protocol", protocol == Protocol::Sacn ? "sacn" : "artnet"}, {"enabled", enabled},
-                  {"unicast", unicast}, {"destinations", QJsonArray::fromStringList(destinations)},
-                  {"interface", interfaceAddress}, {"rate", rate}};
-    if (port > 0) o["port"] = port;
-    if (protocol == Protocol::Sacn) {
-        o["priority"] = priority;
-        o["source_name"] = sourceName;
-    }
-    return o;
-}
-
-DmxOutput DmxOutput::fromJson(const QJsonObject &o)
-{
-    DmxOutput d;
-    d.id = o.value("id").toString().toULongLong();
-    d.name = o.value("name").toString();
-    d.protocol = o.value("protocol").toString() == QLatin1String("sacn") ? Protocol::Sacn : Protocol::ArtNet;
-    d.enabled = o.value("enabled").toBool(true);
-    d.unicast = o.value("unicast").toBool(false);
-    for (const QJsonValue &v : o.value("destinations").toArray())
-        if (const QString ip = v.toString().trimmed(); !ip.isEmpty()) d.destinations << ip;
-    // One "destination" before: unicast to it
-    if (const QString one = o.value("destination").toString().trimmed(); !one.isEmpty() && !o.contains("unicast")) {
-        d.unicast = true;
-        d.destinations = {one};
-    }
-    d.interfaceAddress = o.value("interface").toString().trimmed();
-    d.port = o.value("port").toInt(0);
-    d.rate = o.value("rate").toDouble(40);
-    d.priority = o.value("priority").toInt(100);
-    d.sourceName = o.value("source_name").toString(QStringLiteral("NyxMap"));
-    return d;
-}
-
 const FixtureType *FixturePatch::findType(const QString &id) const
 {
     for (const FixtureType &t : types)
@@ -494,7 +450,7 @@ void FixturePatch::normalize()
     };
     giveIds(outputs);
     for (DmxOutput &o : outputs) {
-        o.rate = std::clamp(std::isfinite(o.rate) ? o.rate : 40.0, 1.0, 120.0);
+        o.rate = std::clamp(std::isfinite(o.rate) ? o.rate : 40.0, 1.0, o.maxRate());
         o.priority = std::clamp(o.priority, 0, 200);
         o.port = std::clamp(o.port, 0, 65535);
     }
@@ -505,7 +461,7 @@ void FixturePatch::normalize()
     giveIds(fixtures);
     for (Fixture &f : fixtures) {
         const DmxOutput *out = findOutput(f.output);
-        f.universe = std::clamp(f.universe, out && out->protocol == DmxOutput::Protocol::Sacn ? 1 : 0, 63999);
+        f.universe = std::clamp(f.universe, out && out->protocol == pxs::dmx::Protocol::Sacn ? 1 : 0, 63999);
         f.cols = std::clamp(f.cols, 1, 1024);
         f.rows = std::clamp(f.rows, 1, 1024);
         f.address = std::clamp(f.address, 1, 512);

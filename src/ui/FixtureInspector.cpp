@@ -318,7 +318,7 @@ void FixtureInspector::refresh()
         m_output->addItem(o.name.isEmpty() ? QStringLiteral("Output %1").arg(o.id) : o.name, QVariant::fromValue(o.id));
     m_output->setCurrentIndex(std::max(0, m_output->findData(QVariant::fromValue(f.output))));
     const DmxOutput *out = p.findOutput(f.output);
-    m_universe->setMinimum(out && out->protocol == DmxOutput::Protocol::Sacn ? 1 : 0);
+    m_universe->setMinimum(out && out->protocol == pxs::dmx::Protocol::Sacn ? 1 : 0);
     m_universe->setValue(f.universe);
     m_address->setValue(f.address);
     m_dmx->setText(fixtureview::address(p, f));

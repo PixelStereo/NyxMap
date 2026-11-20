@@ -2197,7 +2197,7 @@ void InteractionPanel::fillOutputTargets(QMenu *menu, const QString &currentPath
     auto *dmx = menu->addMenu(QStringLiteral("DMX"));
     for (const auto &output : m_engine->fixturePatch().outputs)
         add(dmx, output.name, {QStringLiteral("dmx"), QString::number(output.id), {}, {}, 1, 1},
-            output.protocol == DmxOutput::Protocol::Sacn ? 1 : 0);
+            output.protocol == pxs::dmx::Protocol::Sacn ? 1 : 0);
     if (dmx->isEmpty()) dmx->addAction(QStringLiteral("Add a DMX output in Composition"))->setEnabled(false);
     auto *midi = menu->addMenu(QStringLiteral("MIDI"));
     for (const auto &output : m_engine->midiOutputs())

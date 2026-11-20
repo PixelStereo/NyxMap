@@ -27,7 +27,7 @@
 #include "LayerTree.h"
 #include "Publish.h"
 #include "Publishing.h"
-#include "Dmx.h"
+#include <pxs/DmxOut.h>
 #include "Fixtures.h"
 #include "PixelSampler.h"
 #include "TimecodeOutputs.h"
@@ -850,7 +850,7 @@ public:
     void setGpuPublisherFactoryForTests(std::function<std::unique_ptr<GpuPublisher>(PublishKind)> f);
 
     // --- Pixel mapping (Fixtures.h): fixtures placed on the composition, their pixels sampled at every frame (after
-    // the composition's opacity and blackout) and streamed as DMX by the outputs (Art-Net, sACN: Dmx.h)
+    // the composition's opacity and blackout) and streamed as DMX by the outputs (Art-Net, sACN: pxs/DmxOut.h)
     FixturePatch fixturePatch() const;
     void setFixturePatch(FixturePatch p); // normalized; the outputs follow it from the next frame
     QByteArray dmxUniverse(quint64 output, int universe) const; // the latest values (512 bytes; empty: not sent)
@@ -1467,7 +1467,7 @@ private:
     QByteArray m_mappingPixels; // the composition's pixels the QRhi renderer read back for pixel mapping (the latest)
     QSize m_mappingSize;
     bool m_mappingFresh = false;
-    DmxSender m_dmx;
+    pxs::dmx::Sender m_dmx;
     mutable std::mutex m_dmxMutex;
     using DmxOverrides = std::map<DmxKey, std::map<int, quint8>>;
     DmxOverrides m_interactionDmx, m_actionDmx; // engine lock

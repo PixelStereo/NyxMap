@@ -128,23 +128,29 @@ the settings that apply to its protocol and mode are shown.
 
 ```json
 { "id": "1", "name": "Nodes", "protocol": "artnet", "enabled": true,
-  "unicast": true, "destinations": ["2.0.0.10", "2.0.0.11"], "interface": "192.168.1.20", "rate": 40 }
+  "delivery": "unicast", "destinations": ["2.0.0.10", "2.0.0.11"], "interface": "192.168.1.20", "rate": 40,
+  "transmission": "full" }
 ```
 
-- `protocol`: `artnet` (UDP 6454) or `sacn` (UDP 5568). `port` overrides the port.
+The outputs are [pxs](https://github.com/PixelStereo/pxs)'s (`pxs::dmxout`), the same in every Pixel Stereo application that
+sends DMX. Its settings for a universe map (`firstSourceUniverse`, `firstUniverse`, `universeCount`) are saved but not used
+here: a fixture addresses its output and its network universe itself.
+
+- `protocol`: `artnet` (UDP 6454) or `sacn` (UDP 5568). `port` overrides the port (the panel's *Port*, "Protocol default" at 0).
 - `interface`: the local address to send from, chosen in a menu of this machine's network cards (empty: the system's
   choice). It picks the card for broadcast and multicast too.
-- Art-Net: broadcast to the card's network, or `unicast` to one or more IP addresses (`destinations`, typed separated
-  by commas). The addresses only show in unicast.
-- sACN: each universe to its multicast group `239.255.hi.lo`, or `unicast` to the addresses given. sACN only:
-  `priority` (0..200, default 100) and `source_name`. NyxMap also sends per-address priority data (start code `0xDD`):
-  channels owned by a fixture receive the output priority; unpatched and `ignore` channels receive priority 0, so another
-  source can own them. The CID is kept in the app settings, so it stays the same on this machine. When an output is
-  removed or disabled, or NyxMap quits, its sACN streams are terminated.
-- `rate`: packets per second for each universe (1..120, default 40). All of an output's universes are sent at that
-  rate, whatever the render's frame rate.
-- An address that is not an IP, or unicast without any address, puts the output in error (shown in its state).
-- Projects saved with a single `destination` open in unicast to it.
+- `delivery`: `group` is the protocol's own: Art-Net broadcasts to the card's network, sACN sends each universe to its
+  multicast group `239.255.hi.lo`. `unicast` sends to one or more IP addresses (`destinations`, typed separated by commas); the
+  addresses only show in unicast.
+- sACN only: `priority` (0..200, default 100) and `sourceName`. NyxMap also sends per-address priority data (start code
+  `0xDD`): channels owned by a fixture receive the output priority; unpatched and `ignore` channels receive priority 0, so
+  another source can own them. The CID is kept in the app settings, so it stays the same on this machine. When an output is
+  removed or disabled, or NyxMap quits, its sACN streams are terminated (three frames).
+- `rate`: packets per second for each universe (1..44 for Art-Net, the protocol's limit; 1..120 for sACN; default 40). All of
+  an output's universes are sent at that rate, on a thread of its own, whatever the render's frame rate.
+- `transmission`: `full` sends 512 channels in every packet; `partial` sends each universe only up to its last channel a
+  fixture uses, for receivers that take a short frame (less traffic).
+- An address that is not an IPv4 address, or unicast without any address, puts the output in error (shown in its state).
 
 ## Not yet done
 
