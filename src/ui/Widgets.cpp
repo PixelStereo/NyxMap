@@ -255,17 +255,17 @@ static void applyLook(QApplication &app)
                QStringLiteral("QGroupBox { font-weight: bold; border: 1px solid @border; border-radius: 4px; "
                                            "margin-top: 10px; padding-top: 8px; } "
                                            "QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; "
-                                           "color: @link; }"
+                                           "color: @focus; }"
                                            "QSplitter::handle { background:@border; margin:1px; }"
                                            "QSplitter::handle:horizontal { width:7px; }"
                                            "QSplitter::handle:vertical { height:7px; }"
-                                           "QSplitter::handle:hover { background:@link; }"
+                                           "QSplitter::handle:hover { background:@focus; }"
                                            "QHeaderView::section { background:@midlight; color:@text;"
                                            " border:0; border-right:1px solid @light; border-bottom:1px solid @border; padding:4px 6px; }"
                                            "QMenu::separator { height:1px; background:@border; margin:5px 8px; }"
                                            // A button that is on shows it: the accent, not Fusion's barely darker shade
-                                           "QPushButton:checked, QToolButton:checked { background:@link; color:%1; "
-                                           "border:1px solid @link; border-radius:3px; }")
+                                           "QPushButton:checked, QToolButton:checked { background:@focus; color:%1; "
+                                           "border:1px solid @focus; border-radius:3px; }")
                    .arg(onAccent().name()));
     // Selections follow the accent
     QPalette p = app.palette();
