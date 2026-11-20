@@ -3849,7 +3849,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         e.setFadesManual(false);
         e.newProject();
     }
-    // The transport in snapshots and presets: played or paused, "restart on recall", the in / out points; a sound
+    // The transport in snapshots and presets: played or paused, "rewind on recall", the in / out points; a sound
     // crosses its levels when a snapshot changes its file, whatever the layer's transition
     {
         e.newProject();
@@ -3864,7 +3864,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         const quint64 vid = e.layerId(vi);
         {
             const QSet<QString> p = params(vid);
-            CHECK(p.contains("play") && p.contains("restart") && p.contains("in") && p.contains("out"));
+            CHECK(p.contains("play") && p.contains("rewind") && p.contains("in") && p.contains("out"));
         }
         auto playing = [&] {
             Engine::Lock lk(&e.mutex());
@@ -3883,9 +3883,9 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
                 const bool me = o.value("id").toString().toULongLong() == vid;
                 o["included"] = me;
                 if (me) {
-                    // A video snapshot holds Restart on Recall by default: these ones are about play and pause alone
+                    // A video snapshot holds Rewind by default: these ones are about play and pause alone
                     QJsonObject p = o.value("params").toObject();
-                    p["restart"] = false;
+                    p["rewind"] = false;
                     o["params"] = p;
                     if (edit) edit(o);
                 }
@@ -3907,28 +3907,28 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         // Restart on recall: from the in point, playing, wherever it was and paused or not
         const int sRestart = snapshotOf(QStringLiteral("Restart"), [](QJsonObject &o) {
             QJsonObject p = o.value("params").toObject();
-            p["restart"] = true;
-            p["play"] = false; // a restart plays all the same
+            p["rewind"] = true;
+            p["play"] = true; // rewound and played
             o["params"] = p;
         });
         e.seekLayer(e.indexOfId(vid), 2.5);
         e.setLayerPlaying(e.indexOfId(vid), false);
         CHECK(position() > 2.0);
         e.recallSnapshot(sRestart);
-        std::printf("       restart on recall: position %.3f s, playing %d\n", position(), int(playing()));
+        std::printf("       rewind on recall: position %.3f s, playing %d\n", position(), int(playing()));
         CHECK(playing() && position() < 0.1);
-        CHECK(e.parameterValue(vid, "restart").toBool() == false); // an action, not a state
+        CHECK(e.parameterValue(vid, "rewind").toBool() == false); // an action, not a state
         {
-            // What a snapshot holds of Restart on Recall: on for a new snapshot, never for the undo of a recall
+            // What a snapshot holds of Rewind: on for a new snapshot, never for the undo of a recall
             const auto restartIn = [&](const QJsonArray &layers) {
                 for (const QJsonValue &v : layers)
                     if (v.toObject().value("id").toString() == QString::number(vid))
-                        return v.toObject().value("params").toObject().value("restart").toBool();
+                        return v.toObject().value("params").toObject().value("rewind").toBool();
                 return false;
             };
             CHECK(restartIn(e.captureLayers()));
             CHECK(!restartIn(e.captureLayers(true)));
-            CHECK(Engine::isRecallAction(QStringLiteral("restart")) && Engine::isRecallAction(QStringLiteral("clock/restart")) &&
+            CHECK(Engine::isRecallAction(QStringLiteral("rewind")) && Engine::isRecallAction(QStringLiteral("clock/rewind")) &&
                   !Engine::isRecallAction(QStringLiteral("play")));
         }
         // In / out points and the play state in a preset (recalled at once)
@@ -3946,12 +3946,12 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             CHECK(std::abs(l->inPoint - 1.0) < 1e-6 && std::abs(l->outPoint - 2.0) < 1e-6 && !l->playing);
             CHECK(l->position() >= 1.0 - 1e-6 && l->position() <= 2.0 + 1e-6);
         }
-        // A restart in a preset: from the new in point
-        pr.values.push_back({vid, QStringLiteral("restart"), QJsonValue(true), -1.0, QString()});
+        // a rewind in a preset: from the new in point
+        pr.values.push_back({vid, QStringLiteral("rewind"), QJsonValue(true), -1.0, QString()});
         e.setPreset(pi, pr);
         e.seekLayer(e.indexOfId(vid), 1.8);
         e.recallPreset(pi);
-        CHECK(playing() && std::abs(position() - 1.0) < 0.05);
+        CHECK(!playing() && std::abs(position() - 1.0) < 0.05);
         // Saved and opened: the play state comes back
         e.setLayerPlaying(e.indexOfId(vid), false);
         CHECK(e.saveProject(tmp + "/transport.nyxmap", {}, &err) && e.loadProject(tmp + "/transport.nyxmap", nullptr, &err));

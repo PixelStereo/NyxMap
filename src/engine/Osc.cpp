@@ -1158,7 +1158,7 @@ void OscNamespace::addLayer(const QString &P, quint64 id)
                      return true;
                  },
                  true);
-        L.method(P + "/restart", "N", 2, "Restart", nullptr,
+        L.method(P + "/rewind", "N", 2, "Rewind", nullptr,
                  [e](int idx, const QVariantList &) {
                      double from;
                      {

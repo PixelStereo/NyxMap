@@ -629,9 +629,9 @@ void Engine::layerFromJson(int index, const QJsonObject &stored, const QString &
     const auto layerParams = o.value("params").toObject();
     parametersFromJson(l->parameters(), layerParams, &l->extraParams);
     if (l->hasTransport()) {
-        // Played or paused: its parameter (a snapshot that restarts it plays it)
+        // Played or paused: its parameter (a snapshot that rewinds it plays it)
         const QJsonObject params = o.value("params").toObject();
-        l->playing = params.value("restart").toBool(false) || params.value("play").toBool(true);
+        l->playing = params.value("rewind").toBool(false) || params.value("play").toBool(true);
         startMedia(*l); // its speed: backwards starts from the end
     }
     loadLayerAnims(*l, o.value("anims").toArray());

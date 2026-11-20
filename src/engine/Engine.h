@@ -575,12 +575,12 @@ public:
     void cancelParameterRecall(quint64 layer, const QString &path); // undo of an outstanding preset recall
     // A value as it is now, to put in a preset (an undefined value: it has none at that address)
     PresetValue presetValue(quint64 layer, const QString &path) const;
-    // "Restart on Recall" (a media's, a clock generator's): an action a recall makes, not a state. It always reads
-    // back as off, so what a snapshot or a preset holds of it is never taken from the live value: a new one holds it
-    // on, an update keeps what is held.
+    // Rewind (a media's, a shader's, a clock generator's): an action a recall makes, not a state. It has no live
+    // value, so what a snapshot or a preset holds of it is never taken from one: a new one holds it as "do it", an
+    // update keeps what is held.
     static bool isRecallAction(const QString &path)
     {
-        return path == QLatin1String("restart") || path == QLatin1String("clock/restart");
+        return path == QLatin1String("rewind") || path == QLatin1String("clock/rewind");
     }
 
     // --- Timelines: values of the layers (and of the composition) drawn over time, played on their own clock,

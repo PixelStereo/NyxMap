@@ -426,7 +426,7 @@ bool StoredContent::simplify(Engine::Preset &preset, const Engine::Preset &previ
     }
     for (const auto &value : preset.values) {
         // Transport commands can have an effect each time they are recalled.
-        if (rebuilt.contains(value.layer) || (value.path == "restart" && value.value.toBool()) || value.path == "position" ||
+        if (rebuilt.contains(value.layer) || (value.path == "rewind" && value.value.toBool()) || value.path == "position" ||
             value.path.startsWith("clock/") || value.path.endsWith("/trigger"))
             continue;
         const int i = previous.indexOf(value.layer, value.path);

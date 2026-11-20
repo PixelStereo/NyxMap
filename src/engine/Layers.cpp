@@ -1237,7 +1237,7 @@ int Engine::partOf(const QString &path)
         return PartSpatial;
     if (under("fx/")) return PartEffects;
     if (path == "opacity" || path == "blend_mode" || under("output/")) return PartCompositing;
-    if (path == "speed" || path == "play_mode" || path == "in" || path == "out" || path == "play" || path == "restart" ||
+    if (path == "speed" || path == "play_mode" || path == "in" || path == "out" || path == "play" || path == "rewind" ||
         path == "volume" || path == "mute")
         return PartTransport;
     return PartSource; // the generator's, the text's, the timecode's
@@ -2808,7 +2808,7 @@ QString Engine::layerTimecodeStatus(int i) const
 void Engine::restartLayerTimecode(int i)
 {
     Lock lk(&m_mutex);
-    if (i >= 0 && i < int(m_layers.size()) && m_layers[size_t(i)]->tcClock) m_layers[size_t(i)]->tcClock->restart();
+    if (i >= 0 && i < int(m_layers.size()) && m_layers[size_t(i)]->tcClock) m_layers[size_t(i)]->tcClock->rewind();
 }
 
 void Engine::setLayerTextContent(int i, const QString &text)

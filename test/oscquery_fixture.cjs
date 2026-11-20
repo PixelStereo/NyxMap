@@ -55,7 +55,7 @@ function fixture(port = 0) {
         for (const [k, value] of [['r', .1], ['g', .2], ['b', .3]]) leaf('add/' + k, 'f', value, [{MIN: 0, MAX: 1}]);
         leaf('file', 's', '/media/image.png', null, 3, 'File');
         leaf('duration', 'f', 12, null, 1, 'Duration');
-        leaf('restart', 'N', undefined, null, 2, 'Restart');
+        leaf('rewind', 'N', undefined, null, 2, 'Rewind');
         leaf('fx/Blur/param/radius', 'f', 5, [{MIN: 0, MAX: 40}], 3, 'Blur radius');
         leaf('param/label', 's', 'Stage', null, 3, 'Caption');
         for (const [suffix, defaults] of [['opacity', [1]], ['blend_mode', ['normal']],

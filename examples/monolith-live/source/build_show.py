@@ -678,7 +678,7 @@ def preset(name, state):
 
 
 start = preset("Start / rewind the show", {
-    (clock, "tc/position"): 0, (clock, "tc/play"): True, (TAPE_A, "restart"): True,
+    (clock, "tc/position"): 0, (clock, "tc/play"): True, (TAPE_A, "rewind"): True,
     (TAPE_B, "play"): False, (FIL, "opacity"): 1,
 })
 steps = [{"text": "Start / rewind", "description": "Start the internal timecode, Tape A and the three score timelines.",
@@ -688,7 +688,7 @@ steps = [{"text": "Start / rewind", "description": "Start the internal timecode,
               *[{"timeline": t["id"], "action": "play"} for t in timelines],
           ]}]
 turn = round(DROP2 * BAR, 4)
-mix_changes.setdefault(turn, {}).update({(TAPE_A, "play"): False, (TAPE_B, "restart"): True})
+mix_changes.setdefault(turn, {}).update({(TAPE_A, "play"): False, (TAPE_B, "rewind"): True})
 look = {}
 for t in sorted(picture_changes.keys() | mix_changes.keys()):
     look.update(picture_changes.get(t, {}))

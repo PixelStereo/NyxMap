@@ -405,21 +405,8 @@ const std::vector<Parameter *> &Layer::parameters()
                       self->playing = on;
                       if (on) self->ended = false;
                   });
-        // From the beginning: a snapshot or a preset that holds it on starts the media again at its in point (its out
-        // point backwards) and plays it. Read back as off: it is an action the recall makes, not a state. Last of the
-        // transport: after the play state, the in / out points and the play mode it may set as well
-        add("restart", "Source › Restart on Recall", T::Bool)
-            .ramp(Parameter::Ramp::Cut)
-            .byDefault(false)
-            .bind([] { return QVariant(false); },
-                  [self](const QVariant &v) {
-                      if (!v.toBool()) return;
-                      self->playing = true;
-                      self->ended = false;
-                      startMedia(*self);
-                  });
         // Back to the beginning (its out point backwards), played or paused as it was: an action (an event of a
-        // timeline, OSC), not a value — a media played to its end in one shot starts again if it was playing
+        // timeline, OSC, a snapshot or a preset that holds it), not a value — a media played to its end in one shot starts again if it was playing
         add("rewind", "Source › Rewind", T::Trigger).bind(nullptr, [self](const QVariant &) {
             self->ended = false;
             startMedia(*self);
@@ -611,15 +598,8 @@ const std::vector<Parameter *> &Layer::parameters()
                 .ramp(Parameter::Ramp::Cut)
                 .byDefault(false)
                 .bind([k] { return QVariant(k->running()); }, [k](const QVariant &v) { k->setRunning(v.toBool()); });
-            // From its start, running: a snapshot or a preset that holds it on starts it again (read back as off: an
-            // action of the recall, as a media's restart)
-            add("clock/restart", name + " › Restart on Recall", T::Bool)
-                .ramp(Parameter::Ramp::Cut)
-                .byDefault(false)
-                .bind([] { return QVariant(false); },
-                      [k](const QVariant &v) {
-                          if (v.toBool()) k->restart();
-                      });
+            // From its start, running: an action a snapshot or a preset can hold, as a media's rewind
+            add("clock/rewind", name + " › Rewind", T::Trigger).bind(nullptr, [k](const QVariant &) { k->rewind(); });
             add("clock/start", name + " › Start", T::Trigger).bind(nullptr, [k](const QVariant &) { k->start(); });
             add("clock/pause", name + " › Pause", T::Trigger).bind(nullptr, [k](const QVariant &) { k->pause(); });
             add("clock/reset", name + " › Reset", T::Trigger).bind(nullptr, [k](const QVariant &) { k->reset(); });

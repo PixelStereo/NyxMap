@@ -1572,7 +1572,7 @@ void SnapshotPanel::updateSnapshot(int i)
     // Layers left out stay out; the times given to values are kept
     QSet<quint64> excluded;
     QHash<quint64, QJsonValue> timing, easings, delays;
-    QHash<quint64, QJsonObject> actions; // "Restart on Recall", as the snapshot holds it (checked or not)
+    QHash<quint64, QJsonObject> actions; // Rewind, as the snapshot holds it
     for (const QJsonValue &v : m.layers) {
         const QJsonObject o = v.toObject();
         const quint64 id = o.value("id").toString().toULongLong();

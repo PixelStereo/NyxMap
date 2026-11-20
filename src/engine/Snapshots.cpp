@@ -350,6 +350,14 @@ void Engine::applyParams(Layer &layer, const QJsonObject &params, const QJsonObj
             if (cut) p->setJson(it.value());
             else fadeTo(*p, p->number(), it.value().toDouble(p->number()));
         }
+        // Its actions (Rewind, Seek To, Start…), after its values: a media rewound once its source and range are set
+        for (Parameter *p : l->parameters()) {
+            const auto it = params.constFind(p->path());
+            if (it == params.constEnd() || p->isStored() || !p->info().action) continue;
+            const double delay = delayOf(delays, p->path());
+            if (delay > 0) scheduleRecall(l->id, p->path(), it.value(), 0, QString(), delay);
+            else p->setJson(it.value());
+        }
 }
 
 void Engine::cancelScheduledRecall(quint64 layer, const QString &path)
@@ -569,14 +577,6 @@ void Engine::recallPreset(int i, double fadeOverride)
         if (params.contains("solo")) l->solo = params.value("solo").toBool();
         applyParams(*l, params, timing, easing, fade, *job, false, false, false, delays);
         if (!job->done()) m_fades.push_back(std::move(job));
-        // Its actions (Rewind, Seek To, Start…), after its values: a media rewound once its source and range are set
-        for (Parameter *p : l->parameters()) {
-            const auto it = params.constFind(p->path());
-            if (it == params.constEnd() || p->isStored() || !p->info().action) continue;
-            const double delay = delayOf(delays, p->path());
-            if (delay > 0) scheduleRecall(layerId, p->path(), it.value(), 0, QString(), delay);
-            else p->setJson(it.value());
-        }
     }
     // Restore the captured modulation definitions after writing static values.
     // Replace the held drivers and any RGB drivers competing for their channels.
@@ -714,13 +714,13 @@ QJsonArray Engine::captureLayers(bool withAnimated) const
             o["params"] = params;
         }
         o["included"] = true;
-        // A video starts again from its in point on recall: checked by default. The live value is always off (an
+        // A video starts again from its in point on recall: rewind is held by default. It has no live value (an
         // action, not a state), so the default is what a new snapshot holds; an update keeps what the snapshot holds.
         // Not for the undo of a recall (every value as it was), nor for a stream (it has no start to go back to).
         const QJsonObject source = o.value("source").toObject();
         if (!withAnimated && source.value("type").toString() == QLatin1String("video") && !source.value("live").toBool()) {
             QJsonObject params = o.value("params").toObject();
-            params[QStringLiteral("restart")] = true;
+            params[QStringLiteral("rewind")] = true;
             o["params"] = params;
         }
         a.append(o);
@@ -2032,8 +2032,8 @@ bool Engine::snapshotMatches(quint64 id, QString *reason) const
     auto paramsMatch = [&](quint64 layer, const QJsonObject &values, const QString &prefix = QString(), const QJsonObject *liveValues = nullptr) {
         for (auto value = values.begin(); value != values.end(); ++value) {
             const QString path = prefix + value.key();
-            if (path == QLatin1String("position") || path == QLatin1String("tc/position") || path == QLatin1String("restart") ||
-                path == QLatin1String("clock/elapsed") || path == QLatin1String("clock/restart") || isDriven(layer, path))
+            if (path == QLatin1String("position") || path == QLatin1String("tc/position") || path == QLatin1String("rewind") ||
+                path == QLatin1String("clock/elapsed") || path == QLatin1String("clock/rewind") || isDriven(layer, path))
                 continue;
             const QJsonValue live = liveValues ? liveValues->value(value.key()) : parameterValue(layer, path);
             if (!equal(live, value.value())) return mismatch(path);

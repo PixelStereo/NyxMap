@@ -80,20 +80,20 @@ int main(int argc, char **argv)
             QThread::msleep(10);
         }
         require(std::abs(at - 1.0) < 0.3, "a preset seeks a media (after its rewind)");
-        // An ISF shader's Restart: its TIME from 0 again, held by a preset
+        // An ISF shader's Rewind: its TIME from 0 again, held by a preset
         {
             const int si = e.addLayer("Shader");
             const quint64 shader = e.layerId(si);
             require(e.setLayerIsf(si, QStringLiteral(TEST_DIR) + "/../isf/generators/Basic Shape.fs", &err), qPrintable(err));
-            QString restart;
+            QString rewind;
             for (const ParamInfo &i : e.parameters(shader))
-                if (i.path.endsWith(QLatin1String("restart")) && i.label.endsWith(QLatin1String("Restart")) && !i.path.startsWith("fx/")) restart = i.path;
-            require(!restart.isEmpty(), "an ISF generator has a Restart");
-            const ParamInfo ri = info(shader, restart);
-            require(ri.action && ri.presettable, "Restart is an action a preset can hold");
+                if (i.path.endsWith(QLatin1String("rewind")) && i.label.endsWith(QLatin1String("Rewind")) && !i.path.startsWith("fx/")) rewind = i.path;
+            require(!rewind.isEmpty(), "an ISF generator has a Rewind");
+            const ParamInfo ri = info(shader, rewind);
+            require(ri.action && ri.presettable, "Rewind is an action a preset can hold");
             e.setFadesManual(false);
             auto time = [&] { Engine::Lock lk(&e.mutex()); return e.layer(e.indexOfId(shader))->generator->time(); };
-            // Run until its time is well past one frame: a restart from there is clear whatever the frame's length
+            // Run until its time is well past one frame: a rewind from there is clear whatever the frame's length
             // (a slow machine's software renderer takes longer than 0.2 s to draw one frame)
             QElapsedTimer running;
             running.start();
@@ -104,13 +104,13 @@ int main(int argc, char **argv)
             const double before = time();
             require(before > 0.5, "the shader's time runs");
             Engine::Preset r;
-            r.name = "Restart";
+            r.name = "Rewind";
             r.fade = 0;
-            r.values.push_back(e.presetValue(shader, restart));
+            r.values.push_back(e.presetValue(shader, rewind));
             require(r.values.back().value == QJsonValue(true), "held as do it");
             e.recallPreset(e.addPreset(r));
             e.renderFrame();
-            require(time() < before && time() < 0.5, "a preset restarts an ISF shader from its first frame");
+            require(time() < before && time() < 0.5, "a preset rewinds an ISF shader from its first frame");
         }
         e.shutdown();
         std::cout << "Preset actions: held, captured, recalled passed\n";

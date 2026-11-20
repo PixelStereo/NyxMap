@@ -2882,10 +2882,9 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
             return b;
         };
 
-        // Play: direction and pause, then go to start and step one frame. Its label: the play state and "restart on
-        // recall" in presets (right-click), as any value
+        // Play: direction and pause, then go to start and step one frame. Its label: the play state and "rewind" in presets (right-click), as any value
         QLabel *playLabel = rowLabel(0, QStringLiteral("Play"));
-        m_animate->attach(playLabel, {QStringLiteral("play"), QStringLiteral("restart")});
+        m_animate->attach(playLabel, {QStringLiteral("play"), QStringLiteral("rewind")});
         auto *playRow = new QHBoxLayout;
         playRow->setSpacing(2);
         m_playButtons = new QButtonGroup(g);
@@ -3219,14 +3218,14 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
         auto *resetRow = new QHBoxLayout;
         resetRow->addWidget(reset);
         // Restart: from its first frame (TIME and FRAMEINDEX at 0, its buffers emptied); an action a preset can hold
-        auto *restart = new QPushButton(QStringLiteral("Restart"));
-        restart->setObjectName(QStringLiteral("isfRestart"));
-        restart->setToolTip(QStringLiteral("Play the shader from its first frame: TIME and FRAMEINDEX back to 0, its persistent buffers "
-                                           "emptied. In a preset (Alt-click in Edit mode), it restarts the shader when the preset is recalled."));
-        restart->setProperty("allowLocked", true);
-        m_animate->attach(restart, {QStringLiteral("restart")});
-        connect(restart, &QPushButton::clicked, this, [this] { m_engine->setParameter(m_layerId, QStringLiteral("restart"), true); });
-        resetRow->addWidget(restart);
+        auto *rewind = new QPushButton(QStringLiteral("Rewind"));
+        rewind->setObjectName(QStringLiteral("isfRewind"));
+        rewind->setToolTip(QStringLiteral("Play the shader from its first frame: TIME and FRAMEINDEX back to 0, its persistent buffers "
+                                           "emptied. In a preset (Alt-click in Edit mode), it rewinds the shader when the preset is recalled."));
+        rewind->setProperty("allowLocked", true);
+        m_animate->attach(rewind, {QStringLiteral("rewind")});
+        connect(rewind, &QPushButton::clicked, this, [this] { m_engine->setParameter(m_layerId, QStringLiteral("rewind"), true); });
+        resetRow->addWidget(rewind);
         resetRow->addStretch();
         v->addLayout(resetRow);
         auto *res = new QHBoxLayout;

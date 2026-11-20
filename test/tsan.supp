@@ -13,6 +13,10 @@ race:libvulkan*
 mutex:libvulkan*
 race:libvulkan_lvp*
 mutex:libvulkan_lvp*
+# LLVM, which lavapipe uses to compile its shaders on its own worker threads (llvmpipe-N): its allocator hands
+# blocks from one worker to another through synchronization invisible to ThreadSanitizer
+race:libLLVM*
+mutex:libLLVM*
 called_from_lib:libavcodec
 called_from_lib:libavutil
 # GLib (pulled in by Qt's platform and network code): its "gdbus" thread frees memory that the main thread

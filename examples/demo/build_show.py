@@ -556,7 +556,7 @@ def scene_state(base_layers, scene, interaction_ids):
         if key == "sound":
             state["included"] = scene.audio_start
             if scene.audio_start:
-                state["params"] = {"restart": True, "play": True, "play_mode": "oneshot", "volume": 1}
+                state["params"] = {"rewind": True, "play": True, "play_mode": "oneshot", "volume": 1}
             states.append(state)
             continue
         params = {p: x for p, x in REST.get(key, {}).items() if (key, p) not in OWNED}
