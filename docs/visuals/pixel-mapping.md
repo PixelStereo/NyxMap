@@ -124,7 +124,8 @@ placement, addresses, outputs) is not part of a snapshot. Group values can be ca
 ## DMX outputs
 
 In the Composition tab: a list of the outputs (on, name, protocol, state), and the settings of the one selected. Only
-the settings that apply to its protocol and mode are shown.
+the settings that apply to its protocol and mode are shown. The panel is pxs's (`pxs::dmx::OutputsPanel`, the same in Cold-Flame):
+a new output is off until you tick it, and every edit is undoable; deleting an output leaves its fixtures without one.
 
 ```json
 { "id": "1", "name": "Nodes", "protocol": "artnet", "enabled": true,
