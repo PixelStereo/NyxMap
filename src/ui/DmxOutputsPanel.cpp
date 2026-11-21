@@ -1,341 +1,62 @@
 #include "DmxOutputsPanel.h"
 #include "Commands.h"
 #include "Engine.h"
-#include "Widgets.h"
 
 #include <QApplication>
-#include <QComboBox>
-#include <QFormLayout>
-#include <QHBoxLayout>
-#include <QHeaderView>
-#include <QHostAddress>
-#include <QLabel>
 #include <QLineEdit>
-#include <QNetworkInterface>
-#include <QPushButton>
-#include <QRegularExpression>
-#include <QSignalBlocker>
-#include <QTableWidget>
 #include <QTimer>
 #include <QVBoxLayout>
-
-namespace {
-enum Column { On, Name, Protocol, State, Count };
-
-QString outputName(const DmxOutput &o) { return o.name.isEmpty() ? QStringLiteral("Output %1").arg(o.id) : o.name; }
-
-// The IP addresses typed: separated by commas, spaces or semicolons
-QStringList parseAddresses(const QString &text)
-{
-    QStringList out;
-    for (const QString &part : text.split(QRegularExpression(QStringLiteral("[,;\\s]+")), Qt::SkipEmptyParts)) out << part;
-    return out;
-}
-} // namespace
+#include <algorithm>
 
 DmxOutputsPanel::DmxOutputsPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
     : QGroupBox(QStringLiteral("DMX outputs"), parent), m_engine(engine), m_undo(undo)
 {
     setObjectName(QStringLiteral("dmxOutputs"));
     auto *v = new QVBoxLayout(this);
-    auto *bar = new QHBoxLayout;
-    auto *add = new QPushButton(QStringLiteral("+"));
-    add->setObjectName(QStringLiteral("dmxOutputsAdd"));
-    add->setToolTip(QStringLiteral("New DMX output (Art-Net or sACN)"));
-    auto *remove = new QPushButton(QStringLiteral("−"));
-    remove->setToolTip(QStringLiteral("Delete the selected output (its fixtures are left without output)"));
-    for (auto *b : {add, remove}) b->setFixedWidth(30);
-    bar->addWidget(add);
-    bar->addWidget(remove);
-    bar->addStretch(1);
-    v->addLayout(bar);
+    m_panel = new pxs::dmx::OutputsPanel;
+    m_panel->setDefaultSourceName(QStringLiteral("NyxMap"));
+    // The fixtures address an output and a network universe themselves: there is no universe map to edit
+    m_panel->setStateSource([this](quint64 id) { return m_engine->dmxOutputState(id); });
+    v->addWidget(m_panel);
 
-    m_table = new QTableWidget(0, Count);
-    m_table->setObjectName(QStringLiteral("dmxOutputsTable"));
-    m_table->setHorizontalHeaderLabels({QStringLiteral("On"), QStringLiteral("Name"), QStringLiteral("Protocol"), QStringLiteral("State")});
-    m_table->verticalHeader()->hide();
-    m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
-    m_table->setSelectionMode(QAbstractItemView::SingleSelection);
-    m_table->horizontalHeader()->setStretchLastSection(true);
-    m_table->setMinimumHeight(80);
-    m_table->setMaximumHeight(130);
-    v->addWidget(m_table);
-
-    // --- The selected output's settings
-    m_editor = new QWidget;
-    m_form = new QFormLayout(m_editor);
-    m_form->setContentsMargins(0, 4, 0, 0);
-    m_form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-    m_interface = new QComboBox;
-    m_interface->setObjectName(QStringLiteral("dmxOutputInterface"));
-    m_interface->setToolTip(QStringLiteral("The network card it sends from"));
-    m_form->addRow(QStringLiteral("Interface"), m_interface);
-    m_mode = new QComboBox;
-    m_mode->setObjectName(QStringLiteral("dmxOutputMode"));
-    m_form->addRow(QStringLiteral("Mode"), m_mode);
-    m_addresses = new QLineEdit;
-    m_addresses->setObjectName(QStringLiteral("dmxOutputAddresses"));
-    m_addresses->setPlaceholderText(QStringLiteral("2.0.0.10, 2.0.0.11"));
-    m_addresses->setToolTip(QStringLiteral("One or more IP addresses, separated by commas"));
-    m_form->addRow(QStringLiteral("IP addresses"), m_addresses);
-    m_priority = new IntBox;
-    m_priority->setObjectName(QStringLiteral("dmxOutputPriority"));
-    m_priority->setRange(0, 200);
-    m_priority->setKeyboardTracking(false);
-    m_priority->setToolTip(QStringLiteral("sACN priority: a receiver takes the highest of the sources of a universe (100 by default)"));
-    m_form->addRow(QStringLiteral("Priority"), m_priority);
-    m_sourceName = new QLineEdit;
-    m_sourceName->setObjectName(QStringLiteral("dmxOutputSourceName"));
-    m_sourceName->setToolTip(QStringLiteral("The name receivers show for this source"));
-    m_form->addRow(QStringLiteral("Source name"), m_sourceName);
-    m_port = new IntBox;
-    m_port->setObjectName(QStringLiteral("dmxOutputPort"));
-    m_port->setRange(0, 65535);
-    m_port->setSpecialValueText(QStringLiteral("Protocol default"));
-    m_port->setKeyboardTracking(false);
-    m_port->setToolTip(QStringLiteral("UDP port to send to: Art-Net 6454, sACN 5568 unless a receiver listens elsewhere"));
-    m_form->addRow(QStringLiteral("Port"), m_port);
-    m_transmission = new QComboBox;
-    m_transmission->setObjectName(QStringLiteral("dmxOutputTransmission"));
-    m_transmission->addItems({QStringLiteral("Full (512 channels)"), QStringLiteral("Partial (used channels)")});
-    m_transmission->setToolTip(QStringLiteral("Partial sends each universe only up to its last channel a fixture uses: less traffic, for the "
-                                              "receivers that take a short frame"));
-    m_form->addRow(QStringLiteral("Frames"), m_transmission);
-    m_rate = new IntBox;
-    m_rate->setObjectName(QStringLiteral("dmxOutputRate"));
-    m_rate->setRange(1, 120);
-    m_rate->setSuffix(QStringLiteral(" Hz"));
-    m_rate->setKeyboardTracking(false);
-    m_rate->setToolTip(QStringLiteral("Packets per second and universe"));
-    m_form->addRow(QStringLiteral("Rate"), m_rate);
-    v->addWidget(m_editor);
-    auto *note = new QLabel(QStringLiteral("Universes: Art-Net from 0 (port address), sACN from 1. The fixtures are patched "
-                                           "in the Fixtures tab."));
-    note->setWordWrap(true);
-    note->setStyleSheet(QStringLiteral("color:#888; font-size:11px;"));
-    v->addWidget(note);
-
-    connect(add, &QPushButton::clicked, this, [this] {
-        cmd::editFixtures(m_undo, m_engine, QStringLiteral("New DMX Output"), [](FixturePatch &p) {
-            DmxOutput o = DmxOutput::defaults(pxs::dmx::Protocol::ArtNet);
-            o.sourceName = QStringLiteral("NyxMap");
-            o.name = QStringLiteral("Art-Net %1").arg(p.outputs.size() + 1);
-            p.outputs.push_back(o);
-        });
-        emit projectEdited();
-        m_table->selectRow(m_table->rowCount() - 1);
-    });
-    connect(remove, &QPushButton::clicked, this, [this] {
-        const quint64 id = selectedOutput();
-        if (!id) return;
-        cmd::editFixtures(m_undo, m_engine, QStringLiteral("Delete DMX Output"), [&](FixturePatch &p) {
-            p.outputs.erase(std::remove_if(p.outputs.begin(), p.outputs.end(), [&](const DmxOutput &o) { return o.id == id; }),
-                            p.outputs.end());
-            for (Fixture &f : p.fixtures)
-                if (f.output == id) f.output = 0;
-        });
-        emit projectEdited();
-    });
-    connect(m_table, &QTableWidget::itemChanged, this, [this](QTableWidgetItem *i) {
-        if (m_updating) return;
-        const quint64 id = m_table->item(i->row(), Name)->data(Qt::UserRole).toULongLong();
-        if (i->column() == On) {
-            const bool on = i->checkState() == Qt::Checked;
-            cmd::editFixtures(m_undo, m_engine, QStringLiteral("Edit DMX Output"), [&](FixturePatch &p) {
-                for (DmxOutput &o : p.outputs)
-                    if (o.id == id) o.enabled = on;
+    connect(m_panel, &pxs::dmx::OutputsPanel::outputsChanged, this,
+            [this](const QList<pxs::dmx::Output> &outputs, const QString &what, const QString &field) {
+                const std::vector<DmxOutput> next(outputs.begin(), outputs.end());
+                // The output that was edited (a run of edits of one setting of it is one undo step)
+                quint64 edited = 0;
+                const FixturePatch before = m_engine->fixturePatch();
+                for (const DmxOutput &o : next) {
+                    const auto old = std::find_if(before.outputs.begin(), before.outputs.end(), [&](const DmxOutput &x) { return x.id == o.id; });
+                    if (old == before.outputs.end() || *old != o) {
+                        edited = o.id;
+                        break;
+                    }
+                }
+                cmd::editFixtures(m_undo, m_engine, what, [next](FixturePatch &p) {
+                    for (const DmxOutput &old : p.outputs) // an output deleted: its fixtures are left without one
+                        if (std::none_of(next.begin(), next.end(), [&](const DmxOutput &x) { return x.id == old.id; }))
+                            for (Fixture &f : p.fixtures)
+                                if (f.output == old.id) f.output = 0;
+                    p.outputs = next;
+                }, field.isEmpty() ? QString() : QStringLiteral("output-%1-%2").arg(field).arg(edited));
+                emit projectEdited();
             });
-        } else if (i->column() == Name) {
-            const QString name = i->text().trimmed();
-            cmd::editFixtures(m_undo, m_engine, QStringLiteral("Rename DMX Output"), [&](FixturePatch &p) {
-                for (DmxOutput &o : p.outputs)
-                    if (o.id == id) o.name = name;
-            });
-        } else {
-            return;
-        }
-        m_refreshTimer->start();
-        emit projectEdited();
-    });
-    connect(m_table, &QTableWidget::itemSelectionChanged, this, &DmxOutputsPanel::refreshEditor);
-
-    connect(m_interface, &QComboBox::activated, this, [this] {
-        const QString ip = m_interface->currentData().toString();
-        editOutput(QStringLiteral("Output Interface"), {}, [&](DmxOutput &o) { o.interfaceAddress = ip; });
-    });
-    connect(m_mode, &QComboBox::activated, this, [this](int i) {
-        editOutput(QStringLiteral("Output Mode"), {}, [&](DmxOutput &o) { o.delivery = i == 1 ? pxs::dmx::Delivery::Unicast : pxs::dmx::Delivery::Group; });
-    });
-    connect(m_addresses, &QLineEdit::editingFinished, this, [this] {
-        const QStringList ips = parseAddresses(m_addresses->text());
-        editOutput(QStringLiteral("Output Addresses"), {}, [&](DmxOutput &o) { o.destinations = ips; });
-    });
-    connect(m_priority, &QSpinBox::valueChanged, this, [this](int v) {
-        editOutput(QStringLiteral("Output Priority"), QStringLiteral("priority"), [&](DmxOutput &o) { o.priority = v; });
-    });
-    connect(m_sourceName, &QLineEdit::editingFinished, this, [this] {
-        const QString name = m_sourceName->text().trimmed();
-        editOutput(QStringLiteral("Output Source Name"), {}, [&](DmxOutput &o) { o.sourceName = name.isEmpty() ? QStringLiteral("NyxMap") : name; });
-    });
-    connect(m_port, &QSpinBox::valueChanged, this, [this](int v) {
-        editOutput(QStringLiteral("Output Port"), QStringLiteral("port"), [&](DmxOutput &o) { o.port = v; });
-    });
-    connect(m_transmission, &QComboBox::activated, this, [this](int i) {
-        editOutput(QStringLiteral("Output Frames"), {}, [&](DmxOutput &o) {
-            o.transmission = i == 1 ? pxs::dmx::Transmission::Partial : pxs::dmx::Transmission::Full;
-        });
-    });
-    connect(m_rate, &QSpinBox::valueChanged, this, [this](int v) {
-        editOutput(QStringLiteral("Output Rate"), QStringLiteral("rate"), [&](DmxOutput &o) { o.rate = v; });
-    });
 
     m_refreshTimer = new QTimer(this);
     m_refreshTimer->setSingleShot(true);
     m_refreshTimer->setInterval(60);
     connect(m_refreshTimer, &QTimer::timeout, this, &DmxOutputsPanel::refresh);
     connect(m_engine, &Engine::fixturesChanged, m_refreshTimer, qOverload<>(&QTimer::start));
-    m_stateTimer = new QTimer(this);
-    m_stateTimer->setInterval(1000);
-    connect(m_stateTimer, &QTimer::timeout, this, &DmxOutputsPanel::refreshStates);
-    m_stateTimer->start();
     refresh();
-}
-
-quint64 DmxOutputsPanel::selectedOutput() const
-{
-    const int row = m_table->currentRow();
-    const QTableWidgetItem *name = row >= 0 ? m_table->item(row, Name) : nullptr;
-    return name ? name->data(Qt::UserRole).toULongLong() : 0;
-}
-
-void DmxOutputsPanel::editOutput(const QString &text, const QString &field, const std::function<void(DmxOutput &)> &fn)
-{
-    const quint64 id = selectedOutput();
-    if (m_updating || !id) return;
-    cmd::editFixtures(m_undo, m_engine, text, [&](FixturePatch &p) {
-        for (DmxOutput &o : p.outputs)
-            if (o.id == id) fn(o);
-    }, field.isEmpty() ? QString() : QStringLiteral("output-%1-%2").arg(field).arg(id));
-    emit projectEdited();
-}
-
-void DmxOutputsPanel::setRowShown(QWidget *field, bool shown)
-{
-    field->setVisible(shown);
-    if (QWidget *label = m_form->labelForField(field)) label->setVisible(shown);
 }
 
 void DmxOutputsPanel::refresh()
 {
     // Not under a rename in progress (a line edit in a cell has the focus): tried again a moment later
-    if (const QWidget *f = QApplication::focusWidget(); f && m_table->viewport()->isAncestorOf(f) && qobject_cast<const QLineEdit *>(f)) {
+    if (const QWidget *f = QApplication::focusWidget(); f && m_panel->isAncestorOf(f) && qobject_cast<const QLineEdit *>(f)) {
         m_refreshTimer->start();
         return;
     }
     const FixturePatch p = m_engine->fixturePatch();
-    const quint64 keep = selectedOutput();
-    m_updating = true;
-    m_table->setRowCount(0);
-    m_table->setRowCount(int(p.outputs.size()));
-    int keepRow = p.outputs.empty() ? -1 : 0;
-    for (int r = 0; r < int(p.outputs.size()); ++r) {
-        const DmxOutput &o = p.outputs[size_t(r)];
-        if (o.id == keep) keepRow = r;
-        auto *on = new QTableWidgetItem;
-        on->setFlags((on->flags() | Qt::ItemIsUserCheckable) & ~Qt::ItemIsEditable);
-        on->setCheckState(o.enabled ? Qt::Checked : Qt::Unchecked);
-        m_table->setItem(r, On, on);
-        auto *name = new QTableWidgetItem(outputName(o));
-        name->setData(Qt::UserRole, o.id);
-        m_table->setItem(r, Name, name);
-        auto *proto = new QComboBox;
-        proto->addItems({QStringLiteral("Art-Net"), QStringLiteral("sACN")});
-        proto->setCurrentIndex(o.protocol == pxs::dmx::Protocol::Sacn ? 1 : 0);
-        const quint64 id = o.id;
-        connect(proto, &QComboBox::activated, this, [this, id](int index) {
-            cmd::editFixtures(m_undo, m_engine, QStringLiteral("Output Protocol"), [&](FixturePatch &q) {
-                for (DmxOutput &x : q.outputs)
-                    if (x.id == id) x.protocol = index == 1 ? pxs::dmx::Protocol::Sacn : pxs::dmx::Protocol::ArtNet;
-            });
-            emit projectEdited();
-        });
-        m_table->setCellWidget(r, Protocol, proto);
-        auto *state = new QTableWidgetItem;
-        state->setFlags(state->flags() & ~Qt::ItemIsEditable);
-        m_table->setItem(r, State, state);
-    }
-    if (keepRow >= 0) m_table->selectRow(keepRow);
-    m_table->resizeColumnsToContents();
-    m_updating = false;
-    refreshEditor();
-    refreshStates();
-}
-
-void DmxOutputsPanel::refreshEditor()
-{
-    const FixturePatch p = m_engine->fixturePatch();
-    const DmxOutput *o = p.findOutput(selectedOutput());
-    m_editor->setVisible(o != nullptr);
-    if (!o) return;
-    const bool sacn = o->protocol == pxs::dmx::Protocol::Sacn;
-    m_updating = true;
-    QSignalBlocker b1(m_interface), b2(m_mode), b3(m_priority), b4(m_rate), b5(m_port), b6(m_transmission);
-
-    // This machine's network cards (up, with an IPv4 address), and the one chosen if it is not here
-    m_interface->clear();
-    m_interface->addItem(QStringLiteral("Any (the system's choice)"), QString());
-    for (const QNetworkInterface &i : QNetworkInterface::allInterfaces()) {
-        if (!(i.flags() & QNetworkInterface::IsUp)) continue;
-        for (const QNetworkAddressEntry &e : i.addressEntries())
-            if (e.ip().protocol() == QAbstractSocket::IPv4Protocol)
-                m_interface->addItem(QStringLiteral("%1 · %2").arg(i.humanReadableName(), e.ip().toString()), e.ip().toString());
-    }
-    int at = m_interface->findData(o->interfaceAddress);
-    if (at < 0) {
-        m_interface->addItem(QStringLiteral("%1 (not on this machine)").arg(o->interfaceAddress), o->interfaceAddress);
-        at = m_interface->count() - 1;
-    }
-    m_interface->setCurrentIndex(at);
-
-    m_mode->clear();
-    m_mode->addItems({sacn ? QStringLiteral("Multicast") : QStringLiteral("Broadcast"), QStringLiteral("Unicast")});
-    const bool unicast = o->delivery == pxs::dmx::Delivery::Unicast;
-    m_mode->setCurrentIndex(unicast ? 1 : 0);
-    m_mode->setToolTip(sacn ? QStringLiteral("Multicast: each universe to its group (239.255.x.y); unicast: to the IP addresses given")
-                            : QStringLiteral("Broadcast: to every node of the interface's network; unicast: to the IP addresses given"));
-    if (!m_addresses->hasFocus()) m_addresses->setText(o->destinations.join(QStringLiteral(", ")));
-    QStringList bad;
-    for (const QString &ip : o->destinations)
-        if (QHostAddress(ip).isNull()) bad << ip;
-    m_addresses->setStyleSheet(bad.isEmpty() && !(unicast && o->destinations.isEmpty())
-                                   ? QString() : QStringLiteral("QLineEdit { border: 1px solid #c55; }"));
-    m_addresses->setToolTip(!bad.isEmpty() ? QStringLiteral("Not IP addresses: %1").arg(bad.join(QStringLiteral(", ")))
-                                           : QStringLiteral("One or more IP addresses, separated by commas"));
-    m_priority->setValue(o->priority);
-    if (!m_sourceName->hasFocus()) m_sourceName->setText(o->sourceName);
-    m_rate->setRange(1, int(o->maxRate())); // Art-Net stops at 44, sACN at 120
-    m_rate->setValue(int(std::lround(o->rate)));
-    m_port->setValue(o->port);
-    m_transmission->setCurrentIndex(o->transmission == pxs::dmx::Transmission::Partial ? 1 : 0);
-    setRowShown(m_addresses, unicast);
-    setRowShown(m_priority, sacn);
-    setRowShown(m_sourceName, sacn);
-    m_updating = false;
-}
-
-void DmxOutputsPanel::refreshStates()
-{
-    if (!isVisible()) return;
-    m_updating = true;
-    for (int r = 0; r < m_table->rowCount(); ++r) {
-        QTableWidgetItem *name = m_table->item(r, Name), *state = m_table->item(r, State);
-        if (!name || !state) continue;
-        const DmxOutputState s = m_engine->dmxOutputState(name->data(Qt::UserRole).toULongLong());
-        state->setText(s.level == DmxOutputState::Off     ? QStringLiteral("Off")
-                       : s.level == DmxOutputState::Error ? QStringLiteral("Error: %1").arg(s.text)
-                                                          : QStringLiteral("Sending · %1 packets").arg(s.packets));
-        state->setToolTip(s.text);
-        state->setForeground(s.level == DmxOutputState::Error ? QColor(230, 90, 90) : palette().color(QPalette::Text));
-    }
-    m_updating = false;
+    m_panel->setOutputs(QList<pxs::dmx::Output>(p.outputs.begin(), p.outputs.end()));
 }
