@@ -9,14 +9,14 @@ A creative instrument for projection mapping, video, 3D, generative visuals and 
 Every effect can be applied to a layer or through an RGBA mask — compositing at its core.
 
 <!-- release-downloads:start -->
-**LATEST VERSION · [v0.7.0](https://github.com/PixelStereo/NyxMap/releases/tag/v0.7.0)**
+**LATEST VERSION · [0.7.1](https://github.com/PixelStereo/NyxMap/releases/tag/0.7.1)**
 
-[![macOS Apple Silicon](https://img.shields.io/badge/macOS-Apple_Silicon-6b7787?style=for-the-badge&logo=apple&logoColor=white&labelColor=1a1c20)](https://github.com/PixelStereo/NyxMap/releases/download/v0.7.0/NyxMap-macos-arm64-v0.7.0.zip)&nbsp;&nbsp;[![Windows Installer](https://img.shields.io/badge/Windows-Installer-2b6fb6?style=for-the-badge&logo=windows&logoColor=white&labelColor=1a1c20)](https://github.com/PixelStereo/NyxMap/releases/download/v0.7.0/NyxMap-windows-x64-v0.7.0-Setup.exe)&nbsp;&nbsp;[![Linux AppImage](https://img.shields.io/badge/Linux-AppImage-b8821c?style=for-the-badge&logo=linux&logoColor=white&labelColor=1a1c20)](https://github.com/PixelStereo/NyxMap/releases/download/v0.7.0/NyxMap-linux-x64-v0.7.0.AppImage)
+[![macOS Apple Silicon](https://img.shields.io/badge/macOS-Apple_Silicon-6b7787?style=for-the-badge&logo=apple&logoColor=white&labelColor=1a1c20)](https://github.com/PixelStereo/NyxMap/releases/download/0.7.1/NyxMap-macos-arm64-0.7.1.zip)&nbsp;&nbsp;[![Windows Installer](https://img.shields.io/badge/Windows-Installer-2b6fb6?style=for-the-badge&logo=windows&logoColor=white&labelColor=1a1c20)](https://github.com/PixelStereo/NyxMap/releases/download/0.7.1/NyxMap-windows-x64-0.7.1-Setup.exe)&nbsp;&nbsp;[![Linux AppImage](https://img.shields.io/badge/Linux-AppImage-b8821c?style=for-the-badge&logo=linux&logoColor=white&labelColor=1a1c20)](https://github.com/PixelStereo/NyxMap/releases/download/0.7.1/NyxMap-linux-x64-0.7.1.AppImage)
 
 <a href="https://pixelstereo.github.io/NyxMap/"><img alt="Documentation" src="https://img.shields.io/badge/documentation-blue?style=for-the-badge&logo=material%20for%20mkdocs" height="28"></a>
 
 
-<a href="https://github.com/PixelStereo/NyxMap/releases/download/v0.7.0/NyxMap-Companion-v0.7.0.tgz"><img alt="Companion" src="https://raw.githubusercontent.com/bitfocus/companion-icons/main/Companion/companion.png" height="28"></a> <a href="https://github.com/PixelStereo/NyxMap/releases/download/v0.7.0/NyxMap-Companion-v0.7.0.tgz"><img alt="Module for Companion" src="https://img.shields.io/badge/Module_for-Companion-24272C?style=for-the-badge"></a>
+<a href="https://github.com/PixelStereo/NyxMap/releases/download/0.7.1/NyxMap-Companion-0.7.1.tgz"><img alt="Companion" src="https://raw.githubusercontent.com/bitfocus/companion-icons/main/Companion/companion.png" height="28"></a> <a href="https://github.com/PixelStereo/NyxMap/releases/download/0.7.1/NyxMap-Companion-0.7.1.tgz"><img alt="Module for Companion" src="https://img.shields.io/badge/Module_for-Companion-24272C?style=for-the-badge"></a>
 
 [Setup Guide for the Companion Module](docs/integrations/companion.md)
 <!-- release-downloads:end -->
