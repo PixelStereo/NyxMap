@@ -36,6 +36,7 @@ static const QColor kWave(224, 180, 58);
 static const QColor kHandle(235, 235, 240);
 static const QColor kPlayhead(76, 217, 100);
 static const QColor kCurrentStart(246, 196, 83);
+static int s_gestures = 0; // numbers the drags of the colour and event lanes
 static constexpr int kPlaybackSteps = 1000000;
 
 static QString playbackTime(double seconds)
@@ -618,7 +619,7 @@ void ColorLane::mousePressEvent(QMouseEvent *e)
     m_add = m_drag < 0;
     if (m_drag >= 0) {
         m_pressTime = m_track.keys[size_t(m_drag)].t;
-        m_gesture = pxs::curveview::nextGesture();
+        m_gesture = ++s_gestures;
     }
     update();
 }
@@ -854,7 +855,7 @@ void EventLane::mousePressEvent(QMouseEvent *e)
     m_add = m_drag < 0;
     if (m_drag >= 0) {
         m_pressTime = m_track.keys[size_t(m_drag)].t;
-        m_gesture = pxs::curveview::nextGesture();
+        m_gesture = ++s_gestures;
     }
     update();
 }
@@ -1128,7 +1129,7 @@ void TrackRow::build()
     connect(m_colorLane, &ColorLane::edited, this, [this](const AnimTrack &t, int gesture) {
         editedTrack().keys = t.keys;
         updateStartMode();
-        changed(false, gesture ? QStringLiteral("lane%1/axis%2").arg(gesture).arg(m_axisIndex) : QString());
+        changed(false, gesture ? QStringLiteral("track%1/curve%2/axis%3").arg(m_i).arg(gesture).arg(m_axisIndex) : QString());
     });
     connect(m_colorLane, &ColorLane::zoomTime, m_ed, &AnimEditor::zoomTime);
     connect(m_colorLane, &ColorLane::panTime, m_ed, &AnimEditor::panTime);
@@ -1136,7 +1137,7 @@ void TrackRow::build()
     box->addWidget(m_eventLane, 1);
     connect(m_eventLane, &EventLane::edited, this, [this](const AnimTrack &t, int gesture) {
         track().keys = t.keys;
-        changed(false, gesture ? QStringLiteral("lane%1/events").arg(gesture) : QString());
+        changed(false, gesture ? QStringLiteral("track%1/lane%2/events").arg(m_i).arg(gesture) : QString());
     });
     connect(m_eventLane, &EventLane::zoomTime, m_ed, &AnimEditor::zoomTime);
     connect(m_eventLane, &EventLane::panTime, m_ed, &AnimEditor::panTime);
@@ -1171,7 +1172,7 @@ void TrackRow::build()
     connect(m_lane, &CurveLane::edited, this, [this](const AnimTrack &t, int gesture) {
         editedTrack().keys = t.keys;
         updateStartMode();
-        changed(false, gesture ? QStringLiteral("lane%1/axis%2").arg(gesture).arg(m_axisIndex) : QString());
+        changed(false, gesture ? QStringLiteral("track%1/lane%2/axis%3").arg(m_i).arg(gesture).arg(m_axisIndex) : QString());
     });
     connect(m_lane, &CurveLane::zoomTime, m_ed, &AnimEditor::zoomTime);
     connect(m_lane, &CurveLane::panTime, m_ed, &AnimEditor::panTime);
@@ -1337,9 +1338,9 @@ void TrackRow::rebuildFilters()
             curve->setView(-.03, 1.03, -.08, 1.08);
             curve->setFixedHeight(160);
             column->addWidget(curve);
-            connect(curve, &CurveLane::edited, this, [write, k](const AnimTrack &t, int gesture) {
+            connect(curve, &CurveLane::edited, this, [write, k, row = m_i](const AnimTrack &t, int gesture) {
                 write([t](auto &f) { f.curve = t; },
-                      gesture ? QStringLiteral("filterCurve%1/%2").arg(k).arg(gesture) : QString());
+                      gesture ? QStringLiteral("track%1/filterCurve%2/%3").arg(row).arg(k).arg(gesture) : QString());
             });
         }
     }
