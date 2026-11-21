@@ -3,6 +3,16 @@
 #include "Engine.h"
 #include "AnimEditor.h"
 #include "InteractionPanel.h"
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
+#include <QListWidget>
+#include <QMimeData>
+#include <QPushButton>
+#include <Fields.h>
+#include <QEventLoop>
+#include <QElapsedTimer>
+#include <functional>
 #include "TimelinePanel.h"
 #include "TimelineActivity.h"
 #include <QPushButton>
@@ -46,22 +56,30 @@ int main(int argc, char **argv)
     };
     settle();
     auto filters = [&] { return engine.interactions().back().filters; };
+    std::function<QAction *(QMenu *, const QString &)> find = [&](QMenu *menu, const QString &text) -> QAction * {
+        for (QAction *a : menu->actions()) {
+            if (a->text() == text && !a->menu()) return a;
+            if (a->menu())
+                if (QAction *found = find(a->menu(), text)) return found;
+        }
+        return nullptr;
+    };
     auto add = [&](const char *kind) {
-        auto *button = panel.findChild<QToolButton *>("addFilter");
+        auto *editor = panel.findChild<pxs::filterview::FilterEditor *>("filters"); // the target's (the shared ones have their own)
+        auto *button = editor ? editor->findChild<QPushButton *>("addFilter") : nullptr;
         if (!button || !button->menu()) return false;
-        for (QAction *a : button->menu()->actions())
-            if (a->text() == QLatin1String(kind)) {
-                a->trigger();
-                settle();
-                return true;
-            }
+        if (QAction *a = find(button->menu(), QLatin1String(kind))) {
+            a->trigger();
+            settle();
+            return true;
+        }
         return false;
     };
 
     bool invert = false;
     for (auto *box : panel.findChildren<QCheckBox *>()) invert = invert || box->text() == "Invert";
     check(!invert, "no Invert: a filter does it");
-    check(filters().empty() && panel.findChild<QToolButton *>("addFilter"), "none at first, + Filter offered");
+    check(filters().empty() && panel.findChild<QPushButton *>("addFilter"), "none at first, Add filter offered");
 
     check(add("Math") && add("Clamp"), "add Math, then Clamp");
     check(filters().size() == 2 && filters()[0].kind == InteractionFilter::Math && filters()[1].kind == InteractionFilter::Clamp,
@@ -70,6 +88,7 @@ int main(int argc, char **argv)
         op->setCurrentIndex(int(MathOp::OneMinus));
         emit op->activated(int(MathOp::OneMinus));
         settle();
+        { QElapsedTimer t; t.start(); while (t.elapsed() < 80) app.processEvents(QEventLoop::AllEvents, 10); } // its card is made again
     }
     check(filters()[0].op == MathOp::OneMinus, "Math › 1 − x");
     check(!panel.findChild<QWidget *>("filter0a"), "1 − x has no value to set");
@@ -82,10 +101,12 @@ int main(int argc, char **argv)
                 dialog->accept();
             }
         });
-        const QPoint at = rename->rect().center();
-        QMouseEvent doubleClick(QEvent::MouseButtonDblClick, at, rename->mapToGlobal(at),
+        QWidget *card = rename->parentWidget();
+        while (card && card->objectName() != "filterCard") card = card->parentWidget();
+        const QPoint at = rename->mapTo(card, rename->rect().center());
+        QMouseEvent doubleClick(QEvent::MouseButtonDblClick, at, card->mapToGlobal(at),
                                 Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
-        QApplication::sendEvent(rename, &doubleClick);
+        QApplication::sendEvent(card, &doubleClick);
         settle();
         const auto *label = panel.findChild<QLabel *>("filterName0");
         check(filters()[0].enabled && filters()[0].name == "Invert signal" && label && label->text().contains("Invert signal (Math)"),
@@ -94,34 +115,39 @@ int main(int argc, char **argv)
         settle();
         check(filters()[0].name.isEmpty() && filters()[0].op == MathOp::OneMinus, "renaming undoes without changing settings");
     }
-    auto select = [&](int k) { // a click on a filter (its frame, not a field)
-        if (auto *block = panel.findChild<QWidget *>(QStringLiteral("filterBlock%1").arg(k))) {
-            const QPointF at(block->width() - 4, 4);
-            QMouseEvent press(QEvent::MouseButtonPress, at, block->mapToGlobal(at.toPoint()), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
-            QApplication::sendEvent(block, &press);
-            QMouseEvent release(QEvent::MouseButtonRelease, at, block->mapToGlobal(at.toPoint()), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
-            QApplication::sendEvent(block, &release);
-        }
+    // A card dragged by its handle and dropped below the other one (the drag itself needs a window system: its events are sent)
+    auto dragCard = [&](int from, bool toEnd) {
+        auto *editor = panel.findChild<pxs::filterview::FilterEditor *>("filters");
+        auto *list = editor ? editor->findChild<QListWidget *>() : nullptr;
+        if (!list) return;
+        QMimeData mime;
+        mime.setData("application/x-pxs-filter", QByteArray::number(from));
+        const QPoint where(list->viewport()->width() / 2, toEnd ? list->viewport()->height() - 2 : 2);
+        QDragEnterEvent enter(where, Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(list->viewport(), &enter);
+        QDragMoveEvent move(where, Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(list->viewport(), &move);
+        QDropEvent drop(where, Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(list->viewport(), &drop);
+        { QElapsedTimer t; t.start(); while (t.elapsed() < 80) app.processEvents(QEventLoop::AllEvents, 10); }
         settle();
     };
-    select(1);
-    if (auto *up = panel.findChild<QToolButton *>("filterUp")) up->click();
-    settle();
-    check(filters()[0].kind == InteractionFilter::Clamp && filters()[1].kind == InteractionFilter::Math, "Clamp moved before Math");
+    dragCard(1, false);
+    check(filters()[0].kind == InteractionFilter::Clamp && filters()[1].kind == InteractionFilter::Math, "Clamp dragged before Math");
     undo.undo();
     settle();
     check(filters()[0].kind == InteractionFilter::Math, "the move undoes");
     if (auto *on = panel.findChild<QCheckBox *>("filterOn0")) on->setChecked(false);
     settle();
     check(!filters()[0].enabled, "a filter switched off");
-    select(1);
-    if (auto *remove = panel.findChild<QToolButton *>("removeFilter")) remove->click();
+    if (auto *remove = panel.findChild<QToolButton *>("removeFilter1")) remove->click();
+    { QElapsedTimer t; t.start(); while (t.elapsed() < 80) app.processEvents(QEventLoop::AllEvents, 10); }
     settle();
     check(filters().size() == 1 && filters()[0].kind == InteractionFilter::Math, "Clamp removed");
     undo.undo();
     settle();
     check(filters().size() == 2, "the removal undoes");
-    check(panel.findChild<QWidget *>("filtersFrame") != nullptr, "the filters in their frame");
+    check(panel.findChild<pxs::filterview::FilterEditor *>("filters") != nullptr, "the filters in pxs's editor");
 
     FixturePatch patch = engine.fixturePatch();
     DmxOutput dmx;
@@ -149,7 +175,7 @@ int main(int argc, char **argv)
 
     auto *tabs = panel.findChild<QTabWidget *>("interactionTargetTabs");
     check(tabs && tabs->count() == 1 && tabs->tabText(0) == "Target 1", "Target 1 exists by default");
-    check(panel.findChild<QWidget *>("sharedFiltersFrame"), "shared filters have their own frame");
+    check(panel.findChild<pxs::filterview::FilterEditor *>("sharedFilters"), "shared filters have their own editor");
     if (tabs) {
         QTimer::singleShot(0, &panel, [&] {
             if (auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget())) {
@@ -193,7 +219,12 @@ int main(int argc, char **argv)
     check(engine.interactions().back().source == InteractionSource::Osc, "source switch redoes");
 
     // Any value: a filter's setting (a number field, no slider and no bounds)
-    if (auto *clampMax = panel.findChild<QDoubleSpinBox *>("filter1b")) clampMax->setValue(250);
+    if (auto *clampMax = panel.findChild<SliderField *>("filter1b")) { // typed in its number
+        if (auto *typed = clampMax->findChild<QDoubleSpinBox *>()) {
+            typed->setValue(250);
+            emit typed->editingFinished();
+        }
+    }
     settle();
     check(filters()[1].kind == InteractionFilter::Clamp && filters()[1].b == 250, "a setting beyond its usual range");
     bool ranges = false, toggle = false; // a range is a Remap, a toggle a Toggle: no fields of their own
@@ -203,15 +234,18 @@ int main(int argc, char **argv)
 
 
     check(add("Curve") && filters().size() == 3 && panel.findChild<CurveLane *>("filterCurve2"), "a Curve, with its editor");
-    check(panel.findChild<QProgressBar *>("filterMeter0") && panel.findChild<QProgressBar *>("filterMeter2") &&
-              panel.findChild<QLabel *>("filterValue1"),
-          "each filter shows what comes out of it");
+    {
+        int shown = 0;
+        for (auto *bar : panel.findChildren<QProgressBar *>("signalValue"))
+            if (bar->isVisibleTo(&panel)) ++shown;
+        check(shown >= 2, "a bar for what comes into the filters and one for what goes out");
+    }
     if (auto *list = panel.findChild<QTreeWidget *>()) check(list->columnCount() == 3, "no Value column in the list");
     // A Remap from +: from what the source gives (OSC: 0..1) to what the target takes (the composition's opacity: 0..1)
     check(add("Remap") && filters().size() == 4 && filters()[3].kind == InteractionFilter::Remap && filters()[3].a == 0 &&
               filters()[3].b == 1 && filters()[3].c == 0 && filters()[3].d == 1,
           "a Remap starts from the source's range to the target's");
-    check(panel.findChild<QDoubleSpinBox *>("filter3d") != nullptr, "its four ends as numbers");
+    check(panel.findChild<QWidget *>("filter3d") != nullptr, "its four ends as numbers");
     {
         auto list = filters();
         list.pop_back();

@@ -198,7 +198,7 @@ int runScene3dUiTests(Engine &engine)
             check(find(gate).filters.empty(), "a gate takes the hit as it is: its instrument has its envelope");
             check(!panel->findChild<QToolButton *>("interactionNodes"), "node view is absent");
             check(panel->findChild<QWidget *>("interactionTargetTabs") &&
-                      panel->findChild<QWidget *>("sharedFiltersFrame"), "target tabs follow the shared filter stack");
+                      panel->findChild<QWidget *>("sharedFilters"), "target tabs follow the shared filter stack");
         }
         engine.setInteractions({});
         engine.removeLayer(engine.indexOfId(other));

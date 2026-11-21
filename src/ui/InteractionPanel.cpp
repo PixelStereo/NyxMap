@@ -1,5 +1,5 @@
 #include "InteractionPanel.h"
-#include "AdsrCurve.h"
+#include <cstdio>
 #include "TimelinePanel.h"
 #include "AudioSpectrum.h"
 #include <QDoubleSpinBox>
@@ -780,7 +780,6 @@ quint64 InteractionPanel::addEnvelope(quint64 layer, const QString &path, Intera
     commitList(list, QStringLiteral("Add Envelope"));
     emit showRequested();
     m_kinds->button(kInteractionSourceCount)->click();
-    m_selectedFilter = 0;
     rebuildList();
     select(id);
     rebuildSettings();
@@ -859,22 +858,15 @@ void InteractionPanel::refreshLevels()
     };
     const auto *value = sampled(m_shown);
     const bool y = m_xyAxis == 1 && value && value->hasY;
-    if (m_lane) m_lane->setPlayhead(value ? (y ? value->yCurveInput : value->curveInput) : 0, value != nullptr);
     auto place = [](double v, const std::pair<double, double> &span) { // within the meter's range: 0..1000
         const double w = span.second - span.first;
         return int(std::lround(std::clamp(std::abs(w) < 1e-12 ? 0.0 : (v - span.first) / w, 0.0, 1.0) * 1000));
     };
     if (m_inMeter) m_inMeter->setValue(value ? place(y ? value->yInput : value->input, m_inSpan) : 0);
-    if (!m_stageMeters.empty()) { // each filter's output
+    if (m_filterEditor) { // what comes into the filters, and what each one makes of it
         static const std::vector<double> none;
         const std::vector<double> &stages = !value ? none : y ? value->yStages : value->stages;
-        for (size_t k = 0; k < m_stageMeters.size(); ++k) {
-            const StageMeter &m = m_stageMeters[k];
-            const bool known = k < stages.size();
-            m.bar->setValue(known ? place(stages[k], m.span) : 0);
-            const QString text = known ? QString::number(stages[k], 'g', 5) : QStringLiteral("—");
-            if (m.number->text() != text) m.number->setText(text);
-        }
+        m_filterEditor->setTrace(value != nullptr, value ? (y ? value->yInput : value->input) : 0.0, stages);
     }
     if (m_outMeter) m_outMeter->setValue(value ? place(y ? value->yOutput : value->output, m_outSpan) : 0);
     if (m_actionState) {
@@ -1235,8 +1227,7 @@ void InteractionPanel::rebuildSettings()
     m_shown = cur ? cur->id : 0;
     m_inMeter = m_outMeter = nullptr;
     m_actionState = nullptr;
-    m_stageMeters.clear();
-    m_lane = nullptr;
+    m_filterEditor = nullptr;
     while (QLayoutItem *item = m_settingsLayout->takeAt(0)) {
         if (QWidget *w = item->widget()) { w->hide(); w->deleteLater(); }
         delete item;
@@ -1584,292 +1575,65 @@ void InteractionPanel::rebuildSettings()
         return;
     }
 
+    // The chain of filters of one interaction: pxs's editor (cards to fold, rename, set and drag; a curve, an envelope in the hand;
+    // a bar for what comes in and one for what goes out). An edit goes to the undo stack as one step, a drag's as one in all.
     const auto filterStack = [&](const Interaction &it, const EditFn &change, const QString &title, bool live, bool common,
                                  double srcLo, double srcHi, double tgtLo, double tgtHi) {
-        const auto edit = [change](const QString &text, const std::function<void(Interaction &)> &fn, const QString &merge = {}) {
-            change(text, fn, merge);
-        };
-        int *selection = common ? &m_sharedSelectedFilter : &m_selectedFilter;
+        using pxs::filterview::FilterEditor;
+        auto *editor = new FilterEditor;
+        editor->setObjectName(common ? QStringLiteral("sharedFilters") : QStringLiteral("filters"));
+        editor->setFitContent(true);
+        pxs::filterview::Signal signal;
+        signal.title = title;
+        signal.tooltip = QStringLiteral("Applied one after the other, from the top, between the source range and the master level");
+        signal.unfolded = true; // the settings of each filter are shown
+        signal.lo = srcLo;
+        signal.hi = srcHi;
+        signal.targetLo = tgtLo;
+        signal.targetHi = tgtHi;
+        signal.text = [](double v) { return QString::number(v, 'g', 5); };
         const auto preset = [this, live](std::initializer_list<QWidget *> widgets, const QStringList &paths) {
             if (live) attachPreset(widgets, paths);
         };
-        // Filters, in a frame, as a layer's effects: + adds one (of the kind chosen), − removes the one selected, ▲ ▼ move
-        // it; each one on or off, its settings under its name, any value. A click on a filter selects it
-        const int count = int(it.filters.size());
-        *selection = count ? std::clamp(*selection, 0, count - 1) : -1;
-        auto *frame = new QFrame;
-        frame->setObjectName(common ? QStringLiteral("sharedFiltersFrame") : QStringLiteral("filtersFrame"));
-        frame->setStyleSheet(QStringLiteral("QFrame#filtersFrame, QFrame#sharedFiltersFrame { border:1px solid #3c3c43; border-radius:4px; }"));
-        auto *fv = new QVBoxLayout(frame);
-        fv->setContentsMargins(6, 4, 6, 6);
-        fv->setSpacing(4);
-        auto *bar = new QHBoxLayout;
-        auto *filtersLabel = new QLabel(title);
-        filtersLabel->setStyleSheet(QStringLiteral("font-weight: 600;"));
-        filtersLabel->setToolTip(QStringLiteral("Applied one after the other, from the top, between the source range and the master level"));
-        auto tool = [common](const QString &text, const QString &tip, const char *name) {
-            auto *b = new QToolButton;
-            b->setObjectName((common ? QStringLiteral("shared_") : QString()) + QString::fromLatin1(name));
-            b->setText(text);
-            b->setToolTip(tip);
-            b->setMinimumWidth(26);
-            return b;
+        // Each setting, the on / off box and a Math's operation can be put in a preset
+        signal.decorate = [preset](int index, const QString &key, QWidget *label, QWidget *field) {
+            const QString base = QStringLiteral("filters/%1/").arg(index + 1);
+            if (key == QLatin1String("enable")) preset({field}, {base + QStringLiteral("enable")});
+            else if (key == QLatin1String("op")) preset({field}, {QStringLiteral("filters")});
+            else preset({label, field}, {base + key});
         };
-        auto *addFilter = tool(QStringLiteral("+"), QStringLiteral("Add a filter (at the end)"), "addFilter");
-        auto *removeFilter = tool(QStringLiteral("−"), QStringLiteral("Remove the selected filter"), "removeFilter");
-        auto *upFilter = tool(QStringLiteral("▲"), QStringLiteral("Move the selected filter up (applied earlier)"), "filterUp");
-        auto *downFilter = tool(QStringLiteral("▼"), QStringLiteral("Move the selected filter down (applied later)"), "filterDown");
-        removeFilter->setEnabled(*selection >= 0);
-        upFilter->setEnabled(*selection > 0);
-        downFilter->setEnabled(*selection >= 0 && *selection + 1 < count);
-        addFilter->setPopupMode(QToolButton::InstantPopup);
-        addFilter->setStyleSheet(QStringLiteral("QToolButton::menu-indicator { image: none; width: 0; }")); // a plain +
-        auto *addMenu = new QMenu(addFilter);
-        addFilter->setMenu(addMenu);
-        const InteractionFilter overTime[] = {InteractionFilter::Average, InteractionFilter::WeightedAverage, InteractionFilter::AttackRelease,
-                                              InteractionFilter::Damper, InteractionFilter::PulseDetection, InteractionFilter::Delay,
-                                              InteractionFilter::Speed, InteractionFilter::Envelope};
-        const InteractionFilter onValue[] = {InteractionFilter::Remap, InteractionFilter::Curve, InteractionFilter::Math, InteractionFilter::Clamp,
-                                             InteractionFilter::Steps, InteractionFilter::Threshold, InteractionFilter::Toggle};
-        auto offer = [this, edit, addMenu, count, selection, srcLo, srcHi, tgtLo, tgtHi](InteractionFilter kind) {
-            addMenu->addAction(interactionFilterName(kind), this, [this, edit, kind, count, selection, srcLo, srcHi, tgtLo, tgtHi] {
-                m_revealCurve = kind == InteractionFilter::Curve;
-                *selection = count; // the new one
-                // A Remap: from what the source gives to what the target takes, as they usually go
-                const InteractionStage made = kind == InteractionFilter::Remap ? InteractionStage::remap(srcLo, srcHi, tgtLo, tgtHi)
-                                                                               : InteractionStage::made(kind);
-                edit(QStringLiteral("Add Filter"), [made](Interaction &x) { x.filters.push_back(made); });
-                rebuildSettings();
+        // An Envelope's four numbers can come from an ADSR control (Controls › + New › ADSR): moved on a remote page, by a timeline, in a preset
+        signal.extra = [this, editor = QPointer<FilterEditor>(editor)](int index, const InteractionStage &stage) -> QWidget * {
+            if (stage.kind != InteractionFilter::Envelope) return nullptr;
+            auto *row = new QWidget;
+            auto *line = new QHBoxLayout(row);
+            line->setContentsMargins(0, 0, 0, 0);
+            line->addWidget(new QLabel(QStringLiteral("Settings from")));
+            auto *from = new QComboBox;
+            from->setObjectName(QStringLiteral("filterAdsrControl%1").arg(index));
+            from->addItem(QStringLiteral("This filter"), QString());
+            for (const ShowControl &c : m_engine->controls())
+                if (c.kind == ShowControl::Kind::Adsr) from->addItem(QStringLiteral("ADSR · %1").arg(c.name), c.key);
+            if (const int at = from->findData(stage.adsrControl); at >= 0) from->setCurrentIndex(at);
+            else if (!stage.adsrControl.isEmpty()) {
+                from->addItem(QStringLiteral("ADSR · %1 (gone)").arg(stage.adsrControl), stage.adsrControl);
+                from->setCurrentIndex(from->count() - 1);
+            }
+            from->setToolTip(QStringLiteral("Where Attack, Decay, Sustain and Release come from: this filter's own fields, or an ADSR control"));
+            line->addWidget(from, 1);
+            connect(from, qOverload<int>(&QComboBox::activated), row, [editor, index, from](int) {
+                const QString key = from->currentData().toString();
+                if (editor) editor->editStage(index, [key](InteractionStage &s) { s.adsrControl = key; }, QStringLiteral("Envelope Settings From"));
             });
+            return row;
         };
-        addMenu->addSection(QStringLiteral("On the value"));
-        for (InteractionFilter k : onValue) offer(k);
-        addMenu->addSection(QStringLiteral("Over time"));
-        for (InteractionFilter k : overTime) offer(k);
-        bar->addWidget(filtersLabel);
-        bar->addStretch();
-        for (QToolButton *b : {addFilter, removeFilter, upFilter, downFilter}) bar->addWidget(b);
-        fv->addLayout(bar);
-        preset({filtersLabel}, {QStringLiteral("filters")});
-        if (it.filters.empty()) fv->addWidget(note(QStringLiteral("No filters. Add one with +.")));
-        connect(removeFilter, &QToolButton::clicked, this, [this, edit, selection] {
-            const int k = *selection;
-            edit(QStringLiteral("Remove Filter"), [k](Interaction &x) {
-                if (k >= 0 && k < int(x.filters.size())) x.filters.erase(x.filters.begin() + k);
-            });
-            rebuildSettings();
+        editor->setSignal(signal, it.filters);
+        preset({editor}, {QStringLiteral("filters")});
+        connect(editor, &FilterEditor::chainEdited, this, [change](const pxs::filterview::FilterChain &chain, const QString &text, const QString &merge) {
+            change(text, [chain](Interaction &x) { x.filters = chain; }, merge);
         });
-        auto move = [this, edit, selection](int by) {
-            const int k = *selection, to = k + by;
-            edit(QStringLiteral("Move Filter"), [k, to](Interaction &x) {
-                if (k >= 0 && to >= 0 && k < int(x.filters.size()) && to < int(x.filters.size())) std::swap(x.filters[size_t(k)], x.filters[size_t(to)]);
-            });
-            *selection = to; // it stays selected
-            rebuildSettings();
-        };
-        connect(upFilter, &QToolButton::clicked, this, [move] { move(-1); });
-        connect(downFilter, &QToolButton::clicked, this, [move] { move(1); });
-
-        auto editStage = [edit](size_t k, const QString &text, const std::function<void(InteractionStage &)> &fn, const QString &merge = QString()) {
-            edit(text, [k, fn](Interaction &x) {
-                if (k < x.filters.size()) fn(x.filters[k]);
-            }, merge);
-        };
-        // The range each filter's meter shows: as the value goes there — the source's at first, a Remap's Out after it, 0..1
-        // after what gives 0..1 (a curve, steps, a threshold, a toggle, a pulse, a speed), a Clamp's; otherwise as before
-        std::pair<double, double> span{srcLo, srcHi};
-        for (size_t k = 0; k < it.filters.size(); ++k) {
-            const InteractionStage &f = it.filters[k];
-            if (f.enabled) switch (f.kind) {
-            case InteractionFilter::Remap: span = {std::min(f.c, f.d), std::max(f.c, f.d)}; break;
-            case InteractionFilter::Clamp: span = {std::min(f.a, f.b), std::max(f.a, f.b)}; break;
-            case InteractionFilter::Curve:
-            case InteractionFilter::Steps:
-            case InteractionFilter::Threshold:
-            case InteractionFilter::Toggle:
-            case InteractionFilter::PulseDetection:
-            case InteractionFilter::Envelope:
-            case InteractionFilter::Speed: span = {0.0, 1.0}; break;
-            default: break;
-            }
-            const QString base = QStringLiteral("filters/%1/").arg(k + 1);
-            const bool selected = int(k) == *selection;
-            auto *block = new ClickFrame;
-            block->setObjectName(QStringLiteral("filterBlock%1").arg(k));
-            block->setStyleSheet(selected ? QStringLiteral("QFrame#filterBlock%1 { background:#2e2e35; border-left:2px solid %2; }").arg(k).arg(theme::css())
-                                          : QStringLiteral("QFrame#filterBlock%1 { border-left:2px solid transparent; }").arg(k));
-            block->pressed = [this, k, selection] {
-                if (*selection == int(k)) return;
-                *selection = int(k);
-                QTimer::singleShot(0, this, [this] { rebuildSettings(); }); // after the click
-            };
-            auto *bf = new QFormLayout(block);
-            bf->setContentsMargins(6, 3, 2, 3);
-            bf->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
-            bf->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-            const QString type = interactionFilterName(f.kind);
-            const QString title = f.name.isEmpty() ? type : QStringLiteral("%1 (%2)").arg(f.name, type);
-            auto *on = new FlagBox(QString());
-            on->setAccessibleName(QStringLiteral("Enable %1").arg(title));
-            on->setObjectName(QStringLiteral("filterOn%1").arg(k));
-            on->setChecked(f.enabled);
-            on->setToolTip(QStringLiteral("On / off (off: the value goes through unchanged)"));
-            auto *header = new QHBoxLayout;
-            header->addWidget(on);
-            auto *label = new FilterNameLabel(QStringLiteral("%1 · %2").arg(k + 1).arg(title));
-            label->setTextFormat(Qt::PlainText);
-            label->setObjectName(QStringLiteral("filterName%1").arg(k));
-            label->setToolTip(QStringLiteral("Double-click to rename"));
-            header->addWidget(label);
-            header->addStretch();
-            bf->addRow(header);
-            label->rename = [this, editStage, k, oldName = f.name] {
-                bool accepted = false;
-                const QString name = QInputDialog::getText(this, QStringLiteral("Rename Filter"),
-                    QStringLiteral("Name (empty uses the filter type)"), QLineEdit::Normal, oldName, &accepted).trimmed();
-                if (!accepted || name == oldName) return;
-                editStage(k, QStringLiteral("Rename Filter"), [name](InteractionStage &stage) { stage.name = name; });
-                rebuildSettings();
-            };
-            preset({on}, {base + QStringLiteral("enable")});
-            {
-                // What comes out of it now: a meter in its range, and the number
-                auto *bar = meter();
-                bar->setObjectName(QStringLiteral("filterMeter%1").arg(k));
-                bar->setToolTip(QStringLiteral("What comes out of this filter (the bar: from %1 to %2)").arg(span.first).arg(span.second));
-                auto *number = new QLabel(QStringLiteral("—"));
-                number->setObjectName(QStringLiteral("filterValue%1").arg(k));
-                number->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-                number->setMinimumWidth(64);
-                number->setStyleSheet(QStringLiteral("color:#999; font-size:11px;"));
-                auto *row = new QHBoxLayout;
-                row->addWidget(bar, 1);
-                row->addWidget(number);
-                bf->addRow(row);
-                if (live) m_stageMeters.push_back({bar, number, span});
-                else { bar->hide(); number->hide(); }
-            }
-            connect(on, &QCheckBox::toggled, this, [editStage, k](bool v) {
-                editStage(k, QStringLiteral("Change Filter"), [v](InteractionStage &s) { s.enabled = v; });
-            });
-
-            if (f.kind == InteractionFilter::Math) {
-                auto *op = new QComboBox;
-                op->setObjectName(QStringLiteral("filterOp%1").arg(k));
-                for (int o = 0; o < kMathOpCount; ++o) op->addItem(mathOpName(MathOp(o)), o);
-                op->setCurrentIndex(int(f.op));
-                op->setToolTip(QStringLiteral("x: the value coming in (0..1 after the source range, any value after another filter); a: the value below"));
-                bf->addRow(QStringLiteral("Operation"), op);
-                preset({op}, {QStringLiteral("filters")});
-                connect(op, qOverload<int>(&QComboBox::activated), this, [this, editStage, k](int o) {
-                    editStage(k, QStringLiteral("Change Filter"), [o](InteractionStage &s) { s.op = MathOp(o); });
-                    rebuildSettings();
-                });
-            }
-            for (int which = 0; which < kFilterSettingCount; ++which) {
-                const FilterSetting fs = interactionFilterSetting(f.kind, which);
-                if (fs.name.isEmpty() || (f.kind == InteractionFilter::Math && !mathOpUsesValue(f.op))) continue;
-                // (a Remap's In slides over the source's range, its Out over the target's)
-                const double span = f.kind == InteractionFilter::Remap ? (which < 2 ? srcHi - srcLo : tgtHi - tgtLo) : fs.max - fs.min;
-                auto *field = chainNumber(f.setting(which), span, f.kind == InteractionFilter::Steps ? 0 : 3);
-                field->setObjectName(QStringLiteral("filter%1%2").arg(k).arg(QChar('a' + which)));
-                field->setSuffix(fs.suffix);
-                field->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-                // Reset: its default (a Remap: the source's or the target's end)
-                const double def = f.kind != InteractionFilter::Remap ? fs.def : which == 0 ? srcLo : which == 1 ? srcHi : which == 2 ? tgtLo : tgtHi;
-                auto *label = new ResetLabel(fs.name, [editStage, field, k, which, def] {
-                    const QSignalBlocker quiet(field);
-                    field->setValue(def);
-                    editStage(k, QStringLiteral("Reset Filter"), [which, def](InteractionStage &s) { s.setting(which) = def; });
-                });
-                bf->addRow(label, field);
-                preset({label, field}, {base + QChar('a' + which)});
-                connect(field, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [editStage, k, which](double v) {
-                    editStage(k, QStringLiteral("Change Filter"), [which, v](InteractionStage &s) { s.setting(which) = v; },
-                              QStringLiteral("filter%1/%2").arg(k).arg(which));
-                });
-            }
-            if (f.kind == InteractionFilter::Envelope) { // in the hand: its fields below follow
-                auto *curve = new AdsrCurve;
-                curve->longest = 5;
-                AdsrCurve::Values shape;
-                shape.attack = f.a;
-                shape.decay = f.b;
-                shape.sustain = f.c;
-                shape.release = f.d;
-                curve->setValues(shape);
-                curve->edited = [editStage, block, k](const AdsrCurve::Values &v) {
-                    const double values[4] = {v.attack, v.decay, v.sustain, v.release};
-                    for (int which = 0; which < 4; ++which)
-                        if (auto *field = block->findChild<QDoubleSpinBox *>(QStringLiteral("filter%1%2").arg(k).arg(QChar('a' + which)))) {
-                            const QSignalBlocker quiet(field);
-                            field->setValue(values[which]);
-                        }
-                    editStage(k, QStringLiteral("Change Filter"), [v](InteractionStage &s) {
-                        s.a = v.attack;
-                        s.b = v.decay;
-                        s.c = v.sustain;
-                        s.d = v.release;
-                    }, QStringLiteral("filter%1/curve").arg(k));
-                };
-                bf->addRow(curve);
-                // Its four numbers from an ADSR control (Controls › + New › ADSR): moved on a remote page, by a timeline, in a preset
-                auto *from = new QComboBox;
-                from->setObjectName(QStringLiteral("filterAdsrControl%1").arg(k));
-                from->addItem(QStringLiteral("This filter"), QString());
-                for (const ShowControl &c : m_engine->controls())
-                    if (c.kind == ShowControl::Kind::Adsr) from->addItem(QStringLiteral("ADSR · %1").arg(c.name), c.key);
-                if (const int at = from->findData(f.adsrControl); at >= 0) from->setCurrentIndex(at);
-                else if (!f.adsrControl.isEmpty()) {
-                    from->addItem(QStringLiteral("ADSR · %1 (gone)").arg(f.adsrControl), f.adsrControl);
-                    from->setCurrentIndex(from->count() - 1);
-                }
-                from->setToolTip(QStringLiteral("Where Attack, Decay, Sustain and Release come from: this filter's own fields, or an ADSR control"));
-                bf->addRow(QStringLiteral("Settings from"), from);
-                connect(from, qOverload<int>(&QComboBox::activated), this, [editStage, k, from](int) {
-                    const QString key = from->currentData().toString();
-                    editStage(k, QStringLiteral("Envelope Settings From"), [key](InteractionStage &s) { s.adsrControl = key; });
-                });
-            }
-            if (f.kind == InteractionFilter::Curve) {
-                // The animations' curve editor, its whole square shown (0..1 in, 0..1 out, a margin around); the first
-                // curve's playhead where its input is now
-                auto *straight = new QPushButton(QStringLiteral("Straight"));
-                straight->setToolTip(QStringLiteral("Back to a straight line"));
-                bf->addRow(QString(), straight);
-                connect(straight, &QPushButton::clicked, this, [this, editStage, k] {
-                    editStage(k, QStringLiteral("Reset Curve"), [](InteractionStage &s) { s.curve = Interaction::straightCurve(); });
-                    rebuildSettings();
-                });
-                auto *lane = new CurveLane;
-                lane->setObjectName(QStringLiteral("filterCurve%1").arg(k));
-                lane->setTrack(f.curve, 1.0, 0.0, 1.0);
-                lane->setView(-0.03, 1.03, -0.08, 1.08);
-                lane->setFixedHeight(200);
-                lane->setToolTip(QStringLiteral("Across: what comes in · up: what goes out. Click to add a key, drag it, "
-                                                "double-click to remove it; right-click: its curve (easing, Bézier, hold)"));
-                bf->addRow(lane);
-                if (live && !m_lane) m_lane = lane;
-                // Its right-click is its keys' own (their easing): only Edit mode (a click on its title) puts it in a preset
-                if (PresetEditor *pe = live ? PresetEditor::instance() : nullptr) pe->track(lane, 0, {QStringLiteral("interaction/%1/filters").arg(it.id)});
-                if (m_revealCurve && k + 1 == it.filters.size()) { // just added: shown
-                    m_revealCurve = false;
-                    QTimer::singleShot(60, this, [this] { // once laid out
-                        if (!m_scroll) return;
-                        m_settings->adjustSize();
-                        m_scroll->verticalScrollBar()->setValue(m_scroll->verticalScrollBar()->maximum());
-                    });
-                }
-                connect(lane, &CurveLane::edited, this, [editStage, k](const AnimTrack &t, int gesture) {
-                    editStage(k, QStringLiteral("Edit Curve"), [t](InteractionStage &s) {
-                        s.curve.keys = t.keys;
-                        for (AnimKey &key : s.curve.keys) key.t = std::clamp(key.t, 0.0, 1.0);
-                    }, gesture ? QStringLiteral("curve%1/%2").arg(k).arg(gesture) : QString());
-                });
-            }
-            fv->addWidget(block);
-        }
-        return frame;
+        if (live) m_filterEditor = editor;
+        return editor;
     };
     const auto saveTargets = [this](InteractionGraph graph, const QString &text) {
         m_committing = true;

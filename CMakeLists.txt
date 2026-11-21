@@ -119,7 +119,6 @@ add_library(nyxmap_engine STATIC
   src/engine/TimecodeOutputs.cpp
   src/engine/ClockGenerator.cpp
   src/engine/TextWriting.cpp
-  src/engine/Interactions.cpp
   src/engine/InteractionsEngine.cpp
   src/engine/Presets.cpp
   src/engine/Animations.cpp
@@ -190,7 +189,7 @@ qt_add_shaders(nyxmap_engine "nyxmap_shaders"
         src/engine/shaders/scenelit_noglow.frag src/engine/shaders/sceneglowdown.frag src/engine/shaders/sceneglowup.frag
         src/engine/shaders/scenebackground.frag src/engine/shaders/scenesky.vert src/engine/shaders/scenesky.frag
         src/engine/shaders/scenesky_noglow.frag src/engine/shaders/scenefog.frag src/engine/shaders/scenefogblur.frag)
-target_link_libraries(nyxmap_engine PUBLIC Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::ShaderToolsPrivate Qt6::Network ffmpeg pxs::osc pxs::params pxs::tree pxs::controls pxs::dmxout)
+target_link_libraries(nyxmap_engine PUBLIC Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::ShaderToolsPrivate Qt6::Network ffmpeg pxs::osc pxs::params pxs::tree pxs::controls pxs::dmxout pxs::interaction)
 if(WIN32)
   target_link_libraries(nyxmap_engine PRIVATE psapi pdh) # resource usage (ProcessMemory.cpp)
 endif()
@@ -470,7 +469,7 @@ qt_add_shaders(nyxmap_ui "nyxmap_ui_shaders"
   BASE src/ui/shaders
   FILES src/ui/shaders/uidraw.vert src/ui/shaders/uidraw_tex.frag src/ui/shaders/uidraw_color.frag)
 target_include_directories(nyxmap_ui PUBLIC src src/ui PRIVATE "${CMAKE_BINARY_DIR}/generated") # NyxMapVersion.h
-target_link_libraries(nyxmap_ui PUBLIC nyxmap_engine Qt6::Widgets pxs::theme pxs::widgets pxs::dmxoutview)
+target_link_libraries(nyxmap_ui PUBLIC nyxmap_engine Qt6::Widgets pxs::theme pxs::widgets pxs::dmxoutview pxs::filterview pxs::curveview)
 target_compile_options(nyxmap_ui PRIVATE ${NYXMAP_WARNINGS})
 if(APPLE)
   target_link_libraries(nyxmap_ui PUBLIC "-framework AppKit")
@@ -793,7 +792,7 @@ if(NYXMAP_TESTS)
   target_link_libraries(nyxmap_audio_effects_test PRIVATE nyxmap_engine)
   add_test(NAME audio_effects COMMAND nyxmap_audio_effects_test)
   add_executable(nyxmap_audio_resources_test test/audio_resources.cpp)
-  target_include_directories(nyxmap_audio_resources_test PRIVATE src/engine)
+  target_include_directories(nyxmap_audio_resources_test PRIVATE src/engine third_party/pxs/src/interaction)
   target_link_libraries(nyxmap_audio_resources_test PRIVATE Qt6::Core)
   add_test(NAME audio_resources COMMAND nyxmap_audio_resources_test)
   # Test the dependency-free generated backend even on hosts with libfaust installed.
@@ -802,10 +801,10 @@ if(NYXMAP_TESTS)
   target_link_libraries(nyxmap_audio_generators_portable_test PRIVATE Qt6::Core ffmpeg)
   add_test(NAME audio_generators_portable COMMAND nyxmap_audio_generators_portable_test)
   add_executable(nyxmap_audio_hits_test test/audio_hits.cpp)
-  target_include_directories(nyxmap_audio_hits_test PRIVATE src/engine)
+  target_include_directories(nyxmap_audio_hits_test PRIVATE src/engine third_party/pxs/src/interaction)
   add_test(NAME audio_hits COMMAND nyxmap_audio_hits_test)
   add_executable(nyxmap_image_import_test test/image_import.cpp)
-  target_include_directories(nyxmap_image_import_test PRIVATE src/engine)
+  target_include_directories(nyxmap_image_import_test PRIVATE src/engine third_party/pxs/src/interaction)
   target_link_libraries(nyxmap_image_import_test PRIVATE Qt6::Gui)
   add_test(NAME image_import COMMAND nyxmap_image_import_test)
   add_executable(nyxmap_benchmark_rates_test test/benchmark_rates.cpp)
@@ -817,25 +816,25 @@ if(NYXMAP_TESTS)
   add_test(NAME isf_rhi COMMAND nyxmap_isf_rhi_test)
   # An output window shown through the QRhi renderer's swapchain: what it presents is the viewport's picture
   add_executable(nyxmap_rhi_output_test test/rhi_output.cpp)
-  target_include_directories(nyxmap_rhi_output_test PRIVATE src/engine)
+  target_include_directories(nyxmap_rhi_output_test PRIVATE src/engine third_party/pxs/src/interaction)
   target_link_libraries(nyxmap_rhi_output_test PRIVATE nyxmap_engine)
   target_compile_definitions(nyxmap_rhi_output_test PRIVATE TEST_DIR="${CMAKE_SOURCE_DIR}/test")
   add_test(NAME rhi_output COMMAND nyxmap_rhi_output_test)
   set_tests_properties(rhi_output PROPERTIES SKIP_RETURN_CODE 77)
   # The interface's previews with the QRhi renderer: its pictures read back as pixels
   add_executable(nyxmap_rhi_preview_test test/rhi_preview.cpp)
-  target_include_directories(nyxmap_rhi_preview_test PRIVATE src/engine)
+  target_include_directories(nyxmap_rhi_preview_test PRIVATE src/engine third_party/pxs/src/interaction)
   target_link_libraries(nyxmap_rhi_preview_test PRIVATE nyxmap_engine)
   target_compile_definitions(nyxmap_rhi_preview_test PRIVATE TEST_DIR="${CMAKE_SOURCE_DIR}/test")
   add_test(NAME rhi_preview COMMAND nyxmap_rhi_preview_test)
   set_tests_properties(rhi_preview PROPERTIES SKIP_RETURN_CODE 77)
   # What the interface's pictures cost a frame: cmake --build build --target nyxmap_preview_cost
   add_executable(nyxmap_preview_cost EXCLUDE_FROM_ALL test/preview_cost.cpp)
-  target_include_directories(nyxmap_preview_cost PRIVATE src/engine)
+  target_include_directories(nyxmap_preview_cost PRIVATE src/engine third_party/pxs/src/interaction)
   target_link_libraries(nyxmap_preview_cost PRIVATE nyxmap_engine)
   # A real TouchDesigner component (NYXMAP_TOX): skipped without one
   add_executable(nyxmap_tox_real_test test/tox_real.cpp)
-  target_include_directories(nyxmap_tox_real_test PRIVATE src/engine)
+  target_include_directories(nyxmap_tox_real_test PRIVATE src/engine third_party/pxs/src/interaction)
   target_link_libraries(nyxmap_tox_real_test PRIVATE nyxmap_engine)
   add_test(NAME tox_real COMMAND nyxmap_tox_real_test)
   set_tests_properties(tox_real PROPERTIES SKIP_RETURN_CODE 77)
@@ -844,7 +843,7 @@ if(NYXMAP_TESTS)
   # serialize GPU integration tests while keeping the CPU-only suite parallel.
   set_tests_properties(isf_rhi rhi_output rhi_preview PROPERTIES RUN_SERIAL TRUE)
   add_executable(nyxmap_naming_test test/naming.cpp)
-  target_include_directories(nyxmap_naming_test PRIVATE src/engine)
+  target_include_directories(nyxmap_naming_test PRIVATE src/engine third_party/pxs/src/interaction)
   target_link_libraries(nyxmap_naming_test PRIVATE Qt6::Core)
   add_test(NAME naming COMMAND nyxmap_naming_test)
   # GNU-compatible Linux linkers inject failures at our FFmpeg call sites only.
@@ -880,19 +879,19 @@ if(NYXMAP_TESTS)
     add_test(NAME ci_scope COMMAND ${Python3_EXECUTABLE} -m unittest discover -s ${CMAKE_SOURCE_DIR}/.github/scripts -p test_ci_scope.py)
   endif()
   add_executable(nyxmap_mask_geometry_test test/mask_geometry.cpp src/engine/Masks.cpp)
-  target_include_directories(nyxmap_mask_geometry_test PRIVATE src/engine)
+  target_include_directories(nyxmap_mask_geometry_test PRIVATE src/engine third_party/pxs/src/interaction)
   target_link_libraries(nyxmap_mask_geometry_test PRIVATE Qt6::Gui)
   add_test(NAME mask_geometry COMMAND nyxmap_mask_geometry_test)
   find_package(Threads REQUIRED)
   add_executable(nyxmap_realtime_timing_test test/realtime_timing.cpp)
-  target_include_directories(nyxmap_realtime_timing_test PRIVATE src/engine)
+  target_include_directories(nyxmap_realtime_timing_test PRIVATE src/engine third_party/pxs/src/interaction)
   target_link_libraries(nyxmap_realtime_timing_test PRIVATE Threads::Threads)
   add_test(NAME realtime_timing COMMAND nyxmap_realtime_timing_test)
   add_executable(nyxmap_audio_analysis_test test/audio_analysis.cpp)
-  target_include_directories(nyxmap_audio_analysis_test PRIVATE src/engine)
+  target_include_directories(nyxmap_audio_analysis_test PRIVATE src/engine third_party/pxs/src/interaction)
   add_test(NAME audio_analysis COMMAND nyxmap_audio_analysis_test)
   add_executable(nyxmap_audio_analysis_concurrency_test test/audio_analysis_concurrency.cpp)
-  target_include_directories(nyxmap_audio_analysis_concurrency_test PRIVATE src/engine)
+  target_include_directories(nyxmap_audio_analysis_concurrency_test PRIVATE src/engine third_party/pxs/src/interaction)
   target_link_libraries(nyxmap_audio_analysis_concurrency_test PRIVATE Threads::Threads)
   add_test(NAME audio_analysis_concurrency COMMAND nyxmap_audio_analysis_concurrency_test)
   # The Web Page generator: settings, parameters, persistence; a real page too when Qt WebEngine is there (it needs a

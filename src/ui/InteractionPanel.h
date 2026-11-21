@@ -6,6 +6,7 @@
 // Paste Settings carry the chain from one to others. Edits are undone as any other.
 
 #include "Interactions.h"
+#include <pxs/FilterEditor.h>
 
 #include <QHash>
 #include <QSet>
@@ -102,13 +103,9 @@ private:
     QPushButton *m_copy = nullptr, *m_paste = nullptr;
     QProgressBar *m_inMeter = nullptr, *m_outMeter = nullptr;
     QLabel *m_actionState = nullptr; // an Action: whether its conditions hold now
-    QPointer<class CurveLane> m_lane;
-    bool m_revealCurve = false;
-    int m_selectedFilter = 0; // the filter − removes and ▲ ▼ move, in the one shown
+    QPointer<pxs::filterview::FilterEditor> m_filterEditor; // the target's filters, live
     std::pair<double, double> m_inSpan{0, 1}, m_outSpan{0, 1}; // the meters' ranges: the source's, the target's
     // Each filter's meter (its output), its range (as the values go there) and its number
-    struct StageMeter { QProgressBar *bar; QLabel *number; std::pair<double, double> span; };
-    std::vector<StageMeter> m_stageMeters;
     // How the source usually goes (Internal: its value's range; a key, MIDI, OSC, Audio: 0..1), and the target (its
     // range; a switch, an action: 0..1; a choice: its indexes)
     std::pair<double, double> sourceSpan(const Interaction &it) const;
@@ -117,7 +114,6 @@ private:
     QTimer *m_timer;
     QTimer *m_valuesTimer = nullptr;
     quint64 m_targetTab = 0;
-    int m_sharedSelectedFilter = 0;
     quint64 m_shown = 0;        // the interaction whose settings are shown
     int m_xyAxis = 0; // source/chain currently edited in an XY interaction
     bool m_committing = false;  // its own edit going to the engine: the settings are not made again
