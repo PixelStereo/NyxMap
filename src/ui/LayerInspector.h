@@ -1,4 +1,5 @@
 #pragma once
+#include <pxs/AdsrCurve.h>
 #include "Tox.h"
 #include <QJsonArray>
 #include <QJsonObject>
@@ -177,7 +178,7 @@ private:
     // Followed while a snapshot fades them (as temp / tint)
     QPointer<SliderField> m_opacity, m_volume;
     std::vector<std::pair<QPointer<SliderField>, QString>> m_synthFields;
-    QPointer<class AdsrCurve> m_adsrCurve; // an instrument's envelope
+    QPointer<pxs::curveview::AdsrCurve> m_adsrCurve; // an instrument's envelope
     // 3D: a scene's camera and light, a model's place, a light (their parameters, by prefix)
     void show3dCategoryMenu(quint64 layer, const QStringList &paths, const QPoint &global);
     QWidget *build3d(const QStringList &prefixes, const QStringList &except = {}, const std::function<void(class QFormLayout *)> &first = {});

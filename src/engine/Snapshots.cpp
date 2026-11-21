@@ -54,7 +54,6 @@ static double applyEasing(double t, EasingCurve curve)
     return t;
 }
 
-double easeCurve(double t, int curve) { return applyEasing(t, EasingCurve(std::clamp(curve, 0, 5))); }
 
 // The key of a snapshot's "timing" (or "easing") that gives a value of a layer its time (its easing): its own address,
 // or the address of a group it is in ("position" for "position/x", "fx/blur" for all of that effect's values); empty

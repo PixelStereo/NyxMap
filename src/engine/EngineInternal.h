@@ -28,7 +28,6 @@ inline thread_local LayerBuild t_layerBuild;
 QImage renderTextLayer(const Layer &l, const QString &text, const QColor &fill, bool inkOnly = false);
 // The Text generator's settings in a layer state (Project.cpp)
 // An easing of the snapshots' fades (0 linear, 1 in, 2 out, 3 in-out, 4 in cubic, 5 out cubic) at t in 0..1
-double easeCurve(double t, int curve);
 // Keys of a timeline's loop mode in a project ("once", "loop", "pingpong")
 QString animLoopKey(Engine::AnimLoop l);
 Engine::AnimLoop animLoopFromKey(const QString &k);
