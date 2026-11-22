@@ -141,10 +141,10 @@ class ReleaseMetadataTests(unittest.TestCase):
             root = Path(tmp)
             (root / "cmake").mkdir()
             (root / "cmake/Version.cmake").write_text((ROOT / "cmake/Version.cmake").read_text())
-            shared = root / "third_party/pxs/cmake"
+            shared = root / "third_party/pxs-qt/cmake"
             shared.mkdir(parents=True)
             (shared / "PixelStereoBuildId.cmake").write_text(
-                (ROOT / "third_party/pxs/cmake/PixelStereoBuildId.cmake").read_text())
+                (ROOT / "third_party/pxs-qt/cmake/PixelStereoBuildId.cmake").read_text())
             (root / "VERSION").write_text("0.2.1\n")
             if git_repo:
                 subprocess.run(["git", "init", "-q", str(root)], check=True)

@@ -685,7 +685,7 @@ if(NYXMAP_FUZZ)
   # the codec is compiled here with the fuzzer's instrumentation, from the shared source
   add_executable(fuzz_osc EXCLUDE_FROM_ALL test/fuzz_osc.cpp third_party/pxs-qt/src/osc/OscCodec.cpp)
   target_include_directories(fuzz_osc PRIVATE third_party/pxs-qt/src/osc)
-  target_link_libraries(fuzz_osc PRIVATE Qt6::Core)
+  target_link_libraries(fuzz_osc PRIVATE pxs-core::osc Qt6::Core)
   target_compile_options(fuzz_osc PRIVATE -g -O1 -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined)
   target_link_options(fuzz_osc PRIVATE -fsanitize=fuzzer,address,undefined)
 endif()
