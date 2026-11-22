@@ -56,7 +56,7 @@ jobs:
       - name: Test Linux package policy
         run: python3 -m unittest discover -s scripts -p 'test_linux_*.py'
       - name: Shared repository (the version module the tests use)
-        run: git submodule update --init third_party/pxs
+        run: git submodule update --init --recursive third_party/pxs-qt
       - name: Test release metadata and tag versions
         run: python3 -m unittest discover -s .github/scripts -p 'test_release_metadata.py'
       - name: Select validation
@@ -74,7 +74,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: The DMX outputs of pxs (the fixtures' model uses them)
-        run: git submodule update --init third_party/pxs
+        run: git submodule update --init --recursive third_party/pxs-qt
       - name: Qt geometry dependencies
         run: |
           bash .github/scripts/configure_linux_apt.sh
@@ -85,9 +85,9 @@ jobs:
           c++ --version
           for optimization in 0 3; do
             c++ -std=c++17 -O$optimization -DNDEBUG -fPIC -pthread -Isrc/engine -Isrc/ui \
-              -Ithird_party/pxs/src/dmx -Ithird_party/pxs/src/dmxout \
+              -Ithird_party/pxs-qt/src/dmx -Ithird_party/pxs-qt/src/dmxout \
               test/fixture_geometry.cpp src/engine/Fixtures.cpp src/engine/LineGenerator.cpp src/ui/FixtureOverlay.cpp \
-              third_party/pxs/src/dmx/Dmx.cpp third_party/pxs/src/dmxout/DmxOut.cpp \
+              third_party/pxs-qt/src/dmx/Dmx.cpp third_party/pxs-qt/src/dmxout/DmxOut.cpp \
               $(pkg-config --cflags --libs Qt6Widgets Qt6Network) -o /tmp/fixture-geometry
             /tmp/fixture-geometry
           done
@@ -122,7 +122,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: true # third_party/ (shallow, pinned commits)
+          submodules: recursive # third_party/ (shallow, pinned commits)
       - uses: actions/download-artifact@v4
         with:
           name: test-media
@@ -291,7 +291,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: true
+          submodules: recursive
       - name: Dependencies
         timeout-minutes: 10
         run: |
@@ -335,7 +335,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: true
+          submodules: recursive
       - name: Dependencies
         timeout-minutes: 10
         run: |
@@ -382,7 +382,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: true
+          submodules: recursive
       - uses: actions/download-artifact@v4
         with:
           name: test-media
@@ -451,7 +451,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: true
+          submodules: recursive
       - uses: actions/download-artifact@v4
         with:
           name: test-media
@@ -497,7 +497,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: true
+          submodules: recursive
       - uses: actions/download-artifact@v4
         with:
           name: test-media
@@ -542,7 +542,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: true # third_party/ (shallow, pinned commits)
+          submodules: recursive # third_party/ (shallow, pinned commits)
       - uses: actions/download-artifact@v4
         with:
           name: test-media
@@ -775,7 +775,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: true # third_party/ (shallow, pinned commits)
+          submodules: recursive # third_party/ (shallow, pinned commits)
       - uses: ilammy/msvc-dev-cmd@v1
       - uses: actions/setup-dotnet@v4 # OMT: libomt is built with .NET Native AOT
         with:
@@ -995,7 +995,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "NSIS install failed" }
           $makensis = Join-Path ${env:ProgramFiles(x86)} "NSIS\makensis.exe"
           $setup = Join-Path $PWD "NyxMap-windows-x64$tagSuffix-Setup.exe"
-          & $makensis "/DPRODUCT=NyxMap" "/DAPP_VERSION=$version" "/DAPP_EXE=$appName.exe" "/DPAYLOAD=$PWD\dist" "/DOUTPUT=$setup" third_party\pxs\packaging\windows.nsi
+          & $makensis "/DPRODUCT=NyxMap" "/DAPP_VERSION=$version" "/DAPP_EXE=$appName.exe" "/DPAYLOAD=$PWD\dist" "/DOUTPUT=$setup" third_party\pxs-qt\packaging\windows.nsi
           if ($LASTEXITCODE -ne 0) { throw "makensis failed" }
       - name: Smoke test of the installed application
         if: needs.scope.outputs.package == 'true'
