@@ -1929,9 +1929,9 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         const QString L = "/layer/G/layer/My_layer";
         CHECK(server.handleMessage({L + "/opacity", "f", {0.25}}) && std::abs(e.layer(V + 1)->opacity - 0.25f) < 1e-6);
         CHECK(server.handleMessage({"/layer/G/layer/*/opacity", "f", {0.5}}) && std::abs(e.layer(V + 1)->opacity - 0.5f) < 1e-6);
-        CHECK(server.handleMessage({L + "/add", "fff", {0.1, 0.2, 0.3}}) && std::abs(e.layer(V + 1)->color.add[2] - 0.3f) < 1e-6);
-        CHECK(server.handleMessage({L + "/temp", "f", {-2000.0}}) && e.layer(V + 1)->color.temp == -2000.0f);
-        CHECK(server.handleMessage({L + "/tint", "f", {500.0}}) && e.layer(V + 1)->color.tint == 100.0f); // clipped
+        CHECK(server.handleMessage({L + "/color/add", "fff", {0.1, 0.2, 0.3}}) && std::abs(e.layer(V + 1)->color.add[2] - 0.3f) < 1e-6);
+        CHECK(server.handleMessage({L + "/color/temp", "f", {-2000.0}}) && e.layer(V + 1)->color.temp == -2000.0f);
+        CHECK(server.handleMessage({L + "/color/tint", "f", {500.0}}) && e.layer(V + 1)->color.tint == 100.0f); // clipped
         CHECK(server.handleMessage({L + "/roi/left", "f", {0.25}}) && std::abs(e.layer(V + 1)->roi.left() - 0.25) < 1e-9);
         CHECK(server.handleMessage({L + "/fx/FlipFlop/param/flip", "T", {true}}));
         const IsfInput *flipped = e.layer(V + 1)->effects[size_t(oscFx)]->input(QStringLiteral("flip"));
@@ -1950,15 +1950,15 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         {
             const int vi = e.indexOfId(e.mainViewportId());
             const QString VP = "/viewport/" + osc::safeName(e.layer(vi)->name);
-            CHECK(server.handleMessage({VP + "/width", "f", {32}}) && server.handleMessage({VP + "/height", "f", {16}}));
-            CHECK(server.handleMessage({VP + "/position/x", "f", {10}}) && server.handleMessage({VP + "/position/y", "f", {8}}));
+            CHECK(server.handleMessage({VP + "/spatial/width", "f", {32}}) && server.handleMessage({VP + "/spatial/height", "f", {16}}));
+            CHECK(server.handleMessage({VP + "/spatial/position/x", "f", {10}}) && server.handleMessage({VP + "/spatial/position/y", "f", {8}}));
             const QRectF bb = e.layer(vi)->mapping.bounds();
             CHECK(std::abs(bb.width() * 64 - 32) < 1e-6 && std::abs(bb.height() * 32 - 16) < 1e-6);
             CHECK(std::abs(bb.center().x() * 64 - 10) < 1e-6 && std::abs(bb.center().y() * 32 - 8) < 1e-6);
-            CHECK(!server.handleMessage({VP + "/scale", "ff", {50, 50}}));
+            CHECK(!server.handleMessage({VP + "/spatial/scale", "ff", {50, 50}}));
             // The pivot in % of the layer: its top left corner, (-6, 0) px; turning about it leaves it there
-            CHECK(server.handleMessage({VP + "/pivot", "ff", {0, 0}}));
-            CHECK(server.handleMessage({VP + "/rotation", "f", {90}}));
+            CHECK(server.handleMessage({VP + "/spatial/pivot", "ff", {0, 0}}));
+            CHECK(server.handleMessage({VP + "/spatial/rotation", "f", {90}}));
             {
                 const Mapping &pm = e.layer(vi)->mapping;
                 CHECK(pm.pivot.isNull() && (pm.pivotPoint() - QPointF(-6.0 / 64, 0)).manhattanLength() < 1e-6 &&
@@ -1983,7 +1983,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             const QJsonObject params = e.layerJson(V + 1).value("params").toObject();
             int missing = 0;
             for (auto it = params.begin(); it != params.end(); ++it) {
-                server.httpGet("/layer/G/layer/Front_wall/" + it.key(), &status);
+                server.httpGet("/layer/G/layer/Front_wall/" + OscNamespace::paramPath(it.key()), &status);
                 if (status != 200) ++missing, qWarning("no OSC node for %s", qPrintable(it.key()));
             }
             CHECK(params.size() > 20 && params.contains("position/x") && params.contains("corner/top_left/x") && missing == 0);
@@ -2026,10 +2026,10 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             walk(root, QString());
             CHECK(nodes > 50 && bad == 0);
             const QString LF = "/layer/G/layer/Front_wall";
-            CHECK(server.handleMessage({LF + "/tint/enable", "T", {true}}) && e.layer(V + 1)->color.tintOn);
-            CHECK(server.handleMessage({LF + "/mask/invert", "T", {true}}) && e.layer(V + 1)->color.maskInvert);
+            CHECK(server.handleMessage({LF + "/color/tint/enable", "T", {true}}) && e.layer(V + 1)->color.tintOn);
+            CHECK(server.handleMessage({LF + "/color/mask/invert", "T", {true}}) && e.layer(V + 1)->color.maskInvert);
             CHECK(server.handleMessage({LF + "/blend_mode", "s", {QStringLiteral("add")}}) && e.layer(V + 1)->blend == BlendMode::Add);
-            CHECK(server.handleMessage({LF + "/rotation", "f", {30.0}}) &&
+            CHECK(server.handleMessage({LF + "/spatial/rotation", "f", {30.0}}) &&
                   std::abs(e.layer(V + 1)->mapping.angle(e.compositionSize()) - 30.0) < 0.01);
             e.layer(V + 1)->blend = BlendMode::Normal;
         }
@@ -3556,22 +3556,22 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
                 OscServer server(&e);
                 CHECK(server.handleMessage({"/layer/Wave/opacity/anim/speed", "f", {0.5}}) && e.layerAnim(wid, "opacity", &now) &&
                       near(now.speed, 0.5));
-                CHECK(server.handleMessage({"/layer/Wave/rotation/anim/enable", "F", {false}}) &&
+                CHECK(server.handleMessage({"/layer/Wave/spatial/rotation/anim/enable", "F", {false}}) &&
                       e.layerAnim(wid, "rotation", &now) && !now.tracks[0].enabled);
                 CHECK(server.handleMessage({"/layer/Wave/opacity/anim/rewind", "N", {}}) && e.layerAnim(wid, "opacity", &now) &&
                       near(now.clock, 0));
                 CHECK(!server.handleMessage({"/layer/Wave/roi/left/anim/enable", "T", {true}}));
                 // The animation's settings, under its parameter
-                CHECK(server.handleMessage({"/layer/Wave/rotation/anim/duration", "f", {6}}) &&
-                      server.handleMessage({"/layer/Wave/rotation/anim/loop_mode", "s", {QStringLiteral("ping-pong")}}) &&
+                CHECK(server.handleMessage({"/layer/Wave/spatial/rotation/anim/duration", "f", {6}}) &&
+                      server.handleMessage({"/layer/Wave/spatial/rotation/anim/loop_mode", "s", {QStringLiteral("ping-pong")}}) &&
                       e.layerAnim(wid, "rotation", &now) && near(now.duration, 6) && now.loop == Engine::AnimLoop::PingPong);
-                CHECK(server.handleMessage({"/layer/Wave/rotation/anim/wave", "s", {QStringLiteral("saw")}}) &&
-                      server.handleMessage({"/layer/Wave/rotation/anim/period", "f", {3}}) && e.layerAnim(wid, "rotation", &now) &&
+                CHECK(server.handleMessage({"/layer/Wave/spatial/rotation/anim/wave", "s", {QStringLiteral("saw")}}) &&
+                      server.handleMessage({"/layer/Wave/spatial/rotation/anim/period", "f", {3}}) && e.layerAnim(wid, "rotation", &now) &&
                       now.tracks[0].oscillator && now.tracks[0].wave == Engine::AnimWave::Saw && near(now.tracks[0].period, 3));
-                CHECK(server.handleMessage({"/layer/Wave/rotation/anim/wave", "s", {QStringLiteral("keys")}}) &&
-                      server.handleMessage({"/layer/Wave/rotation/anim/pause", "N", {}}) && e.layerAnim(wid, "rotation", &now) &&
+                CHECK(server.handleMessage({"/layer/Wave/spatial/rotation/anim/wave", "s", {QStringLiteral("keys")}}) &&
+                      server.handleMessage({"/layer/Wave/spatial/rotation/anim/pause", "N", {}}) && e.layerAnim(wid, "rotation", &now) &&
                       !now.tracks[0].oscillator && now.tracks[0].keys.size() == 3);
-                CHECK(!server.handleMessage({"/layer/Wave/rotation/anim/loop_mode", "s", {QStringLiteral("sideways")}}));
+                CHECK(!server.handleMessage({"/layer/Wave/spatial/rotation/anim/loop_mode", "s", {QStringLiteral("sideways")}}));
                 {
                     Engine::Animation r;
                     e.layerAnim(wid, "rotation", &r);
@@ -3581,16 +3581,16 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
                 }
                 // Every number at its own address (the one of the timelines and the animations), and the ones that go
                 // together at their common address too; their limits are the declared ones
-                CHECK(server.handleMessage({"/layer/Wave/position/x", "f", {16}}) &&
-                      server.handleMessage({"/layer/Wave/position", "ff", {20, 10}}));
+                CHECK(server.handleMessage({"/layer/Wave/spatial/position/x", "f", {16}}) &&
+                      server.handleMessage({"/layer/Wave/spatial/position", "ff", {20, 10}}));
                 {
                     double x = 0, y = 0;
                     e.animParamValue(wid, "position/x", &x);
                     e.animParamValue(wid, "position/y", &y);
                     CHECK(near(x, 20) && near(y, 10));
                 }
-                CHECK(server.handleMessage({"/layer/Wave/add", "fff", {0.1, 0.2, 0.3}}) &&
-                      server.handleMessage({"/layer/Wave/add/g", "f", {0.5}}) && near(L()->color.add[0], 0.1) &&
+                CHECK(server.handleMessage({"/layer/Wave/color/add", "fff", {0.1, 0.2, 0.3}}) &&
+                      server.handleMessage({"/layer/Wave/color/add/g", "f", {0.5}}) && near(L()->color.add[0], 0.1) &&
                       near(L()->color.add[1], 0.5));
                 CHECK(server.handleMessage({"/layer/Wave/blend_mode", "s", {QStringLiteral("difference")}}) &&
                       L()->blend == BlendMode::Difference);
@@ -6915,7 +6915,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             auto ch = [&](const char *c) {
                 return e.parameterValue(cl, QStringLiteral("param/color/") + QString::fromLatin1(c)).toDouble();
             };
-            const QString native = QStringLiteral("/layer/Chataigne/param/color");
+            const QString native = QStringLiteral("/layer/Chataigne/source/param/color");
             osc::Message direct;
             direct.address = native;
             // No interaction: the address writes RGBA directly (its public API), bytes read as 0..255

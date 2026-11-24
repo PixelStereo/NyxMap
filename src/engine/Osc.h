@@ -63,14 +63,17 @@ public:
     void forEachUnder(const QString &prefix, const std::function<void(const QString &, const OscNode &)> &visit) const;
     QStringList layerPrefixes(quint64 layer) const; // a layer's addresses (by name, by id)
     QJsonObject toJson(const QString &path) const { return m_tree.json(path); } // node and its contents (OSCQuery)
+    QStringList problems() const { return m_tree.check(); } // what the namespace lacks of what every pxs tree must have (for the tests)
     // The OSC address of a value (a layer's id, 0: the composition — "interaction/<id>/…": an interaction's), as
     // built now ("": it has none)
     QString addressOf(quint64 layer, const QString &path) const;
     static QString addressOf(Engine *e, quint64 layer, const QString &path); // with a namespace made for it
+    static QString paramPath(const QString &param); // where a layer parameter is under its layer (spatial/position/x for position/x)
     static QJsonValue jsonValue(const OscNode &n, const QVariant &v, int k) { return pxs::Tree::jsonValue(n.type, v, k); }
 
 private:
     void build();
+    void complete(); // the range and default of the numbers that were not declared where they are made
     void addShowControl();
     OscNode &add(const QString &path, const QString &type, int access, const QString &description);
     void addLayer(const QString &prefix, quint64 id);

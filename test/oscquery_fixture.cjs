@@ -48,23 +48,21 @@ function fixture(port = 0) {
         leaf('enable', 'T', true, null, 3, 'Enable');
         leaf('opacity', 'f', .65, [{MIN: 0, MAX: 1}], 3, 'Opacity');
         leaf('blend_mode', 's', 'normal', [{VALS: ['normal', 'add', 'multiply']}], 3, 'Blend Mode');
-        leaf('position', 'ff', [960, 540], [{MIN: 0, MAX: 1920}, {MIN: 0, MAX: 1080}], 3, 'Position');
-        leaf('position/x', 'f', 960, [{MIN: 0, MAX: 1920}], 3, 'Position X');
-        leaf('position/y', 'f', 540, [{MIN: 0, MAX: 1080}], 3, 'Position Y');
-        leaf('add', 'fff', [.1, .2, .3], Array(3).fill({MIN: 0, MAX: 1}), 3, 'Add Color');
-        for (const [k, value] of [['r', .1], ['g', .2], ['b', .3]]) leaf('add/' + k, 'f', value, [{MIN: 0, MAX: 1}]);
-        leaf('file', 's', '/media/image.png', null, 3, 'File');
-        leaf('duration', 'f', 12, null, 1, 'Duration');
-        leaf('rewind', 'N', undefined, null, 2, 'Rewind');
+        leaf('spatial/position', 'ff', [960, 540], [{MIN: 0, MAX: 1920}, {MIN: 0, MAX: 1080}], 3, 'Position');
+        leaf('spatial/position/x', 'f', 960, [{MIN: 0, MAX: 1920}], 3, 'Position X');
+        leaf('spatial/position/y', 'f', 540, [{MIN: 0, MAX: 1080}], 3, 'Position Y');
+        leaf('color/add', 'fff', [.1, .2, .3], Array(3).fill({MIN: 0, MAX: 1}), 3, 'Add Color');
+        for (const [k, value] of [['r', .1], ['g', .2], ['b', .3]]) leaf('color/add/' + k, 'f', value, [{MIN: 0, MAX: 1}]);
+        leaf('source/file', 's', '/media/image.png', null, 3, 'File');
+        leaf('source/duration', 'f', 12, null, 1, 'Duration');
+        leaf('source/rewind', 'N', undefined, null, 2, 'Rewind');
         leaf('fx/Blur/param/radius', 'f', 5, [{MIN: 0, MAX: 40}], 3, 'Blur radius');
         leaf('param/label', 's', 'Stage', null, 3, 'Caption');
         for (const [suffix, defaults] of [['opacity', [1]], ['blend_mode', ['normal']],
-            ['add', [0, 0, 0]], ['add/r', [0]], ['add/g', [0]], ['add/b', [0]],
-            ['position', [960, 540]], ['position/x', [960]], ['position/y', [540]],
+            ['color/add', [0, 0, 0]], ['color/add/r', [0]], ['color/add/g', [0]], ['color/add/b', [0]],
+            ['spatial/position', [960, 540]], ['spatial/position/x', [960]], ['spatial/position/y', [540]],
             ['fx/Blur/param/radius', [5]], ['param/label', ['Hello']]]) {
-            const node = nodes.get(entry.path + '/' + suffix);
-            node.NYXMAP_DEFAULT = defaults; node.NYXMAP_RESET = node.FULL_PATH + '/reset';
-            leaf(suffix + '/reset', 'N', undefined, null, 2, 'Reset ' + node.DESCRIPTION).RESET_TARGET = node.FULL_PATH;
+            nodes.get(entry.path + '/' + suffix).DEFAULT_VALUE = defaults; // a reset is writing it
         }
     }
     const commands = [];
@@ -98,8 +96,7 @@ function fixture(port = 0) {
             if (binary) {
                 const command = osc.readPacket(data, {metadata: true}); commands.push(command);
                 const node = nodes.get(command.address);
-                if (node?.RESET_TARGET) updateNode(node.RESET_TARGET, nodes.get(node.RESET_TARGET).NYXMAP_DEFAULT);
-                else if (node && node.TYPE !== 'N') updateNode(command.address, command.args.map(arg => arg.value));
+                if (node && node.TYPE !== 'N') updateNode(command.address, command.args.map(arg => arg.value));
             } else {
                 const {COMMAND, DATA} = JSON.parse(data);
                 if (COMMAND === 'IGNORE') subscriptions.get(socket).delete(DATA);
