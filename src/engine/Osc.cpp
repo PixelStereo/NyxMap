@@ -74,13 +74,26 @@ static bool truth(const QVariant &v)
     return num(v) != 0.0;
 }
 
-static QJsonObject minMax(double lo, double hi) { return QJsonObject{{"MIN", lo}, {"MAX", hi}}; }
+using pxs::convert::fromUtf8;
+using pxs::convert::toUtf8;
+using pxs::convert::toValue;
+using pxs::convert::toValues;
+using pxs::convert::toVariants;
+using pxs::core::tree::ArgRange;
 
-static QJsonObject vals(const QStringList &v)
+static ArgRange minMax(double lo, double hi)
 {
-    QJsonArray a;
-    for (const QString &s : v) a.append(s);
-    return QJsonObject{{"VALS", a}};
+    ArgRange r;
+    r.min = pxs::core::Value(lo);
+    r.max = pxs::core::Value(hi);
+    return r;
+}
+
+static ArgRange vals(const QStringList &v)
+{
+    ArgRange r;
+    for (const QString &s : v) r.vals.push_back(pxs::core::Value(toUtf8(s)));
+    return r;
 }
 
 // Where a layer's parameter is in the OSC namespace: under the node of the tab it is on in the layer inspector (Spatial, Color,
@@ -184,14 +197,14 @@ void OscNamespace::refresh()
 
 const OscNode *OscNamespace::node(const QString &path) const
 {
-    return m_tree.find(path);
+    return m_tree.find(toUtf8(path));
 }
 
 QStringList OscNamespace::addressesOf(quint64 layer, const QString &path) const
 {
     QStringList out;
     const auto add = [&](const QString &address) {
-        if (m_tree.find(address)) out << address;
+        if (m_tree.find(toUtf8(address))) out << address;
     };
     QStringList bases;
     if (!layer) {
@@ -218,7 +231,7 @@ void OscNamespace::forEachUnder(const QString &prefix, const std::function<void(
     for (auto it = m_index.lower_bound(prefix); it != m_index.end() && it->first.startsWith(prefix); ++it) {
         const OscNode &node = *it->second;
         if (it->first.size() > prefix.size() && it->first[prefix.size()] != '/') continue; // another name that begins alike
-        if (!node.type.isEmpty() && node.get && (node.access & 1)) visit(it->first, node);
+        if (!node.type.empty() && node.get && (node.access & 1)) visit(it->first, node);
     }
 }
 
@@ -233,23 +246,23 @@ QStringList OscNamespace::layerPrefixes(quint64 layer) const
 void OscNamespace::forEachReadable(const std::function<void(const QString &, const OscNode &)> &visit) const
 {
     for (const auto &[path, node] : m_index)
-        if (!node->type.isEmpty() && node->get && (node->access & 1)) visit(path, *node);
+        if (!node->type.empty() && node->get && (node->access & 1)) visit(path, *node);
 }
 
 QStringList OscNamespace::paths() const
 {
     QStringList out;
     for (const auto &[p, n] : m_index)
-        if (!n->type.isEmpty()) out << p;
+        if (!n->type.empty()) out << p;
     return out;
 }
 
 OscNode &OscNamespace::add(const QString &path, const QString &type, int access, const QString &description)
 {
-    OscNode &n = m_tree.add(path); // its containers up to the root are made on the way
-    n.type = type;
+    OscNode &n = m_tree.add(toUtf8(path)); // its containers up to the root are made on the way
+    n.type = toUtf8(type);
     n.access = access;
-    n.description = description;
+    n.description = toUtf8(description);
     m_index[path] = &n;
     return n;
 }
@@ -267,98 +280,98 @@ void OscNamespace::build()
         OscNode &n = add("/composition/opacity", "f", 3, "Opacity");
         n.range = {minMax(0, 1)};
         n.clip = "both";
-        n.get = [e] { return QVariantList{e->compositionOpacityTarget()}; };
-        n.set = [e](const QVariantList &a) {
+        n.get = qGet([e] { return QVariantList{e->compositionOpacityTarget()}; });
+        n.set = qSet([e](const QVariantList &a) {
             if (a.isEmpty()) return false;
             e->fadeCompositionOpacity(std::clamp(num(a[0]), 0.0, 1.0), 0.05);
             return true;
-        };
+        });
     }
     {
         OscNode &n = add("/composition/volume", "f", 3, "Volume");
         n.range = {minMax(0, 2)};
         n.clip = "both";
-        n.get = [e] { return QVariantList{double(e->audioVolume())}; };
-        n.set = [e](const QVariantList &a) {
+        n.get = qGet([e] { return QVariantList{double(e->audioVolume())}; });
+        n.set = qSet([e](const QVariantList &a) {
             if (a.isEmpty()) return false;
             e->setAudioVolume(float(std::clamp(num(a[0]), 0.0, 2.0)));
             return true;
-        };
+        });
     }
     {
         // Speed of all time (media, shaders, timelines, fades, sequences), and the pause that holds it at 0
         OscNode &n = add("/composition/speed", "f", 3, "Speed (0 = stopped, 1 = normal)");
         n.range = {minMax(0, 10)};
         n.clip = "both";
-        n.get = [e] { return QVariantList{e->compositionSpeed()}; };
-        n.set = [e](const QVariantList &a) {
+        n.get = qGet([e] { return QVariantList{e->compositionSpeed()}; });
+        n.set = qSet([e](const QVariantList &a) {
             if (a.isEmpty()) return false;
             e->setCompositionSpeed(num(a[0]));
             return true;
-        };
+        });
         OscNode &p = add("/composition/pause", "T", 3, "Pause (speed 0 until released)");
-        p.get = [e] { return QVariantList{e->paused()}; };
-        p.set = [e](const QVariantList &a) {
+        p.get = qGet([e] { return QVariantList{e->paused()}; });
+        p.set = qSet([e](const QVariantList &a) {
             e->setPaused(truth(a.value(0)));
             return true;
-        };
+        });
     }
     {
         OscNode &n = add("/composition/blackout", "T", 3, "Blackout (picture and sound)");
-        n.get = [e] { return QVariantList{e->blackout()}; };
-        n.set = [e](const QVariantList &a) {
+        n.get = qGet([e] { return QVariantList{e->blackout()}; });
+        n.set = qSet([e](const QVariantList &a) {
             e->setBlackout(truth(a.value(0)));
             return true;
-        };
+        });
         OscNode &f = add("/composition/blackout/fade", "f", 3, "Fade Time (s)");
         f.range = {minMax(0, 30)};
         f.clip = "both";
-        f.get = [e] { return QVariantList{e->blackoutFade()}; };
-        f.set = [e](const QVariantList &a) {
+        f.get = qGet([e] { return QVariantList{e->blackoutFade()}; });
+        f.set = qSet([e](const QVariantList &a) {
             if (a.isEmpty()) return false;
             e->setBlackoutFade(std::clamp(num(a[0]), 0.0, 30.0));
             return true;
-        };
+        });
     }
     {
         // Frame rate of the render (0: the refresh rate of the screen); what is measured is under /fps/measured
         OscNode &n = add("/composition/fps", "f", 3, "Frame Rate (-2 = uncapped, 0 = screen refresh)");
         n.range = {minMax(-2, 240)};
         n.clip = "both";
-        n.get = [e] { return QVariantList{e->effectiveRender().frameRate}; };
-        n.set = [e](const QVariantList &a) {
+        n.get = qGet([e] { return QVariantList{e->effectiveRender().frameRate}; });
+        n.set = qSet([e](const QVariantList &a) {
             if (a.isEmpty()) return false;
             Engine::RenderSettings r = e->renderSettings();
             const double requested = num(a[0]);
             r.frameRate = requested == Engine::RenderSettings::UncappedFrameRate ? requested : std::clamp(requested, 0.0, 240.0);
             e->setRenderSettings(r);
             return true;
-        };
-        add("/composition/fps/measured", "f", 1, "Measured").get = [e] { return QVariantList{e->fps()}; };
+        });
+        add("/composition/fps/measured", "f", 1, "Measured").get = qGet([e] { return QVariantList{e->fps()}; });
         // Frame timing (FrameTiming.h), as one JSON string: intervals, missed deadlines, compute / present times,
         // OSC and cue to frame, the outputs' dropped frames. Read it after a run; reset before one
-        add("/composition/timing", "s", 1, "Frame Timing (JSON)").get = [e] {
+        add("/composition/timing", "s", 1, "Frame Timing (JSON)").get = qGet([e] {
             return QVariantList{QString::fromUtf8(QJsonDocument(e->frameTimingJson()).toJson(QJsonDocument::Compact))};
-        };
-        add("/composition/timing/reset", "N", 2, "Reset Frame Timing").set = [e](const QVariantList &) {
+        });
+        add("/composition/timing/reset", "N", 2, "Reset Frame Timing").set = qSet([e](const QVariantList &) {
             e->resetFrameTiming();
             return true;
-        };
+        });
         // Resources against their budgets (Engine::resourcesJson), as one JSON string
-        add("/composition/budget", "s", 1, "Resources (JSON)").get = [e] {
+        add("/composition/budget", "s", 1, "Resources (JSON)").get = qGet([e] {
             return QVariantList{QString::fromUtf8(QJsonDocument(e->resourcesJson()).toJson(QJsonDocument::Compact))};
-        };
+        });
     }
     for (int axis = 0; axis < 2; ++axis) {
         OscNode &n = add(axis ? "/composition/height" : "/composition/width", "i", 3,
                          axis ? "Height" : "Width");
         n.range = {minMax(16, 16384)};
         n.clip = "both";
-        n.get = [e, axis] {
+        n.get = qGet([e, axis] {
             const QSize s = e->compositionSize();
             return QVariantList{axis ? s.height() : s.width()};
-        };
-        n.set = [e, axis](const QVariantList &a) {
+        });
+        n.set = qSet([e, axis](const QVariantList &a) {
             if (a.isEmpty()) return false;
             QSize s = e->compositionSize();
             const int v = int(std::lround(num(a[0])));
@@ -366,33 +379,33 @@ void OscNamespace::build()
             else s.setWidth(v);
             e->setCompositionSize(s);
             return true;
-        };
+        });
     }
 
     // --- Snapshots: recalled by number (1 = first) or from their own node
     {
         OscNode &n = add("/snapshot/recall", "i", 2, "Recall");
         n.range = {minMax(1, std::max(1, e->snapshotCount()))};
-        n.set = [e](const QVariantList &a) {
+        n.set = qSet([e](const QVariantList &a) {
             const int i = int(std::lround(num(a.value(0)))) - 1;
             if (i < 0 || i >= e->snapshotCount()) return false;
             e->recallSnapshot(i);
             return true;
-        };
+        });
         OscNode &c = add("/snapshot/count", "i", 1, "Count");
-        c.get = [e] { return QVariantList{e->snapshotCount()}; };
-        m_tree.add("/snapshot").description = "Snapshots";
+        c.get = qGet([e] { return QVariantList{e->snapshotCount()}; });
+        m_tree.add(toUtf8(QString("/snapshot"))).description = toUtf8(QString("Snapshots"));
         for (int i = 0; i < e->snapshotCount(); ++i) {
             const QString base = QStringLiteral("/snapshot/%1").arg(i + 1);
             OscNode &r = add(base + "/recall", "N", 2, "Recall");
-            r.set = [e, i](const QVariantList &) {
+            r.set = qSet([e, i](const QVariantList &) {
                 if (i >= e->snapshotCount()) return false;
                 e->recallSnapshot(i);
                 return true;
-            };
+            });
             OscNode &nm = add(base + "/name", "s", 1, "Name");
-            nm.get = [e, i] { return QVariantList{e->snapshot(i).name}; };
-            m_tree.add(base).description = e->snapshot(i).name.isEmpty() ? QString::number(i + 1) : e->snapshot(i).name;
+            nm.get = qGet([e, i] { return QVariantList{e->snapshot(i).name}; });
+            m_tree.add(toUtf8(QString(base))).description = toUtf8(QString(e->snapshot(i).name.isEmpty() ? QString::number(i + 1) : e->snapshot(i).name));
         }
     }
 
@@ -400,26 +413,26 @@ void OscNamespace::build()
     {
         OscNode &n = add("/preset/recall", "i", 2, "Recall");
         n.range = {minMax(1, std::max(1, e->presetCount()))};
-        n.set = [e](const QVariantList &a) {
+        n.set = qSet([e](const QVariantList &a) {
             const int i = int(std::lround(num(a.value(0)))) - 1;
             if (i < 0 || i >= e->presetCount()) return false;
             e->recallPreset(i);
             return true;
-        };
+        });
         OscNode &c = add("/preset/count", "i", 1, "Count");
-        c.get = [e] { return QVariantList{e->presetCount()}; };
-        m_tree.add("/preset").description = "Presets";
+        c.get = qGet([e] { return QVariantList{e->presetCount()}; });
+        m_tree.add(toUtf8(QString("/preset"))).description = toUtf8(QString("Presets"));
         for (int i = 0; i < e->presetCount(); ++i) {
             const QString base = QStringLiteral("/preset/%1").arg(i + 1);
             OscNode &r = add(base + "/recall", "N", 2, "Recall");
-            r.set = [e, i](const QVariantList &) {
+            r.set = qSet([e, i](const QVariantList &) {
                 if (i >= e->presetCount()) return false;
                 e->recallPreset(i);
                 return true;
-            };
+            });
             OscNode &nm = add(base + "/name", "s", 1, "Name");
-            nm.get = [e, i] { return QVariantList{e->preset(i).name}; };
-            m_tree.add(base).description = e->preset(i).name.isEmpty() ? QString::number(i + 1) : e->preset(i).name;
+            nm.get = qGet([e, i] { return QVariantList{e->preset(i).name}; });
+            m_tree.add(toUtf8(QString(base))).description = toUtf8(QString(e->preset(i).name.isEmpty() ? QString::number(i + 1) : e->preset(i).name));
         }
     }
 
@@ -437,8 +450,8 @@ void OscNamespace::build()
                 OscNode &n = add(path, "f", 3, c.name);
                 n.range = {minMax(c.min, c.max)};
                 n.clip = "both";
-                n.get = [e, id] { const auto v = e->control(id); return QVariantList{v ? v->value : 0.0}; };
-                n.set = [e, id](const QVariantList &a) { return !a.isEmpty() && e->setControlValue(id, num(a[0])); };
+                n.get = qGet([e, id] { const auto v = e->control(id); return QVariantList{v ? v->value : 0.0}; });
+                n.set = qSet([e, id](const QVariantList &a) { return !a.isEmpty() && e->setControlValue(id, num(a[0])); });
                 break;
             }
             case ShowControl::Kind::Toggle:
@@ -446,16 +459,16 @@ void OscNamespace::build()
                 OscNode &n = add(path, "i", 3, c.name);
                 n.range = {minMax(0, 1)};
                 n.clip = "both";
-                n.get = [e, id] { const auto v = e->control(id); return QVariantList{v && v->value >= 0.5 ? 1 : 0}; };
-                n.set = [e, id](const QVariantList &a) { return !a.isEmpty() && e->setControlValue(id, num(a[0]) != 0 ? 1.0 : 0.0); };
+                n.get = qGet([e, id] { const auto v = e->control(id); return QVariantList{v && v->value >= 0.5 ? 1 : 0}; });
+                n.set = qSet([e, id](const QVariantList &a) { return !a.isEmpty() && e->setControlValue(id, num(a[0]) != 0 ? 1.0 : 0.0); });
                 break;
             }
             case ShowControl::Kind::Choice: {
                 OscNode &n = add(path, "i", 3, c.name + QStringLiteral(" (1 = ") + c.choices.value(0) + QLatin1Char(')'));
                 n.range = {minMax(1, std::max<qsizetype>(1, c.choices.size()))};
                 n.clip = "both";
-                n.get = [e, id] { const auto v = e->control(id); return QVariantList{int(v ? v->value : 0) + 1}; };
-                n.set = [e, id](const QVariantList &a) { return !a.isEmpty() && e->setControlValue(id, std::lround(num(a[0])) - 1.0); };
+                n.get = qGet([e, id] { const auto v = e->control(id); return QVariantList{int(v ? v->value : 0) + 1}; });
+                n.set = qSet([e, id](const QVariantList &a) { return !a.isEmpty() && e->setControlValue(id, std::lround(num(a[0])) - 1.0); });
                 break;
             }
             case ShowControl::Kind::Group: break; // a frame of the page, not a value
@@ -464,11 +477,11 @@ void OscNamespace::build()
                 OscNode &n = add(path, "ff", 3, c.name);
                 n.range = {minMax(c.min, c.max), minMax(c.min, c.max)};
                 n.clip = "both";
-                n.get = [e, id] {
+                n.get = qGet([e, id] {
                     const auto v = e->control(id);
                     return QVariantList{v ? v->value : 0.0, v ? v->value2 : 0.0};
-                };
-                n.set = [e, id](const QVariantList &a) { return a.size() >= 2 && e->setControlPoint(id, num(a[0]), num(a[1])); };
+                });
+                n.set = qSet([e, id](const QVariantList &a) { return a.size() >= 2 && e->setControlPoint(id, num(a[0]), num(a[1])); });
                 break;
             }
             case ShowControl::Kind::Points: {
@@ -476,18 +489,18 @@ void OscNamespace::build()
                 OscNode &n = add(path, QByteArray(c.count * 2, 'f'), 3, c.name + QStringLiteral(" (x1, y1, x2, y2…)"));
                 for (int i = 0; i < c.count * 2; ++i) n.range.push_back(minMax(c.min, c.max));
                 n.clip = "both";
-                n.get = [e, id] {
+                n.get = qGet([e, id] {
                     const auto v = e->control(id);
                     QVariantList out;
                     if (v)
                         for (const auto &q : v->points) out << q[0] << q[1];
                     return out;
-                };
-                n.set = [e, id](const QVariantList &a) {
+                });
+                n.set = qSet([e, id](const QVariantList &a) {
                     std::vector<double> values;
                     for (const QVariant &x : a) values.push_back(num(x));
                     return !values.empty() && e->setControlPoints(id, values);
-                };
+                });
                 break;
             }
             case ShowControl::Kind::Multi: {
@@ -495,18 +508,18 @@ void OscNamespace::build()
                 OscNode &n = add(path, QByteArray(c.count, 'f'), 3, c.name);
                 for (int i = 0; i < c.count; ++i) n.range.push_back(minMax(c.min, c.max));
                 n.clip = "both";
-                n.get = [e, id] {
+                n.get = qGet([e, id] {
                     const auto v = e->control(id);
                     QVariantList out;
                     if (v)
                         for (double x : v->multi) out << x;
                     return out;
-                };
-                n.set = [e, id](const QVariantList &a) {
+                });
+                n.set = qSet([e, id](const QVariantList &a) {
                     std::vector<double> values;
                     for (const QVariant &x : a) values.push_back(num(x));
                     return !values.empty() && e->setControlMulti(id, values);
-                };
+                });
                 break;
             }
             case ShowControl::Kind::Adsr: {
@@ -514,29 +527,29 @@ void OscNamespace::build()
                 OscNode &n = add(path, "ffff", 3, c.name + QStringLiteral(" (attack, decay, sustain, release)"));
                 n.range = {minMax(0, c.max), minMax(0, c.max), minMax(0, 1), minMax(0, c.max)};
                 n.clip = "both";
-                n.get = [e, id] {
+                n.get = qGet([e, id] {
                     const auto v = e->control(id);
                     return QVariantList{v ? v->adsr[0] : 0.0, v ? v->adsr[1] : 0.0, v ? v->adsr[2] : 0.0, v ? v->adsr[3] : 0.0};
-                };
-                n.set = [e, id](const QVariantList &a) {
+                });
+                n.set = qSet([e, id](const QVariantList &a) {
                     return a.size() >= 4 && e->setControlAdsr(id, {num(a[0]), num(a[1]), num(a[2]), num(a[3])});
-                };
+                });
                 break;
             }
             case ShowControl::Kind::Color: {
                 OscNode &n = add(path, "fff", 3, c.name);
                 n.range = {minMax(0, 1), minMax(0, 1), minMax(0, 1)};
                 n.clip = "both";
-                n.get = [e, id] {
+                n.get = qGet([e, id] {
                     const auto v = e->control(id);
                     return QVariantList{v ? v->rgb[0] : 1.0, v ? v->rgb[1] : 1.0, v ? v->rgb[2] : 1.0};
-                };
-                n.set = [e, id](const QVariantList &a) { return a.size() >= 3 && e->setControlColor(id, num(a[0]), num(a[1]), num(a[2])); };
+                });
+                n.set = qSet([e, id](const QVariantList &a) { return a.size() >= 3 && e->setControlColor(id, num(a[0]), num(a[1]), num(a[2])); });
                 break;
             }
             }
         }
-        m_tree.add("/control").description = "Controls";
+        m_tree.add(toUtf8(QString("/control"))).description = toUtf8(QString("Controls"));
     }
 
     // --- Clock: the show's musical clock. bpm, bar length, start / stop / tap, where it is (beat, beat in the bar), and sync:
@@ -544,87 +557,87 @@ void OscNamespace::build()
     {
         BeatClock &clock = e->beatClock();
         OscNode &bpm = add("/clock/bpm", "f", 3, "Tempo (BPM)");
-        bpm.get = [&clock] { return QVariantList{clock.bpm()}; };
-        bpm.set = [&clock](const QVariantList &a) { clock.setBpm(num(a.value(0))); return true; };
+        bpm.get = qGet([&clock] { return QVariantList{clock.bpm()}; });
+        bpm.set = qSet([&clock](const QVariantList &a) { clock.setBpm(num(a.value(0))); return true; });
         OscNode &bar = add("/clock/bar", "i", 3, "Beats per bar");
-        bar.get = [&clock] { return QVariantList{clock.beatsPerBar()}; };
-        bar.set = [&clock](const QVariantList &a) { clock.setBeatsPerBar(int(std::lround(num(a.value(0))))); return true; };
-        add("/clock/start", "N", 2, "Start (from the first beat)").set = [&clock](const QVariantList &) { clock.start(); return true; };
-        add("/clock/stop", "N", 2, "Stop").set = [&clock](const QVariantList &) { clock.stop(); return true; };
-        add("/clock/resume", "N", 2, "Resume").set = [&clock](const QVariantList &) { clock.resume(); return true; };
-        add("/clock/tap", "N", 2, "Tap tempo").set = [&clock](const QVariantList &) { clock.tap(); return true; };
+        bar.get = qGet([&clock] { return QVariantList{clock.beatsPerBar()}; });
+        bar.set = qSet([&clock](const QVariantList &a) { clock.setBeatsPerBar(int(std::lround(num(a.value(0))))); return true; });
+        add("/clock/start", "N", 2, "Start (from the first beat)").set = qSet([&clock](const QVariantList &) { clock.start(); return true; });
+        add("/clock/stop", "N", 2, "Stop").set = qSet([&clock](const QVariantList &) { clock.stop(); return true; });
+        add("/clock/resume", "N", 2, "Resume").set = qSet([&clock](const QVariantList &) { clock.resume(); return true; });
+        add("/clock/tap", "N", 2, "Tap tempo").set = qSet([&clock](const QVariantList &) { clock.tap(); return true; });
         OscNode &running = add("/clock/running", "i", 1, "Running");
-        running.get = [&clock] { return QVariantList{clock.running() ? 1 : 0}; };
+        running.get = qGet([&clock] { return QVariantList{clock.running() ? 1 : 0}; });
         OscNode &beat = add("/clock/beat", "f", 1, "Position (beats)");
-        beat.get = [&clock] { return QVariantList{clock.beat()}; };
+        beat.get = qGet([&clock] { return QVariantList{clock.beat()}; });
         OscNode &inBar = add("/clock/beat_in_bar", "i", 1, "Beat in the bar (1 = first)");
-        inBar.get = [&clock] { return QVariantList{clock.beatInBar() + 1}; };
-        add("/clock/sync", "ffi", 2, "Tempo and position measured elsewhere: beat, bpm, playing").set = [&clock](const QVariantList &a) {
+        inBar.get = qGet([&clock] { return QVariantList{clock.beatInBar() + 1}; });
+        add("/clock/sync", "ffi", 2, "Tempo and position measured elsewhere: beat, bpm, playing").set = qSet([&clock](const QVariantList &a) {
             if (a.size() < 2) return false;
             clock.sync(num(a.value(0)), num(a.value(1)), a.size() < 3 || num(a.value(2)) != 0);
             return true;
-        };
-        m_tree.add("/clock").description = "Clock";
+        });
+        m_tree.add(toUtf8(QString("/clock"))).description = toUtf8(QString("Clock"));
     }
 
     // --- Sequence: GO, GO BACK, a step of the current sequence (1 = first), where it is
     {
-        add("/sequence/go", "N", 2, "GO").set = [e](const QVariantList &) { return e->sequencer().go(); };
-        add("/sequence/back", "N", 2, "GO Back").set = [e](const QVariantList &) { return e->sequencer().back(); };
+        add("/sequence/go", "N", 2, "GO").set = qSet([e](const QVariantList &) { return e->sequencer().go(); });
+        add("/sequence/back", "N", 2, "GO Back").set = qSet([e](const QVariantList &) { return e->sequencer().back(); });
         OscNode &st = add("/sequence/step", "i", 3, "Step");
-        st.get = [e] { return QVariantList{e->sequencer().position() + 1}; };
-        st.set = [e](const QVariantList &a) { return e->sequencer().goTo(int(std::lround(num(a.value(0)))) - 1); };
+        st.get = qGet([e] { return QVariantList{e->sequencer().position() + 1}; });
+        st.set = qSet([e](const QVariantList &a) { return e->sequencer().goTo(int(std::lround(num(a.value(0)))) - 1); });
         OscNode &cur = add("/sequence/current", "i", 3, "Current Sequence");
-        cur.get = [e] { return QVariantList{e->sequencer().current() + 1}; };
-        cur.set = [e](const QVariantList &a) {
+        cur.get = qGet([e] { return QVariantList{e->sequencer().current() + 1}; });
+        cur.set = qSet([e](const QVariantList &a) {
             const int i = int(std::lround(num(a.value(0)))) - 1;
             if (i < 0 || i >= e->sequencer().count()) return false;
             e->sequencer().setCurrent(i);
             return true;
-        };
+        });
         // Stop: the selected sequence's waits; stop_all: every sequence's, those playing in the background too
-        add("/sequence/stop", "N", 2, "Stop").set = [e](const QVariantList &) {
+        add("/sequence/stop", "N", 2, "Stop").set = qSet([e](const QVariantList &) {
             e->sequencer().stop();
             return true;
-        };
-        add("/sequence/stop_all", "N", 2, "Stop All").set = [e](const QVariantList &) {
+        });
+        add("/sequence/stop_all", "N", 2, "Stop All").set = qSet([e](const QVariantList &) {
             e->sequencer().stopAll();
             return true;
-        };
-        m_tree.add("/sequence").description = "Sequence";
+        });
+        m_tree.add(toUtf8(QString("/sequence"))).description = toUtf8(QString("Sequence"));
         // Each sequence (1 = first) on its own: several cue lists play side by side, a controller drives one
         // whatever the interface has selected
         for (int i = 0; i < e->sequencer().count(); ++i) {
             const QString base = QStringLiteral("/sequence/%1").arg(i + 1);
             auto valid = [e, i] { return i < e->sequencer().count(); };
-            add(base + "/go", "N", 2, "GO").set = [e, i, valid](const QVariantList &) {
+            add(base + "/go", "N", 2, "GO").set = qSet([e, i, valid](const QVariantList &) {
                 return valid() && e->sequencer().goSequence(i);
-            };
-            add(base + "/back", "N", 2, "GO Back").set = [e, i, valid](const QVariantList &) {
+            });
+            add(base + "/back", "N", 2, "GO Back").set = qSet([e, i, valid](const QVariantList &) {
                 return valid() && e->sequencer().backSequence(i);
-            };
-            add(base + "/stop", "N", 2, "Stop").set = [e, i, valid](const QVariantList &) {
+            });
+            add(base + "/stop", "N", 2, "Stop").set = qSet([e, i, valid](const QVariantList &) {
                 if (!valid()) return false;
                 e->sequencer().stopSequence(i);
                 return true;
-            };
+            });
             OscNode &step = add(base + "/step", "i", 3, "Step");
-            step.get = [e, i] { return QVariantList{e->sequencer().positionOf(i) + 1}; };
-            step.set = [e, i, valid](const QVariantList &a) {
+            step.get = qGet([e, i] { return QVariantList{e->sequencer().positionOf(i) + 1}; });
+            step.set = qSet([e, i, valid](const QVariantList &a) {
                 return valid() && e->sequencer().goToStepOf(i, int(std::lround(num(a.value(0)))) - 1);
-            };
+            });
             OscNode &active = add(base + "/active", "T", 1, "Playing");
-            active.get = [e, i] { return QVariantList{e->sequencer().active(i)}; };
+            active.get = qGet([e, i] { return QVariantList{e->sequencer().active(i)}; });
             OscNode &nm = add(base + "/name", "s", 1, "Name");
-            nm.get = [e, i] { return QVariantList{e->sequencer().sequence(i).name}; };
+            nm.get = qGet([e, i] { return QVariantList{e->sequencer().sequence(i).name}; });
             const QString name = e->sequencer().sequence(i).name;
-            m_tree.add(base).description = name.isEmpty() ? QString::number(i + 1) : name;
+            m_tree.add(toUtf8(QString(base))).description = toUtf8(QString(name.isEmpty() ? QString::number(i + 1) : name));
         }
     }
 
     // --- Timelines (1 = first): their transport
     {
-        m_tree.add("/timeline").description = "Timelines";
+        m_tree.add(toUtf8(QString("/timeline"))).description = toUtf8(QString("Timelines"));
         using A = Engine::AnimAction;
         for (int i = 0; i < e->animationCount(); ++i) {
             const Engine::Animation an = e->animation(i);
@@ -637,28 +650,28 @@ void OscNamespace::build()
             };
             for (const Cmd &c : {Cmd{"play", A::Play, "Play"}, Cmd{"pause", A::Pause, "Pause"}, Cmd{"stop", A::Stop, "Stop"},
                                  Cmd{"rewind", A::Rewind, "Rewind"}})
-                add(base + "/" + c.key, "N", 2, c.label).set = [e, id, act = c.act](const QVariantList &) {
+                add(base + "/" + c.key, "N", 2, c.label).set = qSet([e, id, act = c.act](const QVariantList &) {
                     if (e->indexOfAnimation(id) < 0) return false;
                     e->controlAnimation(id, act);
                     return true;
-                };
+                });
             OscNode &sk = add(base + "/seek", "f", 3, "Seek (s)");
-            sk.get = [e, id] { return QVariantList{e->animation(e->indexOfAnimation(id)).clock}; };
-            sk.set = [e, id](const QVariantList &a) {
+            sk.get = qGet([e, id] { return QVariantList{e->animation(e->indexOfAnimation(id)).clock}; });
+            sk.set = qSet([e, id](const QVariantList &a) {
                 if (e->indexOfAnimation(id) < 0) return false;
                 e->controlAnimation(id, A::Seek, num(a.value(0)));
                 return true;
-            };
+            });
             OscNode &sp = add(base + "/speed", "f", 3, "Speed (1 = normal)");
-            sp.get = [e, id] { return QVariantList{e->animation(e->indexOfAnimation(id)).speed}; };
-            sp.set = [e, id](const QVariantList &a) {
+            sp.get = qGet([e, id] { return QVariantList{e->animation(e->indexOfAnimation(id)).speed}; });
+            sp.set = qSet([e, id](const QVariantList &a) {
                 if (e->indexOfAnimation(id) < 0) return false;
                 e->controlAnimation(id, A::Speed, num(a.value(0)));
                 return true;
-            };
+            });
             OscNode &pl = add(base + "/playing", "T", 1, "Playing");
-            pl.get = [e, id] { return QVariantList{e->animation(e->indexOfAnimation(id)).state == Engine::AnimState::Playing}; };
-            m_tree.add(base).description = an.name.isEmpty() ? QString::number(i + 1) : an.name;
+            pl.get = qGet([e, id] { return QVariantList{e->animation(e->indexOfAnimation(id)).state == Engine::AnimState::Playing}; });
+            m_tree.add(toUtf8(QString(base))).description = toUtf8(QString(an.name.isEmpty() ? QString::number(i + 1) : an.name));
         }
     }
 
@@ -680,7 +693,7 @@ void OscNamespace::build()
     }
     add("/layer", QString(), 0, "Layers");
     add("/viewport", QString(), 0, "Viewports");
-    m_tree.add("/composition").description = "Composition";
+    m_tree.add(toUtf8(QString("/composition"))).description = toUtf8(QString("Composition"));
     QHash<quint64, QString> prefixOf;
     osc::SegmentNamer namer;
     for (const Item &it : items) {
@@ -691,12 +704,12 @@ void OscNamespace::build()
         prefixOf[it.id] = base + '/' + seg;
         m_prefixOf[it.id] = base + '/' + seg;
         addLayer(base + '/' + seg, it.id);
-        m_tree.add(base + '/' + seg).description = it.name; // real name (spaces included) for the clients that show names
+        m_tree.add(toUtf8(QString(base + '/' + seg))).description = toUtf8(QString(it.name)); // real name (spaces included) for the clients that show names
         // Stable remote editing paths are separate from name-based paths and their wildcards.
         // A group's alias exposes its own controls; its children have their own IDs.
         const QString remote = QStringLiteral("/show/layer/by-id/%1").arg(it.id);
         addLayer(remote, it.id);
-        m_tree.add(remote).description = it.name;
+        m_tree.add(toUtf8(QString(remote))).description = toUtf8(QString(it.name));
     }
 
     // --- Interactions, by their names: their values (on / off, master level, ranges, filter, curve)
@@ -709,7 +722,7 @@ void OscNamespace::build()
         const Interaction &it = interactions[k];
         const QString P = QStringLiteral("/interaction/") + segs[int(k)];
         m_interactionPrefix[it.id] = P;
-        m_tree.add(P).description = it.name;
+        m_tree.add(toUtf8(QString(P))).description = toUtf8(QString(it.name));
         const QString prefix = QStringLiteral("interaction/%1/").arg(it.id);
         for (const QString &key : Engine::interactionKeys(it)) {
             ParamInfo info;
@@ -720,17 +733,17 @@ void OscNamespace::build()
             OscNode &n = add(P + '/' + key, type, 3, info.name());
             n.range = {info.type == ParamInfo::Type::Choice ? vals(info.choices) : minMax(info.min, info.max)};
             const QString path = prefix + key;
-            n.get = [e, path] {
+            n.get = qGet([e, path] {
                 const QJsonValue v = e->parameterValue(0, path);
                 return v.isUndefined() ? QVariantList() : QVariantList{v.toVariant()};
-            };
-            n.set = [e, path, type](const QVariantList &a) {
+            });
+            n.set = qSet([e, path, type](const QVariantList &a) {
                 if (a.isEmpty()) return false;
                 const QJsonValue v = type == QLatin1String("T") ? QJsonValue(a[0].toBool())
                                      : type == QLatin1String("s") ? QJsonValue(a[0].toString())
                                                                   : QJsonValue(a[0].toDouble());
                 return e->setParameter(0, path, v);
-            };
+            });
         }
     }
     complete();
@@ -746,12 +759,12 @@ void OscNamespace::complete()
         {"/composition/blackout/fade", 0.0}, {"/composition/fps", 0.0}, {"/composition/width", 1920}, {"/composition/height", 1080},
         {"/clock/bpm", 120.0}, {"/clock/bar", 4}};
     for (auto &[path, node] : m_index) {
-        if (node->kind() != pxs::Kind::Parameter || !(node->access & 1) || node->type.isEmpty()) continue;
+        if (node->kind() != pxs::core::tree::Kind::Parameter || !(node->access & 1) || node->type.empty()) continue;
         bool numeric = true;
-        for (const QChar c : node->type) numeric = numeric && QStringLiteral("fidh").contains(c);
+        for (const char c : node->type) numeric = numeric && std::string("fidh").find(c) != std::string::npos;
         if (!numeric) continue;
         const QString name = path.section('/', -1);
-        if (node->range.isEmpty()) {
+        if (node->range.empty()) {
             double lo = 0, hi = 100000; // a count, a position: not negative, with no real upper bound
             if (path == "/clock/bpm") lo = BeatClock::kMinBpm, hi = BeatClock::kMaxBpm;
             else if (path == "/clock/bar" || path == "/clock/beat_in_bar") lo = 1, hi = 16;
@@ -759,7 +772,7 @@ void OscNamespace::complete()
             else if (name == "step" || name == "current") lo = 1;
             else if (path == "/composition/fps/measured") hi = 1000;
             for (int k = 0; k < node->type.size(); ++k) node->range.push_back(minMax(lo, hi));
-            if (node->clip.isEmpty() && (node->access & 2)) node->clip = "both";
+            if (node->clip.empty() && (node->access & 2)) node->clip = "both";
         }
         if (node->access == 3 && !node->defaultValue) {
             QVariant d = defaults.count(path) ? defaults.at(path) : QVariant();
@@ -770,7 +783,7 @@ void OscNamespace::complete()
                 else if (name == "width") d = 1920;
                 else if (name == "height") d = 1080;
             }
-            if (d.isValid()) node->defaultValue = [d] { return QVariantList{d}; };
+            if (d.isValid()) node->defaultValue = qGet([d] { return QVariantList{d}; });
         }
     }
 }
@@ -786,7 +799,7 @@ QString OscNamespace::addressOf(quint64 layer, const QString &path) const
     } else if (m_prefixOf.contains(layer)) {
         addr = m_prefixOf.value(layer) + '/' + oscPath(path);
     }
-    return m_tree.find(addr) ? addr : QString();
+    return m_tree.find(toUtf8(addr)) ? addr : QString();
 }
 
 QString OscNamespace::addressOf(Engine *e, quint64 layer, const QString &path)
@@ -810,7 +823,7 @@ struct LayerNodes {
     {
         Engine *eng = e;
         const quint64 lid = id;
-        node.defaultValue = [eng, lid, paths] {
+        node.defaultValue = qGet([eng, lid, paths] {
             Engine::Lock lock(&eng->mutex());
             Layer *layer = find(eng, lid);
             QVariantList out;
@@ -820,7 +833,7 @@ struct LayerNodes {
                 out << p->info().defaultValue;
             }
             return out;
-        };
+        });
     }
 
     // Read under the lock; writes refused on a locked layer unless `always`
@@ -832,19 +845,19 @@ struct LayerNodes {
         Engine *eng = e;
         const quint64 lid = id;
         if (get)
-            n.get = [eng, lid, get] {
+            n.get = qGet([eng, lid, get] {
                 Engine::Lock lk(&eng->mutex());
                 Layer *l = find(eng, lid);
                 return l ? get(*l) : QVariantList();
-            };
+            });
         if (set)
-            n.set = [eng, lid, set, always, layerState](const QVariantList &a) {
+            n.set = qSet([eng, lid, set, always, layerState](const QVariantList &a) {
                 const int idx = eng->indexOfId(lid);
                 if (idx < 0 || (!always && eng->isLocked(idx))) return false;
                 const bool done = set(idx, a);
                 if (done && layerState) ChangeFeed::layer(lid); // its own state (a parameter says so by itself)
                 return done;
-            };
+            });
         return n;
     }
     // Field written under the lock
@@ -873,11 +886,11 @@ struct LayerNodes {
             }
             return {};
         };
-        auto rangeOf = [](const ParamInfo &i) {
+        auto rangeOf = [](const ParamInfo &i) -> ArgRange {
             if (!i.values.isEmpty()) {
-                QJsonArray v;
-                for (int x : i.values) v.append(x);
-                return QJsonObject{{"VALS", v}};
+                ArgRange r;
+                for (int x : i.values) r.vals.push_back(pxs::core::Value(x));
+                return r;
             }
             if (i.type == ParamInfo::Type::Choice) return vals(i.choices);
             return minMax(i.min, i.max);
@@ -920,10 +933,10 @@ struct LayerNodes {
                 p != QStringList{"r", "g", "b"} && p != QStringList{"r", "g", "b", "a"} &&
                 p != QStringList{"h", "s", "l"}) continue;
             QStringList paths;
-            QJsonArray range;
+            std::vector<ArgRange> range;
             for (const QString &x : p) {
                 paths << it.key() + '/' + x;
-                range.append(rangeOf(byPath[paths.back()]));
+                range.push_back(rangeOf(byPath[paths.back()]));
             }
             // Its name: what the names of its numbers share ("Position X", "Position Y": "Position")
             QString name = byPath[paths.front()].name();
@@ -1318,7 +1331,7 @@ void OscNamespace::addLayer(const QString &P, quint64 id)
                         return true;
                     });
         }
-        m_tree.add(A).description = QStringLiteral("Animation");
+        m_tree.add(toUtf8(QString(A))).description = toUtf8(QString(QStringLiteral("Animation")));
     }
     if (isGroup) add(P + "/layer", QString(), 0, "Layers");
     // Readable names of the containers
@@ -1327,12 +1340,12 @@ void OscNamespace::addLayer(const QString &P, quint64 id)
         {"/text", "Text"},      {"/fx", "FX"},            {"/output", "Output"},  {"/position", "Position"},
         {"/pivot", "Pivot"},    {"/scale", "Scale"},      {"/add", "Add"},        {"/remove", "Remove"}};
     for (const auto &[suffix, name] : kNames) {
-        OscNode *node = m_tree.find(P + suffix);
-        if (node && node->description.isEmpty()) node->description = name;
+        OscNode *node = m_tree.find(toUtf8(P + suffix));
+        if (node && node->description.empty()) node->description = name;
     }
     for (const auto &[k, seg] : effects) {
-        OscNode *node = m_tree.find(P + "/fx/" + seg);
-        if (node && node->description.isEmpty()) node->description = seg;
+        OscNode *node = m_tree.find(toUtf8(P + "/fx/" + seg));
+        if (node && node->description.empty()) node->description = toUtf8(seg);
     }
 }
 
@@ -1522,8 +1535,8 @@ bool OscServer::handleMessage(const osc::Message &m)
     for (const QString &p : targets) {
         const OscNode *n = m_ns.node(p);
         if (!n || !(n->access & 2) || !n->set) continue;
-        if (!finiteArgs(m.args, n->type)) continue; // a number written as text: "nan", "inf"
-        any |= n->set(m.args);
+        if (!finiteArgs(m.args, fromUtf8(n->type))) continue; // a number written as text: "nan", "inf"
+        any |= n->set(toValues(m.args));
     }
     if (any) m_e->noteInput(FrameTiming::Osc); // a value changed: how long until a frame has it
     return any;
@@ -1531,12 +1544,12 @@ bool OscServer::handleMessage(const osc::Message &m)
 
 QJsonObject OscServer::hostInfo() const
 {
-    return pxs::Tree::hostInfo(m_name, int(oscPort()),
-                               QJsonObject{{"ACCESS", true}, {"VALUE", true}, {"RANGE", true}, {"DESCRIPTION", true},
-                                           {"TAGS", false}, {"EXTENDED_TYPE", false}, {"UNIT", false}, {"CRITICAL", false},
-                                           {"CLIPMODE", true}, {"DEFAULT_VALUE", true}, {"LISTEN", true},
-                                           {"PATH_CHANGED", true}},
-                               QJsonObject{{"WS_PORT", int(queryPort())}});
+    using namespace pxs::convert;
+    const QJsonObject extensions{{"ACCESS", true}, {"VALUE", true}, {"RANGE", true}, {"DESCRIPTION", true},
+                                 {"TAGS", false}, {"EXTENDED_TYPE", false}, {"UNIT", false}, {"CRITICAL", false},
+                                 {"CLIPMODE", true}, {"DEFAULT_VALUE", true}, {"LISTEN", true}, {"PATH_CHANGED", true}};
+    return jsonObjectFromText(pxs::core::tree::hostInfoJson(toUtf8(m_name), int(oscPort()), toJsonText(extensions),
+                                                            toJsonText(QJsonObject{{"WS_PORT", int(queryPort())}})));
 }
 
 QByteArray OscServer::httpGet(const QString &target, int *status)
@@ -1758,7 +1771,7 @@ void OscServer::pushListened()
         for (const QString &p : std::as_const(c.listening)) {
             const OscNode *n = m_ns.node(p);
             if (!n || !n->get) continue;
-            if (!values.contains(p)) values.insert(p, n->get());
+            if (!values.contains(p)) values.insert(p, toVariants(n->get()));
             const QVariantList v = values.value(p);
             if (v.isEmpty() || c.sent.value(p) == v) continue;
             c.sent.insert(p, v);

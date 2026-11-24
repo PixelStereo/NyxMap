@@ -19,7 +19,13 @@ class EngineParameterSource final : public pxs::controls::ParameterSource
 {
 public:
     explicit EngineParameterSource(Engine *e) : m_e(e) {}
-    bool info(quint64 scope, const QString &path, ParamInfo *out) const override { return m_e->parameterInfo(scope, path, out); }
+    bool info(quint64 scope, const QString &path, pxs::core::tree::ParamInfo *out) const override
+    {
+        ParamInfo mine;
+        if (!m_e->parameterInfo(scope, path, &mine)) return false;
+        *out = mine.toCore();
+        return true;
+    }
     QJsonValue value(quint64 scope, const QString &path) const override
     {
         const Parameter *p = m_e->findParameter(scope, path);

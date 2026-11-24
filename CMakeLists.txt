@@ -70,6 +70,7 @@ add_library(nyxmap_engine STATIC
   src/engine/WorkerPool.cpp
   src/engine/Engine.cpp
   src/engine/Layers.cpp
+  src/engine/Parameter.cpp
   src/engine/Render.cpp
   src/engine/Project.cpp
   src/engine/ProjectCollect.cpp

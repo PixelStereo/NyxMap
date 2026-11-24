@@ -140,7 +140,7 @@ void RemoteServer::onDesk(QTcpSocket *client, const QString &type, const QJsonOb
                 values << (tag == QLatin1Char('i') ? QVariant(int(std::lround(v.toDouble()))) : QVariant(v.toDouble()));
             }
         }
-        if (node->set(values)) emit showDriven();
+        if (node->set(pxs::convert::toValues(values))) emit showDriven();
     }
 }
 
@@ -182,7 +182,7 @@ void RemoteServer::pushDesk()
         for (const QString &path : std::as_const(c.listening)) {
             const OscNode *node = m_ns.node(path);
             if (!node || !node->get || !(node->access & 1)) continue;
-            const QVariantList now = node->get();
+            const QVariantList now = pxs::convert::toVariants(node->get());
             auto seen = c.params.find(path);
             if (seen != c.params.end() && seen.value() == now) continue;
             c.params.insert(path, now);
