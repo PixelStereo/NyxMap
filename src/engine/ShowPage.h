@@ -319,7 +319,7 @@ inline constexpr char kScript[] = R"JS(
     const self = { selected: '' };
     let entries = [], nodes = [], section = '', locked = false, listening = new Set(), updaters = new Map();
     const current = () => entries.find(e => e.id === self.selected);
-    const openWhenLocked = path => ['enable', 'solo', 'testcard', 'locked', 'play', 'rewind', 'time'].includes(path);
+    const openWhenLocked = path => ['enable', 'solo', 'output/testcard', 'locked', 'source/play', 'source/rewind', 'source/time'].includes(path);
     const tuple = node => {
       const c = node.CONTENTS || {};
       if (/^ffff?$/.test(node.TYPE) && c.r && c.g && c.b) return { type: 'rgb', keys: node.TYPE.length === 4 ? ['r', 'g', 'b', 'a'] : ['r', 'g', 'b'] };
@@ -331,11 +331,11 @@ inline constexpr char kScript[] = R"JS(
       const path = node.relative;
       if (path.includes('/anim/')) return ['animation', 'Parameter animation'];
       if (path.startsWith('fx/')) { const name = path.split('/')[1]; return name === 'enable' ? ['effects', 'Effects'] : ['fx/' + name, 'FX · ' + name.replaceAll('_', ' ')]; }
-      if (/^(position|scale|pivot|corner|roi)(\/|$)/.test(path) || ['rotation', 'width', 'height'].includes(path)) return ['transform', 'Transform'];
-      if (/^(color|temp|tint|add|remove|mask)(\/|$)/.test(path) || (node.DESCRIPTION || '').startsWith('Color ›')) return ['color', 'Color'];
-      if (/^(param|source|text|clock|tc|tox|web)(\/|$)/.test(path) || ['file', 'source_layer', 'source_tap'].includes(path)) return ['source', 'Source'];
+      if (/^(spatial|roi)(\/|$)/.test(path)) return ['transform', 'Transform'];
+      if (/^color(\/|$)/.test(path)) return ['color', 'Color'];
+      if (/^source\/(play|rewind|time|duration|speed|in|out|play_mode|volume|mute|seek|playhead|progress)$/.test(path)) return ['playback', 'Playback'];
+      if (/^(param|source|text|clock|tc|tox|web)(\/|$)/.test(path)) return ['source', 'Source'];
       if (/^(viewport|output)(\/|$)/.test(path)) return ['routing', 'Output & routing'];
-      if (['play', 'rewind', 'time', 'duration', 'speed', 'in', 'out', 'play_mode', 'volume', 'mute'].includes(path)) return ['playback', 'Playback'];
       return ['general', 'General'];
     };
     const setStatus = (text, warn) => { const s = $('#layerStatus'); s.textContent = text; s.classList.toggle('locked', !!warn); };
@@ -367,12 +367,11 @@ inline constexpr char kScript[] = R"JS(
         if (typeof path !== 'string' || !path.startsWith(root + '/')) return;
         const relative = path.slice(root.length + 1);
         const entry = current();
-        if (relative !== 'id' && (relative !== 'testcard' || (entry && entry.viewport)) && supported(node) && !skip.has(path)) nodes.push(Object.assign({}, node, { relative }));
+        if (relative !== 'id' && (relative !== 'output/testcard' || (entry && entry.viewport)) && supported(node) && !skip.has(path)) nodes.push(Object.assign({}, node, { relative }));
         const pair = tuple(node), next = new Set(skip);
         if (pair) for (const key of pair.keys) next.add(path + '/' + key);
         for (const [key, child] of Object.entries(node.CONTENTS || {})) {
           if (relative === 'layer' || key === 'layer') continue; // groups are selected on their own
-          if (child.FULL_PATH === node.NYXMAP_RESET) continue; // reset is on the name, not another card
           visit(child, next);
         }
       };
@@ -454,9 +453,9 @@ inline constexpr char kScript[] = R"JS(
     }
     const name = node => {
       const d = el('div', 'name', node.DESCRIPTION || node.relative);
-      if (writable(node) && node.TYPE !== 'N' && node.NYXMAP_RESET === node.FULL_PATH + '/reset') {
-        d.classList.add('reset');
-        const reset = () => { if (!locked) send({ t: 'write', path: node.NYXMAP_RESET, args: [] }); };
+      if (writable(node) && node.TYPE !== 'N' && Array.isArray(node.DEFAULT_VALUE)) {
+        d.classList.add('reset'); // a double tap writes the default value the node announces
+        const reset = () => { if (!locked) write(node, node.DEFAULT_VALUE); };
         d.ondblclick = reset;
         let last = 0;
         d.addEventListener('touchend', () => { const now = Date.now(); if (now - last < 450) { last = 0; reset(); } else last = now; });

@@ -237,17 +237,25 @@ inputs. Discover it instead of guessing shader names or hard-coding FX slots.
 
 ```text
 /layer/<name>/opacity
-/layer/<name>/position        <x> <y>
-/layer/<name>/position/x      <x>
-/layer/<name>/position/y      <y>
+/layer/<name>/spatial/position        <x> <y>
+/layer/<name>/spatial/position/x      <x>
+/layer/<name>/spatial/position/y      <y>
+/layer/<name>/color/tint              <value>
+/layer/<name>/color/tint/enable       <on|off>
 /layer/<group>/layer/<name>/…
 /viewport/<name>/…
 /interaction/<name>/…
 ```
 
 Right-click a parameter in NyxMap and choose **Copy OSC address**. The namespace
-publishes each node's type, range, access and description. Source/ISF values are
-under `param`; clocks under `clock`; FX expose their own parameter subtrees.
+publishes each node's type, range, access, default and description. It follows the
+tabs of the layer inspector: `spatial` (position, scale, rotation, pivot, corners, flip,
+soft edge, warp), `color` (enable, temp, tint, add, remove, mask), `source` (file, speed,
+play, rewind, in, out, volume, mute, and the ISF values under `source/param`), `roi`, `fx`,
+`output` and `viewport`; the layer's own switches (`enable`, `solo`, `locked`, `opacity`,
+`blend_mode`, `name`, `id`, `type`) stay at its root. A node that has a value can hold other
+nodes: `color/tint` is a value and holds `color/tint/enable`; `spatial/position` (x y) holds
+`x` and `y`. Clocks are under `clock`; FX expose their own parameter subtrees.
 
 Names are case-sensitive and made OSC-safe: spaces/reserved characters become
 underscores, with suffixes for duplicate siblings. Renaming or moving a layer
@@ -262,8 +270,8 @@ Use this stable prefix for commands and LISTEN subscriptions, for example:
 
 ```text
 /show/layer/by-id/<id>/opacity       <float>
-/show/layer/by-id/<id>/position      <x> <y>
-/show/layer/by-id/<id>/param/<name>   <value…>
+/show/layer/by-id/<id>/spatial/position      <x> <y>
+/show/layer/by-id/<id>/source/param/<name>   <value…>
 /show/layer/by-id/<id>/fx/<fx>/param/<name>  <value…>
 ```
 
@@ -291,28 +299,20 @@ compete on a target; see [parameter-control rules](../control/parameters.md).
 
 ### Reset a parameter
 
-Writable layer/source/FX parameters with a declared default publish two
-NyxMap-specific OSCQuery attributes:
+There is no reset address. A writable parameter with a default publishes it as the standard `DEFAULT_VALUE` attribute (one entry
+per argument, independent of `VALUE`), and a client resets the parameter by writing that value back:
 
-| Attribute | Meaning |
-| :--- | :--- |
-| `NYXMAP_DEFAULT` | Typed default argument array, independent of `VALUE`. |
-| `NYXMAP_RESET` | Trigger address that resolves the native default when called. |
+```text
+GET /show/layer/by-id/<id>/opacity           → "DEFAULT_VALUE": [1]
+/show/layer/by-id/<id>/opacity       1.0     ← the reset
+/show/layer/by-id/<id>/spatial/position       ← read its DEFAULT_VALUE first: it follows the composition (its center)
+```
 
-For example, a layer's opacity advertises `[1]` and
-`/show/layer/by-id/<id>/opacity/reset`. Send a bare OSC message to that address.
-`…/position/reset` or `…/param/startColor/reset` restores a whole XY/RGB(A) value;
-`…/position/x/reset` or `…/param/startColor/r/reset` restores one component.
-Named layer paths expose the same actions. A numeric/Boolean trigger release of
-zero is refused. Triggers, read-only controls and values without a declared
-default do not advertise resets.
-
-Defaults come from NyxMap's parameter registry, including ISF inputs. Reset
-actions resolve the current source, FX and composition dimensions under the
-engine lock. They obey layer locking and ordinary parameter limits; removed
-parameters/layers cannot reset another target. HTTP attribute queries support
-`?NYXMAP_DEFAULT` and `?NYXMAP_RESET`; `HOST_INFO.EXTENSIONS` advertises them.
-The remote uses these actions instead of writing cached default numbers.
+`DEFAULT_VALUE` comes from NyxMap's parameter registry, including ISF inputs, and is read live: it resolves the current source,
+FX and composition dimensions under the engine lock. A tuple (`spatial/position`, `color/add`) has one entry per component, and each
+component has its own. The write obeys layer locking and ordinary parameter limits. Triggers, read-only controls and values without a
+declared default do not publish one. HTTP attribute queries support `?DEFAULT_VALUE`; `HOST_INFO.EXTENSIONS` advertises it.
+The remote writes the announced default instead of cached numbers.
 
 ## OSCQuery
 

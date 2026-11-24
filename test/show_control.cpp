@@ -37,28 +37,52 @@ int runShowControlTests(Engine &e)
     auto layerTree = QJsonDocument::fromJson(server.httpGet(layerPath, &layerStatus)).object();
     check(layerStatus == 200 && layerTree.value("CONTENTS").toObject().value("id").toObject().value("VALUE").toArray()[0].toString() == QString::number(layer),
           "stable layer subtree includes its identity and typed parameters");
+    // A reset is writing the DEFAULT_VALUE a node announces: there is no reset address
     const auto opacityMetadata = layerTree.value("CONTENTS").toObject().value("opacity").toObject();
-    const auto opacityDefaults = opacityMetadata.value("NYXMAP_DEFAULT").toArray();
-    check(opacityDefaults.size() == 1 && opacityDefaults[0].toDouble() == 1 &&
-          opacityMetadata.value("NYXMAP_RESET").toString() == layerPath + "/opacity/reset",
-          "parameter defaults are published independently of their current values");
-    check(server.handleMessage({layerPath + "/opacity/reset", "", {}}) &&
-          e.parameterValue(layer, "opacity").toDouble() == 1, "reset invokes the native default");
+    const auto opacityDefaults = opacityMetadata.value("DEFAULT_VALUE").toArray();
+    check(opacityDefaults.size() == 1 && opacityDefaults[0].toDouble() == 1 && !opacityMetadata.contains("NYXMAP_RESET") &&
+          !layerTree.value("CONTENTS").toObject().value("opacity").toObject().value("CONTENTS").toObject().contains("reset"),
+          "parameter defaults are published independently of their current values, with no reset address");
     e.setParameter(layer, "opacity", .2);
-    check(!server.handleMessage({layerPath + "/opacity/reset", "i", {0}}) &&
-          std::abs(e.parameterValue(layer, "opacity").toDouble() - .2) < 1e-6, "trigger release never resets a parameter");
+    check(server.handleMessage({layerPath + "/opacity", "f", {opacityDefaults[0].toDouble()}}) &&
+          e.parameterValue(layer, "opacity").toDouble() == 1, "writing the default value resets");
+    // A tab is a node: the spatial, color and source parameters are under it, each a value that may hold its own nodes
+    const auto top = layerTree.value("CONTENTS").toObject();
+    const auto spatial = top.value("spatial").toObject().value("CONTENTS").toObject();
+    const auto color = top.value("color").toObject().value("CONTENTS").toObject();
+    check(spatial.contains("position") && spatial.contains("scale") && spatial.contains("rotation") && !top.contains("position") &&
+              color.contains("tint") && color.contains("add") && color.contains("enable") && !top.contains("tint"),
+          "the layer parameters are under the node of their tab");
+    const auto tint = color.value("tint").toObject();
+    check(tint.value("TYPE").toString() == "f" && tint.contains("VALUE") &&
+              tint.value("CONTENTS").toObject().contains("enable"),
+          "a value holds its enable switch: color/tint is a parameter and a node");
     e.setParameter(layer, "position/x", 100); e.setParameter(layer, "position/y", 200);
     e.setCompositionSize(QSize(1280, 720));
-    check(server.handleMessage({layerPath + "/position/reset", "", {}}) &&
-          e.parameterValue(layer, "position/x").toDouble() == 640 && e.parameterValue(layer, "position/y").toDouble() == 360,
-          "tuple reset resolves current composition defaults instead of connection-time values");
-    e.setParameter(layer, "position/x", 100); e.setParameter(layer, "position/y", 200);
-    check(server.handleMessage({layerPath + "/position/x/reset", "", {}}) &&
-          e.parameterValue(layer, "position/x").toDouble() == 640 && e.parameterValue(layer, "position/y").toDouble() == 200,
-          "a component resets independently");
+    const auto positionDefaults = spatial.value("position").toObject().value("DEFAULT_VALUE").toArray();
+    int positionStatus = 0;
+    const auto livePosition = QJsonDocument::fromJson(server.httpGet(layerPath + "/spatial/position", &positionStatus)).object()
+                                  .value("DEFAULT_VALUE").toArray();
+    check(livePosition.size() == 2 && livePosition[0].toDouble() == 640 && livePosition[1].toDouble() == 360 &&
+              server.handleMessage({layerPath + "/spatial/position", "ff", {livePosition[0].toDouble(), livePosition[1].toDouble()}}) &&
+              e.parameterValue(layer, "position/x").toDouble() == 640 && e.parameterValue(layer, "position/y").toDouble() == 360,
+          "a tuple's default follows the current composition, read live, and writing it resets");
+    (void)positionDefaults;
     e.setParameter(layer, "add/r", .3); e.setParameter(layer, "add/g", .4); e.setParameter(layer, "add/b", .5);
-    check(server.handleMessage({layerPath + "/add/reset", "", {}}) && e.parameterValue(layer, "add/g").toDouble() == 0,
+    const auto addDefaults = QJsonDocument::fromJson(server.httpGet(layerPath + "/color/add", &positionStatus)).object()
+                                 .value("DEFAULT_VALUE").toArray();
+    check(addDefaults.size() == 3 &&
+              server.handleMessage({layerPath + "/color/add", "fff", {addDefaults[0].toDouble(), addDefaults[1].toDouble(), addDefaults[2].toDouble()}}) &&
+              e.parameterValue(layer, "add/g").toDouble() == 0,
           "color reset restores its native channels");
+    {
+        // What every pxs tree must have: TYPE, ACCESS, VALUE, and for a numeric parameter its RANGE and DEFAULT_VALUE
+        OscNamespace ns(&e);
+        ns.refresh();
+        const QStringList problems = ns.problems();
+        for (const QString &p : problems.mid(0, 40)) qWarning("namespace: %s", qPrintable(p));
+        check(problems.isEmpty(), "the namespace has what every pxs tree must have");
+    }
     e.layer(e.indexOfId(layer))->name = "Renamed target";
     const quint64 replacement = e.layerId(e.addLayer("Control target", 0));
     e.setParameter(replacement, "opacity", .9);
@@ -68,7 +92,7 @@ int runShowControlTests(Engine &e)
           "stable layer writes survive renaming and insertion without targeting the new name owner");
     check(server.handleMessage({layerPath + "/locked", "T", {true}}) &&
           !server.handleMessage({layerPath + "/opacity", "f", {.8}}) &&
-          !server.handleMessage({layerPath + "/opacity/reset", "", {}}), "stable editor and reset obey layer locking");
+          !server.handleMessage({layerPath + "/opacity", "f", {1}}), "stable editor and reset obey layer locking");
     check(server.handleMessage({layerPath + "/locked", "F", {false}}), "stable editor can unlock its selected layer");
     e.setParameter(layer, "opacity", .2);
     Engine::Snapshot snapshot; snapshot.name = "Same name"; snapshot.layers = e.captureLayers(); snapshot.fade = 0;
@@ -136,7 +160,7 @@ int runShowControlTests(Engine &e)
     e.removeSnapshot(e.indexOfSnapshot(sid));
     check(!server.handleMessage({snapshotPath, "", {}}), "removed snapshot IDs cannot launch another snapshot");
     e.removeLayer(e.indexOfId(layer));
-    check(!server.handleMessage({layerPath + "/opacity", "f", {.1}}) && !server.handleMessage({layerPath + "/opacity/reset", "", {}}) &&
+    check(!server.handleMessage({layerPath + "/opacity", "f", {.1}}) &&
           std::abs(e.parameterValue(replacement, "opacity").toDouble() - .9) < 1e-6,
           "a deleted layer ID cannot write to a surviving layer");
     e.newProject();

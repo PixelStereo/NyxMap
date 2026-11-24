@@ -83,6 +83,25 @@ static QJsonObject vals(const QStringList &v)
     return QJsonObject{{"VALS", a}};
 }
 
+// Where a layer's parameter is in the OSC namespace: under the node of the tab it is on in the layer inspector (Spatial, Color,
+// Source), as its label says ("Color › Tint"). What is not on one of those tabs stays where its parameter path puts it (roi/…, fx/…,
+// output/…, tc/…, text/…, the layer's own switches). The parameter keeps its path in the engine (snapshots, animations, saved
+// shows): only the address that is published, and read back by addressOf(), goes through this.
+static QString oscPath(const QString &param)
+{
+    static const QHash<QString, QString> tab = {
+        {"position", "spatial"}, {"scale", "spatial"}, {"rotation", "spatial"}, {"pivot", "spatial"}, {"corner", "spatial"},
+        {"flip", "spatial"},     {"soft_edge", "spatial"}, {"warp", "spatial"}, {"width", "spatial"}, {"height", "spatial"},
+        {"temp", "color"},       {"tint", "color"},        {"add", "color"},    {"remove", "color"},  {"mask", "color"},
+        {"speed", "source"},     {"play_mode", "source"},  {"in", "source"},    {"out", "source"},    {"play", "source"},
+        {"rewind", "source"},    {"seek", "source"},       {"playhead", "source"}, {"progress", "source"}, {"volume", "source"},
+        {"mute", "source"},      {"synth", "source"},      {"param", "source"}};
+    const QString group = tab.value(param.section('/', 0, 0));
+    return group.isEmpty() ? param : group + '/' + param;
+}
+
+QString OscNamespace::paramPath(const QString &param) { return oscPath(param); }
+
 static QString sourceTypeKey(const Layer &l)
 {
     if (l.isViewport) return QStringLiteral("viewport");
@@ -186,11 +205,11 @@ QStringList OscNamespace::addressesOf(quint64 layer, const QString &path) const
     } else {
         if (m_prefixOf.contains(layer)) bases << m_prefixOf.value(layer);
         bases << QStringLiteral("/show/layer/by-id/%1").arg(layer);
-        for (const QString &base : bases) add(base + '/' + path);
+        for (const QString &base : bases) add(base + '/' + oscPath(path));
     }
     const int cut = path.lastIndexOf('/');
     if (cut > 0) // the numbers that go together (x y, r g b) are also at their common address
-        for (const QString &base : bases) add(base + '/' + path.left(cut));
+        for (const QString &base : bases) add(base + '/' + (layer ? oscPath(path.left(cut)) : path.left(cut)));
     return out;
 }
 
@@ -714,6 +733,46 @@ void OscNamespace::build()
             };
         }
     }
+    complete();
+}
+
+// What every pxs tree must have (Tree::check()): a readable number says its range, one that is also written says its default, so a
+// client can reset it by writing that value. Those that are not declared where the node is made are said here, by address (the
+// layers' parameters say theirs through their registry).
+void OscNamespace::complete()
+{
+    static const std::map<QString, QVariant> defaults = {
+        {"/composition/opacity", 1.0}, {"/composition/volume", 1.0}, {"/composition/speed", 1.0},
+        {"/composition/blackout/fade", 0.0}, {"/composition/fps", 0.0}, {"/composition/width", 1920}, {"/composition/height", 1080},
+        {"/clock/bpm", 120.0}, {"/clock/bar", 4}};
+    for (auto &[path, node] : m_index) {
+        if (node->kind() != pxs::Kind::Parameter || !(node->access & 1) || node->type.isEmpty()) continue;
+        bool numeric = true;
+        for (const QChar c : node->type) numeric = numeric && QStringLiteral("fidh").contains(c);
+        if (!numeric) continue;
+        const QString name = path.section('/', -1);
+        if (node->range.isEmpty()) {
+            double lo = 0, hi = 100000; // a count, a position: not negative, with no real upper bound
+            if (path == "/clock/bpm") lo = BeatClock::kMinBpm, hi = BeatClock::kMaxBpm;
+            else if (path == "/clock/bar" || path == "/clock/beat_in_bar") lo = 1, hi = 16;
+            else if (path == "/clock/running" || name == "mode" || name == "active") hi = name == "mode" ? 2 : 1;
+            else if (name == "step" || name == "current") lo = 1;
+            else if (path == "/composition/fps/measured") hi = 1000;
+            for (int k = 0; k < node->type.size(); ++k) node->range.push_back(minMax(lo, hi));
+            if (node->clip.isEmpty() && (node->access & 2)) node->clip = "both";
+        }
+        if (node->access == 3 && !node->defaultValue) {
+            QVariant d = defaults.count(path) ? defaults.at(path) : QVariant();
+            if (!d.isValid()) {
+                if (name == "step" || name == "current") d = 1;
+                else if (name == "mode") d = 0;
+                else if (name == "opacity") d = 1.0; // the opacity of an item in a viewport
+                else if (name == "width") d = 1920;
+                else if (name == "height") d = 1080;
+            }
+            if (d.isValid()) node->defaultValue = [d] { return QVariantList{d}; };
+        }
+    }
 }
 
 QString OscNamespace::addressOf(quint64 layer, const QString &path) const
@@ -725,7 +784,7 @@ QString OscNamespace::addressOf(quint64 layer, const QString &path) const
     } else if (!layer) {
         addr = QStringLiteral("/composition/") + path;
     } else if (m_prefixOf.contains(layer)) {
-        addr = m_prefixOf.value(layer) + '/' + path;
+        addr = m_prefixOf.value(layer) + '/' + oscPath(path);
     }
     return m_tree.find(addr) ? addr : QString();
 }
@@ -745,12 +804,13 @@ struct LayerNodes {
     quint64 id;
     std::function<OscNode &(const QString &, const QString &, int, const QString &)> add;
 
-    void resettable(OscNode &node, const QStringList &paths)
+    // The value a reset puts back, published as DEFAULT_VALUE (what OSCQuery calls it): a client resets a parameter by writing it,
+    // there is no reset address. Read live, as a default can follow the composition (a position is its center).
+    void defaultOf(OscNode &node, const QStringList &paths)
     {
         Engine *eng = e;
         const quint64 lid = id;
-        const QString resetPath = node.path() + QStringLiteral("/reset");
-        const auto defaults = [eng, lid, paths] {
+        node.defaultValue = [eng, lid, paths] {
             Engine::Lock lock(&eng->mutex());
             Layer *layer = find(eng, lid);
             QVariantList out;
@@ -761,28 +821,6 @@ struct LayerNodes {
             }
             return out;
         };
-        // NyxMap's extension of OSCQuery: the live defaults, and the address that puts them back
-        const OscNode *self = &node;
-        node.attributes["NYXMAP_DEFAULT"] = [defaults, self] {
-            QJsonArray values;
-            const QVariantList v = defaults();
-            for (int k = 0; k < v.size(); ++k) values.append(pxs::Tree::jsonValue(self->type, v[k], k));
-            return QJsonValue(values);
-        };
-        node.attributes["NYXMAP_RESET"] = [resetPath] { return QJsonValue(resetPath); };
-        method(resetPath, "N", 2, QStringLiteral("Reset %1 to default").arg(node.description), nullptr,
-               edit([paths](Layer &layer, const QVariantList &args) {
-                   if (!args.isEmpty() && (args.size() != 1 || !truth(args[0]))) return false;
-                   std::vector<Parameter *> parameters;
-                   // Validate the entire tuple before changing any component.
-                   for (const QString &path : paths) {
-                       Parameter *p = layer.parameter(path);
-                       if (!p || !(p->info().access & ParamInfo::Write) || !p->info().defaultValue.isValid()) return false;
-                       parameters.push_back(p);
-                   }
-                   for (Parameter *p : parameters) if (!p->reset()) return false;
-                   return true;
-               }));
     }
 
     // Read under the lock; writes refused on a locked layer unless `always`
@@ -859,7 +897,7 @@ struct LayerNodes {
             byPath[i.path] = i;
             const QString path = i.path;
             const bool number = i.isNumber();
-            OscNode &node = method(P + '/' + path, typeOf(i), i.access, i.name(),
+            OscNode &node = method(P + '/' + oscPath(path), typeOf(i), i.access, i.name(),
                                    (i.access & ParamInfo::Read) ? read(path) : std::function<QVariantList(Layer &)>(),
                                    edit([path, number](Layer &l, const QVariantList &a) {
                                        Parameter *p = l.parameter(path);
@@ -872,8 +910,7 @@ struct LayerNodes {
             if (i.type != ParamInfo::Type::Bool && i.type != ParamInfo::Type::Text && i.type != ParamInfo::Type::Trigger)
                 node.range = {rangeOf(i)};
             if (number && i.min == i.lo && i.max == i.hi) node.clip = "both";
-            if ((i.access & ParamInfo::Write) && i.type != ParamInfo::Type::Trigger && i.defaultValue.isValid())
-                resettable(node, {path});
+            if (i.type != ParamInfo::Type::Trigger && i.defaultValue.isValid()) defaultOf(node, {path});
             const int cut = path.lastIndexOf('/');
             if (number && cut > 0) parts[path.left(cut)] << path.mid(cut + 1);
         }
@@ -896,7 +933,7 @@ struct LayerNodes {
                 while (k < name.size() && k < other.size() && name[k] == other[k]) ++k;
                 name.truncate(k);
             }
-            OscNode &node = method(P + '/' + it.key(), QString(p.size(), QLatin1Char('f')), 3, name.trimmed(),
+            OscNode &node = method(P + '/' + oscPath(it.key()), QString(p.size(), QLatin1Char('f')), 3, name.trimmed(),
                                    [paths](Layer &l) {
                                        QVariantList out;
                                        for (const QString &path : paths) {
@@ -933,10 +970,8 @@ struct LayerNodes {
                                    }),
                                    false, false);
             node.range = range;
-            if (std::all_of(paths.cbegin(), paths.cend(), [&byPath](const QString &path) {
-                    const ParamInfo &i = byPath[path];
-                    return (i.access & ParamInfo::Write) && i.defaultValue.isValid();
-                })) resettable(node, paths);
+            if (std::all_of(paths.cbegin(), paths.cend(), [&byPath](const QString &path) { return byPath[path].defaultValue.isValid(); }))
+                defaultOf(node, paths);
         }
     }
 };
@@ -1036,7 +1071,7 @@ void OscNamespace::addLayer(const QString &P, quint64 id)
                  return true;
              }),
              true);
-    L.method(P + "/testcard", "T", 3, "Test Card", [](Layer &l) { return QVariantList{l.testCard}; },
+    L.method(P + "/output/testcard", "T", 3, "Test Card", [](Layer &l) { return QVariantList{l.testCard}; },
              L.edit([](Layer &l, const QVariantList &a) {
                  l.testCard = l.isViewport && truth(a.value(0));
                  return true;
@@ -1059,7 +1094,7 @@ void OscNamespace::addLayer(const QString &P, quint64 id)
         return name.isEmpty();
     };
     if (!isViewport) {
-        L.method(P + "/mask", "s", 3, "Color Mask",
+        L.method(P + "/color/mask", "s", 3, "Color Mask",
                  [e](Layer &l) {
                      const Layer *m = l.color.maskLayer ? e->layer(e->indexOfId(l.color.maskLayer)) : nullptr;
                      return QVariantList{m ? m->name : QString()};
@@ -1105,7 +1140,7 @@ void OscNamespace::addLayer(const QString &P, quint64 id)
     }
 
     if (!isGroup) {
-        L.method(P + "/file", "s", 3, "File",
+        L.method(P + "/source/file", "s", 3, "File",
                  [](Layer &l) { return QVariantList{l.sourcePath}; },
                  [e](int idx, const QVariantList &a) {
                      const QString path = a.value(0).toString();
@@ -1118,7 +1153,7 @@ void OscNamespace::addLayer(const QString &P, quint64 id)
                      return e->setLayerFile(idx, path);
                  });
         // Another layer as the source, by name (empty: no source), and where its picture is taken
-        L.method(P + "/source_layer", "s", 3, "Source Layer",
+        L.method(P + "/source/layer", "s", 3, "Source Layer",
                  [e](Layer &l) {
                      const Layer *s = l.type == SourceType::Layer ? e->layer(e->indexOfId(l.sourceLayer)) : nullptr;
                      return QVariantList{s ? s->name : QString()};
@@ -1142,7 +1177,7 @@ void OscNamespace::addLayer(const QString &P, quint64 id)
                      }
                      return id && e->setLayerSourceLayer(idx, id, tap);
                  });
-        L.method(P + "/source_tap", "s", 3, "Source Tap",
+        L.method(P + "/source/tap", "s", 3, "Source Tap",
                  [](Layer &l) { return QVariantList{layerTapKey(l.sourceTap)}; },
                  [e](int idx, const QVariantList &a) {
                      const QString k = a.value(0).toString().toLower();
@@ -1152,13 +1187,13 @@ void OscNamespace::addLayer(const QString &P, quint64 id)
             .range = {vals({"source", "prefx", "postfx"})};
     }
     if (transport) {
-        L.method(P + "/play", "T", 3, "Play", [](Layer &l) { return QVariantList{l.playing}; },
+        L.method(P + "/source/play", "T", 3, "Play", [](Layer &l) { return QVariantList{l.playing}; },
                  [e](int idx, const QVariantList &a) {
                      e->setLayerPlaying(idx, truth(a.value(0)));
                      return true;
                  },
                  true);
-        L.method(P + "/rewind", "N", 2, "Rewind", nullptr,
+        L.method(P + "/source/rewind", "N", 2, "Rewind", nullptr,
                  [e](int idx, const QVariantList &) {
                      double from;
                      {
@@ -1173,20 +1208,20 @@ void OscNamespace::addLayer(const QString &P, quint64 id)
                      return true;
                  },
                  true);
-        L.method(P + "/time", "f", 3, "Time (s)", [](Layer &l) { return QVariantList{l.position()}; },
+        L.method(P + "/source/time", "f", 3, "Time (s)", [](Layer &l) { return QVariantList{l.position()}; },
                  [e](int idx, const QVariantList &a) {
                      if (a.isEmpty()) return false;
                      e->seekLayer(idx, num(a[0]));
                      return true;
                  },
                  true);
-        L.method(P + "/duration", "f", 1, "Duration",
+        L.method(P + "/source/duration", "f", 1, "Duration",
                  [](Layer &l) { return QVariantList{l.duration()}; }, nullptr);
     }
 
     // The animation of a parameter, under that parameter: <param>/anim/play, …/duration, …/loop_mode…
     for (const QString &param : animated) {
-        const QString A = P + '/' + param + "/anim";
+        const QString A = P + '/' + oscPath(param) + "/anim";
         auto anim = [param](Layer &l) -> const Animation * {
             for (const Animation &a : l.anims)
                 if (!a.tracks.empty() && a.tracks.front().param == param) return &a;
@@ -1499,8 +1534,8 @@ QJsonObject OscServer::hostInfo() const
     return pxs::Tree::hostInfo(m_name, int(oscPort()),
                                QJsonObject{{"ACCESS", true}, {"VALUE", true}, {"RANGE", true}, {"DESCRIPTION", true},
                                            {"TAGS", false}, {"EXTENDED_TYPE", false}, {"UNIT", false}, {"CRITICAL", false},
-                                           {"CLIPMODE", true}, {"LISTEN", true}, {"PATH_CHANGED", true},
-                                           {"NYXMAP_DEFAULT", true}, {"NYXMAP_RESET", true}},
+                                           {"CLIPMODE", true}, {"DEFAULT_VALUE", true}, {"LISTEN", true},
+                                           {"PATH_CHANGED", true}},
                                QJsonObject{{"WS_PORT", int(queryPort())}});
 }
 
@@ -1520,7 +1555,7 @@ QByteArray OscServer::httpGet(const QString &target, int *status)
     }
     const QJsonObject o = m_ns.toJson(path);
     if (query.isEmpty()) return QJsonDocument(o).toJson(QJsonDocument::Compact);
-    static const QStringList known = {"FULL_PATH", "CONTENTS", "TYPE", "VALUE", "RANGE", "ACCESS", "DESCRIPTION", "CLIPMODE", "NYXMAP_DEFAULT", "NYXMAP_RESET"};
+    static const QStringList known = {"FULL_PATH", "CONTENTS", "TYPE", "VALUE", "RANGE", "ACCESS", "DESCRIPTION", "CLIPMODE", "DEFAULT_VALUE"};
     if (!known.contains(query)) {
         *status = 400;
         return {};
