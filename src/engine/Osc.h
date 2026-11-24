@@ -46,15 +46,9 @@ class QUdpSocket;
 // description) and how to read and write the value (get, set)
 using OscNode = pxs::core::tree::Node;
 
-// The getters and setters are written on Qt types (QVariantList); the node says them on pxs-core's values
-inline std::function<pxs::core::ValueList()> qGet(std::function<QVariantList()> f)
-{
-    return [f] { return pxs::convert::toValues(f()); };
-}
-inline std::function<bool(const pxs::core::ValueList &)> qSet(std::function<bool(const QVariantList &)> f)
-{
-    return [f](const pxs::core::ValueList &v) { return f(pxs::convert::toVariants(v)); };
-}
+// The getters and setters are written on Qt types (QVariantList); the node says them on pxs-core's values (pxs-qt's convert)
+using pxs::convert::getter;
+using pxs::convert::setter;
 
 // The namespace built from the engine state; rebuilt when the structure changes.
 class OscNamespace

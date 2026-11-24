@@ -14,7 +14,7 @@
 #include "LayerTree.h"
 #include "Osc.h"
 #include "SequenceFeedback.h"
-#include "Parameter.h"
+#include <pxs/Parameter.h>
 #include "Zeroconf.h"
 #include <QJsonArray>
 #include <QSet>

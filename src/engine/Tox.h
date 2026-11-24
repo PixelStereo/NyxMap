@@ -2,7 +2,7 @@
 // TouchDesigner components: an asynchronous TouchEngine instance per source.
 // The SDK stays behind this interface; projects and tests also work without it.
 #include "LiveInput.h"
-#include "Parameter.h"
+#include <pxs/Parameter.h>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QMap>

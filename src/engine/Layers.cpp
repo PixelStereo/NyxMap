@@ -2,7 +2,7 @@
 // layer), transport, effect chain, and the copy of parameters from one layer to another.
 #include "Naming.h"
 #include "EngineInternal.h"
-#include "ChangeFeed.h"
+#include <pxs/ChangeFeed.h>
 #include "Midi.h"
 #include "ImageFile.h"
 #include "Psd.h"
