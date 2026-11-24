@@ -86,8 +86,13 @@ jobs:
           for optimization in 0 3; do
             c++ -std=c++17 -O$optimization -DNDEBUG -fPIC -pthread -Isrc/engine -Isrc/ui \
               -Ithird_party/pxs-qt/src/dmx -Ithird_party/pxs-qt/src/dmxout \
+              -Ithird_party/pxs-qt/src/params -Ithird_party/pxs-qt/src/convert -Ithird_party/pxs-qt/src/osc \
+              -Ithird_party/pxs-qt/third_party/pxs-core/include \
               test/fixture_geometry.cpp src/engine/Fixtures.cpp src/engine/LineGenerator.cpp src/ui/FixtureOverlay.cpp \
               third_party/pxs-qt/src/dmx/Dmx.cpp third_party/pxs-qt/src/dmxout/DmxOut.cpp \
+              third_party/pxs-qt/src/params/Parameter.cpp third_party/pxs-qt/src/convert/Convert.cpp third_party/pxs-qt/src/osc/OscCodec.cpp \
+              third_party/pxs-qt/third_party/pxs-core/src/tree_parameter.cpp third_party/pxs-qt/third_party/pxs-core/src/value.cpp \
+              third_party/pxs-qt/third_party/pxs-core/src/osc_codec.cpp \
               $(pkg-config --cflags --libs Qt6Widgets Qt6Network) -o /tmp/fixture-geometry
             /tmp/fixture-geometry
           done
