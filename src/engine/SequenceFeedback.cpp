@@ -278,8 +278,8 @@ namespace {
 // baseline, not a change
 bool readNode(QHash<QString, QVariantList> &last, bool everything, const QString &path, const OscNode &node, osc::Message *out)
 {
-    if (node.type.isEmpty() || !node.get || !(node.access & 1)) return false; // not something to read
-    QVariantList args = node.get();
+    if (node.type.empty() || !node.get || !(node.access & 1)) return false; // not something to read
+    QVariantList args = pxs::convert::toVariants(node.get());
     if (args.isEmpty()) return false;
     auto it = last.find(path);
     if (!everything && it != last.end() && it.value() == args) return false;
@@ -289,7 +289,7 @@ bool readNode(QHash<QString, QVariantList> &last, bool everything, const QString
     } else {
         it.value() = args;
     }
-    *out = osc::Message{path, node.type, std::move(args)};
+    *out = osc::Message{path, pxs::convert::fromUtf8(node.type), std::move(args)};
     for (qsizetype i = 0; i < out->types.size(); ++i)
         if (out->types[i] == 'T' || out->types[i] == 'F')
             out->types[i] = out->args.value(i).toBool() ? QLatin1Char('T') : QLatin1Char('F');

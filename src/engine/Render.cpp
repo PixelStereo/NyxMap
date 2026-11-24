@@ -3,7 +3,7 @@
 // composition is assembled, then read back for the interface preview and for publishing.
 #include <QJsonArray>
 #include "EngineInternal.h"
-#include "ChangeFeed.h"
+#include <pxs/ChangeFeed.h>
 #include "RhiRenderer.h"
 #include "RhiTarget.h"
 #include "TimecodeClock.h"

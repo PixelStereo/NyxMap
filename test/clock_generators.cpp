@@ -2,7 +2,7 @@
 // waiting), a countdown to a time of day across midnight, their values in a layer's JSON, a snapshot's recall and STOP ALL.
 #include "ClockGenerator.h"
 #include "Engine.h"
-#include "Parameter.h"
+#include <pxs/Parameter.h>
 
 #include <QJsonArray>
 #include <QJsonObject>

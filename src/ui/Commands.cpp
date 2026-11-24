@@ -1,5 +1,5 @@
 #include "Commands.h"
-#include "ChangeFeed.h"
+#include <pxs/ChangeFeed.h>
 #include "EngineInternal.h"
 #include "Osc.h"
 

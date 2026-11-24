@@ -38,11 +38,17 @@ class QTcpSocket;
 class QUdpSocket;
 
 #include "OscCodec.h"
-#include <pxs/Tree.h>
+#include <pxs/Convert.h>
+#include <pxs/core/tree/oscquery.h>
+#include <pxs/core/tree/tree.h>
 
-// One node of the namespace (container or method): a pxs::Node, which says what OSCQuery says (type, access, range,
+// One node of the namespace (container or method): a pxs-core node, which says what OSCQuery says (type, access, range,
 // description) and how to read and write the value (get, set)
-using OscNode = pxs::Node;
+using OscNode = pxs::core::tree::Node;
+
+// The getters and setters are written on Qt types (QVariantList); the node says them on pxs-core's values (pxs-qt's convert)
+using pxs::convert::getter;
+using pxs::convert::setter;
 
 // The namespace built from the engine state; rebuilt when the structure changes.
 class OscNamespace
@@ -62,14 +68,26 @@ public:
     // Every readable method at an address and under it
     void forEachUnder(const QString &prefix, const std::function<void(const QString &, const OscNode &)> &visit) const;
     QStringList layerPrefixes(quint64 layer) const; // a layer's addresses (by name, by id)
-    QJsonObject toJson(const QString &path) const { return m_tree.json(path); } // node and its contents (OSCQuery)
-    QStringList problems() const { return m_tree.check(); } // what the namespace lacks of what every pxs tree must have (for the tests)
+    QJsonObject toJson(const QString &path) const // node and its contents (OSCQuery)
+    {
+        return pxs::convert::jsonObjectFromText(pxs::core::tree::describeJson(m_tree, pxs::convert::toUtf8(path)));
+    }
+    QStringList problems() const // what the namespace lacks of what every pxs tree must have (for the tests)
+    {
+        QStringList out;
+        for (const std::string &p : m_tree.check()) out << pxs::convert::fromUtf8(p);
+        return out;
+    }
     // The OSC address of a value (a layer's id, 0: the composition — "interaction/<id>/…": an interaction's), as
     // built now ("": it has none)
     QString addressOf(quint64 layer, const QString &path) const;
     static QString addressOf(Engine *e, quint64 layer, const QString &path); // with a namespace made for it
     static QString paramPath(const QString &param); // where a layer parameter is under its layer (spatial/position/x for position/x)
-    static QJsonValue jsonValue(const OscNode &n, const QVariant &v, int k) { return pxs::Tree::jsonValue(n.type, v, k); }
+    static QJsonValue jsonValue(const OscNode &n, const QVariant &v, int k)
+    {
+        const char tag = k >= 0 && std::size_t(k) < n.type.size() ? n.type[std::size_t(k)] : 'f';
+        return pxs::convert::jsonValueFromText(pxs::core::tree::valueJson(tag, pxs::convert::toValue(v)));
+    }
 
 private:
     void build();
@@ -81,7 +99,7 @@ private:
     Engine *m_e;
     QString m_signature;
     int m_generation = 0;
-    pxs::Tree m_tree;                    // the address space; the OSCQuery description is derived from it
+    pxs::core::tree::Tree m_tree;        // the address space (pxs-core's); the OSCQuery description is derived from it
     std::map<QString, OscNode *> m_index; // the nodes that were added, by address, in order (the order the visits keep)
     QHash<quint64, QString> m_prefixOf; // a layer's address
     QHash<quint64, QString> m_interactionPrefix; // an interaction's ("/interaction/<name>")

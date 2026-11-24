@@ -1,5 +1,5 @@
 #include "BeatClock.h"
-#include "ChangeFeed.h"
+#include <pxs/ChangeFeed.h>
 
 #include <algorithm>
 #include <cmath>

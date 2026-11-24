@@ -13,7 +13,7 @@
 #include "Mapping.h"
 #include "Masks.h"
 #include "TimecodeClock.h"
-#include "Parameter.h"
+#include <pxs/Parameter.h>
 #include "Publish.h"
 #include "VideoDecoder.h"
 #include "VideoFrame.h"

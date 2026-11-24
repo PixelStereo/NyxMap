@@ -37,7 +37,7 @@
 #include <QVariant>
 #include <vector>
 
-#include "ChangeFeed.h"
+#include <pxs/ChangeFeed.h>
 #include "Osc.h"
 
 class Engine;

@@ -5,7 +5,7 @@
 // persistent and float buffers, imported images.
 
 #include <QImage>
-#include "Parameter.h"
+#include <pxs/Parameter.h>
 #include <QJsonObject>
 #include <QPointF>
 #include <QString>
