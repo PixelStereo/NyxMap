@@ -92,7 +92,8 @@ jobs:
               third_party/pxs-qt/src/dmx/Dmx.cpp third_party/pxs-qt/src/dmxout/DmxOut.cpp \
               third_party/pxs-qt/src/params/Parameter.cpp third_party/pxs-qt/src/convert/Convert.cpp third_party/pxs-qt/src/osc/OscCodec.cpp \
               third_party/pxs-qt/third_party/pxs-core/src/tree_parameter.cpp third_party/pxs-qt/third_party/pxs-core/src/value.cpp \
-              third_party/pxs-qt/third_party/pxs-core/src/osc_codec.cpp \
+              third_party/pxs-qt/third_party/pxs-core/src/osc_codec.cpp third_party/pxs-qt/third_party/pxs-core/src/osc_names.cpp \
+              third_party/pxs-qt/third_party/pxs-core/src/dmx_frame.cpp \
               $(pkg-config --cflags --libs Qt6Widgets Qt6Network) -o /tmp/fixture-geometry
             /tmp/fixture-geometry
           done
