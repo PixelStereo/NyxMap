@@ -28,6 +28,7 @@
 #include "Publish.h"
 #include "Publishing.h"
 #include <pxs/DmxOut.h>
+#include <pxs/TimelineHost.h>
 #include "Fixtures.h"
 #include "PixelSampler.h"
 #include "TimecodeOutputs.h"
@@ -68,7 +69,7 @@ class Input;
 }
 
 
-class Engine : public QObject
+class Engine : public QObject, public TimelineHost // the timeline editor (pxs-qt) asks it what a track can drive
 {
     Q_OBJECT
 public:
@@ -603,18 +604,7 @@ public:
     using Animation = ::Animation;
     using AnimParam = ParamInfo; // a number a timeline can drive (Parameter.h)
     // UI telemetry deliberately excludes tracks/keyframes; a busy engine leaves the last UI sample in place.
-    struct AnimationPlayback {
-        quint64 id = 0;
-        QString name;
-        AnimState state = AnimState::Stopped;
-        AnimLoop loop = AnimLoop::Once;
-        double position = 0, duration = 0, clock = 0, played = 0, speed = 1, length = 0;
-        bool backwards = false;
-        int tracks = 0, pass = 1;
-        std::vector<double> captured;
-        std::vector<std::array<double, 3>> capturedRgb;
-        std::vector<std::array<double, 2>> capturedXy;
-    };
+    using AnimationPlayback = ::AnimationPlayback; // where a timeline is, for the editor (pxs/TimelineHost.h)
     bool sampleAnimations(std::vector<AnimationPlayback> *out) const;
     bool sampleAnimation(quint64 timeline, quint64 layer, const QString &param, AnimationPlayback *out) const;
     int animationCount() const;
@@ -628,9 +618,9 @@ public:
     // playing), LoopMode (`loop` and `repeat`), Speed (`time` is the speed, 0 to 10: it plays on from where it is)
     void controlAnimation(quint64 id, AnimAction action, double time = 0, AnimLoop loop = AnimLoop::Loop, int repeat = 0);
     // The numbers of a layer (0: the composition) a timeline can drive, with their ranges
-    std::vector<AnimParam> animatableParams(quint64 layer) const;
-    std::vector<AnimParam> animatableColors(quint64 layer) const; // grouped RGB targets, path without /r,g,b
-    std::vector<AnimParam> animatablePoints(quint64 layer) const; // grouped XY targets, components remain addressable
+    std::vector<AnimParam> animatableParams(quint64 layer) const override;
+    std::vector<AnimParam> animatableColors(quint64 layer) const override; // grouped RGB targets, path without /r,g,b
+    std::vector<AnimParam> animatablePoints(quint64 layer) const override; // grouped XY targets, components remain addressable
     std::vector<AnimParam> triggerParams(quint64 layer) const; // the actions an event track can fire (Source › Rewind…)
     // What an event track can also set at each flag: switches, choices, and the numbers a curve does not drive
     // (Seek To, In / Out, a clock's elapsed time…)
@@ -639,7 +629,7 @@ public:
     // Sets a value as an event does (a timeline's flag, an interaction's Action): fires an action, a switch from 0 / 1,
     // a choice from its index, a number; a locked layer is left alone; release: a fade running on it lets go (lock held)
     bool setEventValue(quint64 layer, const QString &param, double v, bool release);
-    bool animColorValue(quint64 layer, const QString &path, std::array<double, 3> *value) const;
+    bool animColorValue(quint64 layer, const QString &path, std::array<double, 3> *value) const override;
     struct AnimationTargetState {
         quint64 layer = 0;
         std::vector<Animation> layerAnimations;
@@ -649,8 +639,8 @@ public:
     void restoreAnimationTargets(const AnimationTargetState &state);
     // The parameters of a layer (0: the composition), as they declare themselves (Parameter.h)
     std::vector<ParamInfo> parameters(quint64 layer) const;
-    bool parameterInfo(quint64 layer, const QString &path, ParamInfo *p) const; // false: it has none at that address
-    bool animParamValue(quint64 layer, const QString &path, double *value) const;
+    bool parameterInfo(quint64 layer, const QString &path, ParamInfo *p) const override; // false: it has none at that address
+    bool animParamValue(quint64 layer, const QString &path, double *value) const override;
     // One value, by its layer's id (0: the composition) and its address: every edit by hand (the interface and its
     // undo) goes through here. Set, a fade that drives it lets go. Undefined / false: it has none at that address
     QJsonValue parameterValue(quint64 layer, const QString &path) const;
@@ -687,7 +677,7 @@ public:
     // How a wave goes around a number by default (layer 0: the composition): its center and how far each way — around
     // its value, as far as its range allows, or the whole range from a bound; a turn for a rotation, a tenth of the
     // composition for a position
-    void waveAround(quint64 layer, const QString &param, double *center, double *amplitude) const;
+    void waveAround(quint64 layer, const QString &param, double *center, double *amplitude) const override;
 
     // --- Sequences (the cue lists): Sequencer.h
     // The show's controls (ShowControl.h): sliders, switches, selectors, buttons and colors of the operator, each a parameter
@@ -1265,7 +1255,7 @@ public:
     // A filtered animated value's signal, as last computed: what came in, then the value after each filter (an animation
     // of a timeline: its id; a layer's own: 0). false: not computed yet
     bool animationFilterSignal(quint64 layer, quint64 animation, const QString &path, double *input,
-                               std::vector<double> *stages) const;
+                               std::vector<double> *stages) const override;
 private:
     double filterAnimationValue(quint64 layer, quint64 animation, const QString &path, const AnimTrack &track,
                                 double raw, double dt, double played);

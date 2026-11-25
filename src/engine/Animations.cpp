@@ -10,101 +10,13 @@
 #include <limits>
 
 static constexpr double kPi = 3.14159265358979323846;
-static constexpr double kMinDuration = 0.05;
 
 // ---------------------------------------------------------------------------
 // Values
 
 
-static double passDuration(double d) { return std::max(kMinDuration, d); }
-
-double Animation::length() const
-{
-    const double d = passDuration(duration);
-    if (loop == AnimLoop::Once) return d;
-    return repeat > 0 ? d * repeat : std::numeric_limits<double>::infinity();
-}
-
-// The pass at clock c (0, 1…) and the time within it
-static void passAt(const Animation &a, double c, double *pass, double *within)
-{
-    const double d = passDuration(a.duration);
-    c = std::clamp(c, 0.0, a.length());
-    if (a.loop == AnimLoop::Once) {
-        *pass = 0;
-        *within = std::min(c, d);
-        return;
-    }
-    *pass = std::floor(c / d);
-    *within = c - *pass * d;
-    if (std::isfinite(a.length()) && c >= a.length()) { // the end of the last pass
-        *pass = std::max(0, a.repeat - 1);
-        *within = d;
-    }
-}
-
-bool Animation::backwardsAt(double c) const
-{
-    double pass = 0, within = 0;
-    passAt(*this, c, &pass, &within);
-    if (loop == AnimLoop::PingPong) return std::fmod(pass + (reversed ? 1 : 0), 2.0) == 1.0;
-    return reversed && pass == 0;
-}
-
-double Animation::position(double c) const
-{
-    double pass = 0, within = 0;
-    passAt(*this, c, &pass, &within);
-    return backwardsAt(c) ? passDuration(duration) - within : within;
-}
-
-double Animation::progress() const
-{
-    return std::clamp(position() / passDuration(duration), 0.0, 1.0);
-}
-
-int Animation::pass() const
-{
-    double pass = 0, within = 0;
-    passAt(*this, clock, &pass, &within);
-    return int(std::min(1e9, pass)) + 1;
-}
-
-double Animation::clockAt(double pos) const
-{
-    const double d = passDuration(duration);
-    pos = std::clamp(pos, 0.0, d);
-    double pass = 0, within = 0;
-    passAt(*this, clock, &pass, &within);
-    return pass * d + (backwardsAt(clock) ? d - pos : pos);
-}
-
-void Animation::setLoop(AnimLoop l, int n)
-{
-    n = std::max(0, n);
-    if (l == loop && n == repeat) return;
-    if (state == AnimState::Stopped) {
-        loop = l;
-        repeat = n;
-        clock = 0;
-        oscillatorOffset = 0;
-        reversed = false;
-        return;
-    }
-    const double pos = position(), d = passDuration(duration), elapsed = played();
-    const bool back = backwardsAt(clock);
-    loop = l;
-    repeat = n;
-    reversed = back;
-    clock = back ? d - pos : pos; // within the first pass of the new mode
-    oscillatorOffset = elapsed - std::min(clock, length());
-}
-
-bool Animation::advance(double dt)
-{
-    clock += std::max(0.0, dt) * speed;
-    return clock < length();
-}
+// The transport (Animation::length, position, pass, setLoop, advance, control…) is pxs-core's (pxs/core/timeline/timeline.h)
+static double passDuration(double d) { return std::max(pxs::core::timeline::Transport::kMinDuration, d); }
 
 // ---------------------------------------------------------------------------
 // The list
@@ -129,19 +41,6 @@ int Engine::indexOfAnimation(quint64 id) const
     return -1;
 }
 
-static void sortKeys(AnimTrack &t)
-{
-    std::stable_sort(t.keys.begin(), t.keys.end(), [](const AnimKey &a, const AnimKey &b) { return a.t < b.t; });
-    if (t.isPoint()) for (int c = 0; c < 2; ++c) {
-        auto &axis = t.axes[size_t(c)];
-        axis.axes.clear();
-        axis.color = false;
-        axis.layer = t.layer;
-        axis.param = t.param + (c ? "/y" : "/x");
-        sortKeys(axis);
-    }
-}
-
 int Engine::addAnimation(const Animation &a, int at)
 {
     {
@@ -154,7 +53,7 @@ int Engine::addAnimation(const Animation &a, int at)
         x.state = AnimState::Stopped;
         x.clock = 0;
         x.oscillatorOffset = 0;
-        for (AnimTrack &t : x.tracks) sortKeys(t);
+        for (AnimTrack &t : x.tracks) sortAnimKeys(t);
         if (at < 0 || at > int(m_animations.size())) at = int(m_animations.size());
         m_animations.insert(m_animations.begin() + at, x);
     }
@@ -182,7 +81,7 @@ void Engine::setAnimation(int i, const Animation &a)
         x.setLoop(a.loop, a.repeat); // a new loop mode: from where it is, without a jump
         x.clock = std::min(x.clock, x.length());
         for (AnimTrack &t : x.tracks) {
-            sortKeys(t);
+            sortAnimKeys(t);
             t.captured = std::numeric_limits<double>::quiet_NaN();
             t.capturedRgb = AnimTrack().capturedRgb;
             for (const AnimTrack &o : old.tracks)
@@ -251,50 +150,27 @@ void Engine::controlLocked(Animation *a, AnimAction action, double time, AnimLoo
             }
         }
     };
+    // What the action does to the transport is pxs-core's; around it, what NyxMap does: the values the "current value" keys start from,
+    // the values set at once, the events at the start
+    const bool fresh = a->control(action, time, loop, repeat);
     switch (action) {
     case AnimAction::Play:
-        if (a->state == AnimState::Stopped) {
-            a->clock = 0;
-            a->oscillatorOffset = 0;
-            a->reversed = false;
+        if (fresh) {
             capture();
             if (!owner) fireAnimationEvents(*a, 0, 0, true); // the events at the start
         }
-        a->state = AnimState::Playing;
         apply(); // its first values now, not a frame later
         break;
-    case AnimAction::Pause:
-        if (a->state == AnimState::Playing) a->state = AnimState::Paused;
-        break;
-    case AnimAction::Stop:
-        a->state = AnimState::Stopped;
-        a->clock = 0;
-        a->oscillatorOffset = 0;
-        a->reversed = false;
-        break;
     case AnimAction::Rewind:
-        a->clock = 0;
-        a->oscillatorOffset = 0;
-        a->reversed = false;
         capture();
         apply();
         if (!owner && a->state == AnimState::Playing) fireAnimationEvents(*a, 0, 0, true); // played again from the start
         break;
     case AnimAction::Seek:
-        if (a->state == AnimState::Stopped) {
-            a->state = AnimState::Paused; // stays where it was sought
-            a->reversed = false;
-            capture();
-        }
-        a->clock = std::clamp(time, 0.0, std::min(a->length(), 1e9));
-        a->oscillatorOffset = 0; // an explicit seek deliberately sets the phase
+        if (fresh) capture();
         apply();
         break;
-    case AnimAction::Speed:
-        a->speed = std::clamp(time, 0.0, 10.0); // the clock goes on from where it is: no jump
-        break;
-    case AnimAction::LoopMode:
-        a->setLoop(loop, repeat); // from where it is: Once ends the pass it is in, no jump to the end
+    default:
         break;
     }
 }
@@ -772,7 +648,7 @@ void Engine::remapAnimationTargets(quint64 layer, const std::vector<std::pair<QS
             if (!match) continue;
             if (to.isEmpty()) return true;
             track.param = to + track.param.mid(from.size());
-            sortKeys(track);
+            sortAnimKeys(track);
             return false;
         }
         return false;
@@ -923,7 +799,7 @@ void Engine::assignLayerAnims(Layer &l, const std::vector<Animation> &anims)
         a.tracks.resize(1);
         AnimTrack &t = a.tracks.front();
         t.layer = l.id;
-        sortKeys(t);
+        sortAnimKeys(t);
         a.state = AnimState::Stopped;
         a.clock = 0;
         a.oscillatorOffset = 0;
@@ -1161,194 +1037,15 @@ Animation Engine::makeLayerAnim(quint64 layer, const QString &param, int wave) c
 // ---------------------------------------------------------------------------
 // Project
 
-static const char *const kWaveKeys[] = {"sine", "triangle", "saw", "square", "random", "smooth_random"};
-static const char *const kLoopKeys[] = {"once", "loop", "pingpong"};
-
-static int keyIndex(const char *const *keys, int n, const QString &k, int fallback)
-{
-    for (int i = 0; i < n; ++i)
-        if (k == QLatin1String(keys[i])) return i;
-    return fallback;
-}
-
-QStringList animWaveKeys()
-{
-    QStringList k;
-    for (const char *x : kWaveKeys) k << QString::fromLatin1(x);
-    return k;
-}
-
-QString animLoopKey(Engine::AnimLoop l) { return QString::fromLatin1(kLoopKeys[std::clamp(int(l), 0, 2)]); }
-Engine::AnimLoop animLoopFromKey(const QString &k) { return Engine::AnimLoop(keyIndex(kLoopKeys, 3, k, 1)); }
-
-// What drives a number (a timeline's track, or a layer's animation), into a JSON object: its keys
-// [t, v, curve, "current", {"in": [dt, dv], "out": [dt, dv]}] (all but t and v when they matter) and its oscillator
-static void trackToJson(const AnimTrack &t, QJsonObject &o)
-{
-    if (!t.dataFilters.isEmpty()) o["data_filters"] = t.dataFilters;
-    if (t.isPoint()) {
-        o["type"] = QStringLiteral("point2d");
-        if (!t.enabled) o["enable"] = false;
-        QJsonArray axes;
-        for (const auto &axis : t.axes) {
-            QJsonObject value;
-            trackToJson(axis, value);
-            axes.append(value);
-        }
-        o["axes"] = axes;
-        return;
-    }
-    if (t.event) {
-        o["type"] = QStringLiteral("event");
-        if (!t.enabled) o["enable"] = false;
-        QJsonArray times, values;
-        bool valued = false;
-        for (const AnimKey &k : t.keys) {
-            times.append(k.t);
-            values.append(k.v);
-            valued = valued || k.v != 0;
-        }
-        o["keys"] = times;
-        if (valued) o["values"] = values; // what each flag sets (a switch, a choice, a number); none: an action
-        return;
-    }
-    if (t.color) o["type"] = QStringLiteral("color");
-    if (!t.enabled) o["enable"] = false;
-    if (t.oscillator) {
-        o["oscillator"] = QJsonObject{{"wave", QString::fromLatin1(kWaveKeys[std::clamp(int(t.wave), 0, kAnimWaveCount - 1)])},
-                                      {"period", t.period},
-                                      {"center", t.center},
-                                      {"amplitude", t.amplitude},
-                                      {"phase", t.phase},
-                                      {"seed", double(t.seed)}};
-    }
-    QJsonArray keys;
-    for (const AnimKey &k : t.keys) {
-        QJsonArray kv{k.t};
-        if (t.color) kv.append(QJsonArray{k.rgb[0], k.rgb[1], k.rgb[2]});
-        else kv.append(k.v);
-        QJsonObject handles;
-        if (k.hasIn()) handles["in"] = QJsonArray{k.inDt, k.inDv};
-        if (k.hasOut()) handles["out"] = QJsonArray{k.outDt, k.outDv};
-        const bool more = k.isCurrentValue || !handles.isEmpty();
-        if (k.curve == kAnimHold) kv.append(QStringLiteral("hold"));
-        else if (k.curve == kAnimBezier) kv.append(QStringLiteral("bezier"));
-        else if (k.curve != 3 || more) kv.append(k.curve);
-        if (k.isCurrentValue) kv.append(QStringLiteral("current"));
-        if (!handles.isEmpty()) kv.append(handles);
-        keys.append(kv);
-    }
-    if (!keys.isEmpty()) o["keys"] = keys; // an oscillator keeps the curve it had, should it go back to it
-}
-
-static void trackFromJson(AnimTrack &t, const QJsonObject &o, double duration)
-{
-    t.dataFilters = o.value("data_filters").toArray();
-    t.axes.clear();
-    if (o.value("type").toString() == QLatin1String("point2d")) {
-        t.color = false;
-        t.enabled = o.value("enable").toBool(true);
-        const auto axes = o.value("axes").toArray();
-        if (axes.size() == 2) for (const auto &value : axes) {
-            auto child = value.toObject();
-            child.remove("type"); // children are scalar; do not parse recursive groups
-            child.remove("axes");
-            AnimTrack axis;
-            trackFromJson(axis, child, duration);
-            t.axes.push_back(axis);
-        }
-        sortKeys(t);
-        return;
-    }
-    t.event = o.value("type").toString() == QLatin1String("event");
-    if (t.event) {
-        t.color = t.oscillator = false;
-        t.enabled = o.value("enable").toBool(true);
-        t.keys.clear();
-        const QJsonArray times = o.value("keys").toArray(), values = o.value("values").toArray();
-        for (int k = 0; k < times.size(); ++k)
-            if (times[k].isDouble()) {
-                const double v = values.at(k).toDouble();
-                t.keys.push_back(AnimKey{std::clamp(times[k].toDouble(), 0.0, duration), std::isfinite(v) ? v : 0.0, 0});
-            }
-        sortKeys(t);
-        return;
-    }
-    t.color = o.value("type").toString() == QLatin1String("color");
-    t.enabled = o.value("enable").toBool(true);
-    if (o.contains("oscillator")) {
-        const QJsonObject w = o.value("oscillator").toObject();
-        t.oscillator = true;
-        t.wave = AnimWave(keyIndex(kWaveKeys, kAnimWaveCount, w.value("wave").toString(), 0));
-        t.period = std::clamp(w.value("period").toDouble(1), 0.01, 36000.0);
-        t.center = w.value("center").toDouble(0.5);
-        t.amplitude = w.value("amplitude").toDouble(0.5);
-        t.phase = w.value("phase").toDouble(0);
-        t.seed = quint32(std::clamp(w.value("seed").toDouble(1), 0.0, 4294967295.0));
-    }
-    t.keys.clear();
-    for (const QJsonValue &kv : o.value("keys").toArray()) {
-        const QJsonArray k = kv.toArray();
-        if (k.size() < 2) continue;
-        if (t.color) {
-            const auto rgb = k[1].toArray();
-            if (rgb.size() != 3 || !rgb[0].isDouble() || !rgb[1].isDouble() || !rgb[2].isDouble()) continue;
-        } else if (!k[1].isDouble()) continue;
-        AnimKey key;
-        key.t = std::clamp(k[0].toDouble(), 0.0, duration);
-        key.v = k[1].toDouble();
-        if (t.color) {
-            const auto rgb = k[1].toArray();
-            for (int c = 0; c < 3; ++c) key.rgb[c] = std::clamp(rgb[c].toDouble(), 0.0, 1.0);
-        }
-        key.curve = 3;
-        for (int i = 2; i < k.size(); ++i) {
-            const QJsonValue x = k[i];
-            if (x.isDouble()) key.curve = std::clamp(x.toInt(3), 0, 5);
-            else if (x.toString() == "hold") key.curve = kAnimHold;
-            else if (x.toString() == "bezier") key.curve = kAnimBezier;
-            else if (x.toString() == "current") key.isCurrentValue = t.keys.empty(); // the first key only
-            else if (x.isObject()) {
-                const QJsonArray in = x.toObject().value("in").toArray(), out = x.toObject().value("out").toArray();
-                if (in.size() == 2) key.inDt = std::min(0.0, in[0].toDouble()), key.inDv = in[1].toDouble();
-                if (out.size() == 2) key.outDt = std::max(0.0, out[0].toDouble()), key.outDv = out[1].toDouble();
-            }
-        }
-        t.keys.push_back(key);
-    }
-    sortKeys(t);
-    if (t.color) {
-        t.oscillator = false;
-        for (auto &key : t.keys) {
-            if (key.curve == kAnimBezier) key.curve = 3;
-        }
-    }
-}
-
-// The transport settings shared by a timeline and a layer's animation
-static void animToJson(const Animation &a, QJsonObject &o)
-{
-    o["duration"] = a.duration;
-    o["loop"] = animLoopKey(a.loop);
-    if (a.repeat > 0) o["repeat"] = a.repeat;
-    if (a.speed != 1.0) o["speed"] = a.speed;
-}
-
-static void animFromJson(Animation &a, const QJsonObject &o)
-{
-    a.duration = std::clamp(o.value("duration").toDouble(4), kMinDuration, 36000.0);
-    a.loop = animLoopFromKey(o.value("loop").toString());
-    a.repeat = std::clamp(o.value("repeat").toInt(0), 0, 100000);
-    a.speed = std::clamp(o.value("speed").toDouble(1.0), 0.0, 10.0);
-}
+// How a timeline is saved (its keys, its oscillator, its transport) is pxs-qt's (Anim.h): what a track drives is said here, beside it
 
 QJsonObject layerAnimToJson(const Animation &a)
 {
     QJsonObject o;
     if (a.tracks.empty()) return o;
     o["param"] = a.tracks.front().param;
-    animToJson(a, o);
-    trackToJson(a.tracks.front(), o);
+    animTransportToJson(a, o);
+    animTrackToJson(a.tracks.front(), o);
     if (a.pinned) o["pinned"] = true;
     if (a.folded) o["folded"] = true;
     // Its transport (what a snapshot recalls; a project opened plays the ones that are on)
@@ -1368,13 +1065,13 @@ AnimState animStateFromJson(const QJsonObject &o)
 Animation layerAnimFromJson(const QJsonObject &o, quint64 layer)
 {
     Animation a;
-    animFromJson(a, o);
+    animTransportFromJson(a, o);
     a.pinned = o.value("pinned").toBool(false);
     a.folded = o.value("folded").toBool(false);
     AnimTrack t;
     t.layer = layer;
     t.param = o.value("param").toString();
-    trackFromJson(t, o, a.duration);
+    animTrackFromJson(t, o, a.duration);
     a.tracks.push_back(t);
     return a;
 }
@@ -1386,11 +1083,11 @@ QJsonArray Engine::animationsToJson() const
         QJsonArray tracks;
         for (const AnimTrack &t : a.tracks) {
             QJsonObject o{{"layer", QString::number(t.layer)}, {"param", t.param}};
-            trackToJson(t, o);
+            animTrackToJson(t, o);
             tracks.append(o);
         }
         QJsonObject o{{"id", QString::number(a.id)}, {"name", a.name}, {"tracks", tracks}};
-        animToJson(a, o);
+        animTransportToJson(a, o);
         out.append(o);
     }
     return out;
@@ -1404,13 +1101,13 @@ void Engine::animationsFromJson(const QJsonArray &arr)
         Animation a;
         a.id = o.value("id").toString().toULongLong();
         a.name = o.value("name").toString();
-        animFromJson(a, o);
+        animTransportFromJson(a, o);
         for (const QJsonValue &tv : o.value("tracks").toArray()) {
             const QJsonObject to = tv.toObject();
             AnimTrack t;
             t.layer = to.value("layer").toString().toULongLong();
             t.param = to.value("param").toString();
-            trackFromJson(t, to, a.duration);
+            animTrackFromJson(t, to, a.duration);
             a.tracks.push_back(t);
         }
         bool taken = !a.id;
