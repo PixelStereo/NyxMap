@@ -3046,7 +3046,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             bool beforeKept = false;
             e.sequencer().setRecallRecorder([&](int i, const Sequencer::RecallBefore &before) {
                 recorded.push_back(i);
-                beforeKept = !before.layers.isEmpty();
+                beforeKept = !before.value("layers").toArray().isEmpty();
             });
             Sequencer::Sequence seq;
             seq.name = "Clock";

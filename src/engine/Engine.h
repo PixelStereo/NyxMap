@@ -712,6 +712,7 @@ public:
     // The show's musical clock (tempo, bar, position in beats): steps counted in beats and quantized (Sequencer), OSC /clock
     BeatClock &beatClock() { return m_beatClock; }
     const BeatClock &beatClock() const { return m_beatClock; }
+    static std::unique_ptr<SequencerHost> makeSequencerHost(Engine &e);
     Sequencer &sequencer() { return *m_sequencer; }
     const Sequencer &sequencer() const { return *m_sequencer; }
     // A snapshot's action: its longest time (the fade, and the times of its own values)
@@ -1011,6 +1012,7 @@ private:
     friend class RenderThread;
     friend class RhiRenderer;
     friend class Sequencer;
+    friend class EngineSequencerHost;
 
     struct Garbage; // detached resources, released in the render thread
     void makeCurrent();
@@ -1289,6 +1291,7 @@ private:
     std::atomic<quint64> m_controlsRevision{0}; // read by the remote's thread
     ShowControl *controlLocked(quint64 id);
     void remapControlKeys(const QHash<QString, QString> &keys); // lock held
+    std::unique_ptr<SequencerHost> m_sequencerHost; // what the sequencer asks of the engine (Engine.cpp)
     Sequencer *m_sequencer = nullptr; // a child QObject
     std::atomic<bool> m_fadesManual{false};
     void attachAudio(Layer &l, std::shared_ptr<AudioStream> s);

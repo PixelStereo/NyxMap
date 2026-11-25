@@ -10,6 +10,7 @@
 // The render thread writes the frames; any thread notes the inputs; any thread reads the totals.
 
 #include <QJsonObject>
+#include <pxs/TimingHistogram.h>
 #include <QtGlobal>
 #include <array>
 #include <atomic>
@@ -70,18 +71,8 @@ struct FramePacer {
 class FrameTiming
 {
 public:
-    // Milliseconds in fixed buckets (FrameTiming.cpp), fine around 8.3, 16.7, 20, 33.3 and 40 ms; the last: beyond
-    struct Histogram {
-        static constexpr int kBuckets = 27;
-        std::array<quint64, kBuckets> buckets{};
-        quint64 count = 0;
-        double total = 0, max = 0;
-        void add(double ms);
-        double percentile(double p) const; // upper edge of its bucket, never above max (0: none)
-        double mean() const { return count ? total / double(count) : 0; }
-        QJsonObject json() const;
-        static double edge(int k); // upper edge of bucket k (ms; infinity for the last)
-    };
+    // Milliseconds in fixed buckets, fine around 8.3, 16.7, 20, 33.3 and 40 ms; the last: beyond (pxs's)
+    using Histogram = pxs::TimingHistogram;
     enum Input { Osc = 0, Cue, InputCount };
     struct Stats {
         quint64 frames = 0, presented = 0, missed = 0;
