@@ -44,8 +44,47 @@ private:
     Engine *m_engine;
 };
 
+// What the sequencer asks of the engine (SequencerHost.h): the engine's own calls (a friend: resumeAfterStop)
+class EngineSequencerHost : public SequencerHost
+{
+public:
+    explicit EngineSequencerHost(Engine &e) : m_e(e) {}
+    int indexOfSnapshot(quint64 id) const override { return m_e.indexOfSnapshot(id); }
+    void recallSnapshot(int index, double fade) override { m_e.recallSnapshot(index, fade); }
+    bool recallSnapshotById(quint64 id, double fade) override { return m_e.recallSnapshotById(id, fade); }
+    double snapshotDuration(quint64 id, double fade) const override { return m_e.snapshotDuration(id, fade); }
+    QJsonObject captureBeforeRecall(quint64 id) const override
+    {
+        return QJsonObject{{"layers", m_e.captureRecallLayersById(id)},
+                           {"composition", m_e.captureComposition()},
+                           {"interactions", m_e.captureInteractions()},
+                           {"fixtures", m_e.captureFixtures()}};
+    }
+    int indexOfPreset(quint64 id) const override { return m_e.indexOfPreset(id); }
+    void recallPreset(int index, double fade) override { m_e.recallPreset(index, fade); }
+    double presetDuration(quint64 id, double fade) const override { return m_e.presetDuration(id, fade); }
+    void finishRecalls() override { m_e.finishRecalls(); }
+    void controlAnimation(quint64 id, AnimAction action, double value, AnimLoop loop, int repeat) override
+    {
+        m_e.controlAnimation(id, action, value, loop, repeat);
+    }
+    double animationPlayTime(quint64 id) const override { return m_e.animationPlayTime(id); }
+    double animationRemaining(quint64 id) const override { return m_e.animationRemaining(id); }
+    const BeatClock &beatClock() const override { return m_e.beatClock(); }
+    bool isThreaded() const override { return m_e.isThreaded(); }
+    bool fadesManual() const override { return m_e.fadesManual(); }
+    double timeScale() const override { return ::timeScale().load(); }
+    void resumeAfterStop() override { m_e.resumeAfterStop(); }
+    void noteCueInput() override { m_e.noteInput(FrameTiming::Cue); }
+
+private:
+    Engine &m_e;
+};
+
+std::unique_ptr<SequencerHost> Engine::makeSequencerHost(Engine &e) { return std::make_unique<EngineSequencerHost>(e); }
+
 Engine::Engine(QObject *parent)
-    : QObject(parent), m_audio(std::make_unique<AudioOutput>()), m_sequencer(new Sequencer(*this, m_mutex)),
+    : QObject(parent), m_audio(std::make_unique<AudioOutput>()), m_sequencerHost(makeSequencerHost(*this)), m_sequencer(new Sequencer(*m_sequencerHost, m_mutex, this)),
       m_tcRouter(std::make_unique<TimecodeRouter>())
 {
     // The sACN identity is NyxMap's own, and stays the same from one run to the next

@@ -30,6 +30,7 @@
 
 #include "Anim.h"
 #include "FrameTiming.h" // histogram reused for cue-clock execution timings
+#include "SequencerHost.h"
 
 #include <QElapsedTimer>
 #include <QJsonArray>
@@ -47,7 +48,6 @@
 #include <utility>
 #include <vector>
 
-class Engine;
 class QThread;
 class QTimer;
 
@@ -121,13 +121,8 @@ public:
         QString clockParam;     // composition) in seconds, as "playhead" or "tc/position" (empty: none)
     };
 
-    // What a recall replaced: given with a recall the cue clock made, for the interface's undo
-    struct RecallBefore {
-        QJsonArray layers;
-        QJsonObject composition;
-        QJsonArray interactions;
-        QJsonArray fixtures;
-    };
+    // What a recall replaced: given with a recall the cue clock made, for the interface's undo (SequencerHost::captureBeforeRecall's)
+    using RecallBefore = QJsonObject;
     // How late the steps fired, after their pre-wait or their GO from the step before (seconds): the cue clock's
     // precision, measured. p99 and max over every step fired since the last reset.
     struct CueTiming {
@@ -145,7 +140,7 @@ public:
         FrameTiming::Histogram total;   // capture + recall, including clock path overhead
     };
 
-    Sequencer(Engine &engine, Annotated<QRecursiveMutex> &mutex);
+    Sequencer(SequencerHost &host, Annotated<QRecursiveMutex> &mutex, QObject *parent = nullptr);
     ~Sequencer() override;
     bool requestSnapshot(quint64 id, double fadeOverride = -1); // serialized on the cue clock; GUI stays available during source loading
     void shutdownClock(); // the clock thread stopped (the engine, before it goes)
@@ -249,7 +244,7 @@ private:
     void playAtOnce(const std::vector<Step> &steps); // tracking: steps played to their end now, in order
     void noteFired(double late); // lock held
 
-    Engine &m_engine;
+    SequencerHost &m_engine;
     Annotated<QRecursiveMutex> &m_mutex;
     // Dispatch -> engine lock, never the reverse. STOP invalidates queued work
     // then drains an already executing recall without holding the engine lock. Recursive for

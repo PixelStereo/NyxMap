@@ -1,6 +1,5 @@
 // Sequences: ordered steps recalling snapshots, played with GO / GO BACK (the cue list of a show).
 #include "Sequencer.h"
-#include "EngineInternal.h"
 
 #include <iterator>
 #include <limits>
@@ -24,7 +23,7 @@ private:
     std::function<void()> m_wake;
 };
 
-Sequencer::Sequencer(Engine &engine, Annotated<QRecursiveMutex> &mutex) : QObject(&engine), m_engine(engine), m_mutex(mutex)
+Sequencer::Sequencer(SequencerHost &host, Annotated<QRecursiveMutex> &mutex, QObject *parent) : QObject(parent), m_engine(host), m_mutex(mutex)
 {
     connect(this, &Sequencer::changed, this, [this] { ++m_revision; }, Qt::DirectConnection);
 }
@@ -784,7 +783,7 @@ void Sequencer::tick()
 {
     // The time that really went by (a monotonic clock): a tick that came late is caught up at once, the waits do not
     // drift with the timer's own lateness
-    const double dt = m_clock.nsecsElapsed() * 1e-9 * timeScale();
+    const double dt = m_clock.nsecsElapsed() * 1e-9 * m_engine.timeScale();
     m_clock.restart();
     std::vector<PendingSnapshot> pending;
     { QMutexLocker lock(&m_mutex); pending.swap(m_pendingSnapshots); }
@@ -840,8 +839,7 @@ void Sequencer::fireSnapshot(quint64 snapshotId, double fadeOverride)
         recordWork(start, done); // no UI Undo recording, so capture time is zero
         return;
     }
-    RecallBefore before{m_engine.captureRecallLayersById(snapshotId), m_engine.captureComposition(), m_engine.captureInteractions(),
-                        m_engine.captureFixtures()};
+    RecallBefore before = m_engine.captureBeforeRecall(snapshotId);
     const qint64 captured = FrameTiming::nowNs();
     if (!m_engine.recallSnapshotById(snapshotId, fadeOverride)) return;
     recordWork(captured, FrameTiming::nowNs());
@@ -863,7 +861,7 @@ static bool tracksTimeline(const Sequencer::Step &step)
         return step.timeline && step.action == AnimAction::Play;
     return std::any_of(step.actions.begin(), step.actions.end(), tracksTimeline);
 }
-static double timelineRemaining(Engine &engine, const Sequencer::Step &step)
+static double timelineRemaining(SequencerHost &engine, const Sequencer::Step &step)
 {
     if (step.actions.empty())
         return tracksTimeline(step) ? engine.animationRemaining(step.timeline) : 0;
@@ -977,7 +975,7 @@ void Sequencer::advance(double dt)
         }
         // The snapshots and timelines, in the order of their GO (outside the lock: a recall loads, and may go
         // through the interface's undo stack)
-        if (!fire.empty()) m_engine.noteInput(FrameTiming::Cue);
+        if (!fire.empty()) m_engine.noteCueInput();
         bool called = false;
         std::vector<Run> dispatches;
         for (const auto &run : fire) {
@@ -1065,7 +1063,7 @@ void Sequencer::advance(double dt)
                 x.step = int(found - steps.begin());
                 m_runs.push_back(x);
                 m_positions[size_t(index)] = x.step;
-                m_stepStartedNs[x.sequenceId] = FrameTiming::nowNs() - qint64(x.elapsed / std::max(1e-9, timeScale().load()) * 1e9);
+                m_stepStartedNs[x.sequenceId] = FrameTiming::nowNs() - qint64(x.elapsed / std::max(1e-9, m_engine.timeScale()) * 1e9);
                 moved = true;
             }
         }
