@@ -12,6 +12,8 @@
 #include <QImage>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QHostAddress>
+#include <QTcpServer>
 #include <QTemporaryDir>
 #include <QThread>
 #include <algorithm>
@@ -273,8 +275,7 @@ void streamTests(Engine &e, const QString &tmp)
           "a stream's virtual path gives its URL back");
     check(Engine::streamName(url) == "cam.local:8554/live/main", "its name: host, port and path, no credentials");
 
-    // Nothing listens there: the layer is set at once, the decoder reports why it connects again, the render thread
-    // never waits for it
+    // Nothing listens there: the layer is set at once, the decoder reports why it connects again
     e.newProject();
     // Keep the software GPU allocation and the previous SVG test's large render
     // target out of the network latency measurement.
@@ -287,28 +288,56 @@ void streamTests(Engine &e, const QString &tmp)
     QString err;
     check(e.setLayerStream(row, refused, false, &err), "a stream is set without connecting first");
     check(timer.elapsed() < 1000, "setting it does not wait for the connection");
-    qint64 slowest = 0;
+    auto liveStatus = [&e](int i) {
+        Engine::Lock lk(&e.mutex());
+        const Layer *l = e.layer(i);
+        return l && l->video && l->video->isLive() ? l->video->liveStatus() : VideoDecoder::LiveStatus{};
+    };
     bool reconnecting = false;
     QString reason;
     timer.start();
     while (timer.elapsed() < 10000 && !reconnecting) {
+        e.renderFrame();
+        const VideoDecoder::LiveStatus st = liveStatus(row);
+        reconnecting = st.state == VideoDecoder::LiveState::Reconnecting && !st.reason.isEmpty();
+        reason = st.reason;
+        QThread::msleep(10);
+    }
+    std::printf("      unreachable stream: %s\n", qPrintable(reason));
+    check(reconnecting, "an unreachable stream reports an error and connects again");
+
+    // The render thread never waits for the stream. A refused connection fails within microseconds, so it cannot
+    // show a wait: a server that accepts the connection and never answers holds the decoder in its RTSP request
+    // until the stream's time limit (VideoDecoder::kLiveTimeoutUs, 5 s). A render thread waiting for it would take
+    // seconds for one frame; the bound stays well under that and well over a virtual machine's scheduling stalls
+    // (frames of 0.3 to 0.5 s were seen on the macOS runners with nothing to wait for).
+    QTcpServer silentServer;
+    check(silentServer.listen(QHostAddress::LocalHost, 0), "a local server that never answers");
+    const QString silentLocal = QStringLiteral("rtsp://127.0.0.1:%1/none").arg(silentServer.serverPort());
+    check(e.setLayerStream(row, silentLocal, true, &err), "a stream whose server never answers");
+    e.resetFrameTiming();
+    std::vector<qint64> frames;
+    timer.start();
+    while (timer.elapsed() < 1500) {
         QElapsedTimer frame;
         frame.start();
         e.renderFrame();
-        slowest = std::max(slowest, frame.elapsed());
-        Engine::Lock lk(&e.mutex());
-        const Layer *l = e.layer(row);
-        if (l->video && l->video->isLive()) {
-            const VideoDecoder::LiveStatus st = l->video->liveStatus();
-            reconnecting = st.state == VideoDecoder::LiveState::Reconnecting && !st.reason.isEmpty();
-            reason = st.reason;
-        }
-        lk.unlock();
+        frames.push_back(frame.elapsed());
         QThread::msleep(10);
     }
-    std::printf("      unreachable stream: %s (slowest frame %lld ms)\n", qPrintable(reason), static_cast<long long>(slowest));
-    check(reconnecting, "an unreachable stream reports an error and connects again");
-    check(slowest < 250, "the render thread never waits for the stream");
+    const VideoDecoder::LiveStatus held = liveStatus(row);
+    const auto slowest = std::max_element(frames.begin(), frames.end());
+    const QJsonObject timing = e.frameTimingJson();
+    std::printf("      silent server: %zu frames, slowest %lld ms (frame %td), compute max %.1f ms, present max %.1f ms\n",
+                frames.size(), static_cast<long long>(*slowest), slowest - frames.begin(),
+                timing.value("compute").toObject().value("max_ms").toDouble(),
+                timing.value("present").toObject().value("max_ms").toDouble());
+    check(silentServer.waitForNewConnection(0) && held.state == VideoDecoder::LiveState::Connecting && held.attempts == 0,
+          "the decoder is still connecting to it");
+    check(*slowest < 1000, "the render thread never waits for the stream");
+    timer.start();
+    check(e.setLayerStream(row, refused, false, &err), "back to the refused stream");
+    check(timer.elapsed() < 2000, "leaving a stream that is connecting is immediate");
 
     const QJsonObject src = e.layerJson(row).value("source").toObject();
     check(src.value("type").toString() == "video" && src.value("path").toString() == refused &&
