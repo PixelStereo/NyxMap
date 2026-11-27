@@ -20,6 +20,7 @@ endif()
 find_package(Qt6 6.7 REQUIRED COMPONENTS Core Gui Widgets Network)
 # Shared Pixel Stereo code (the OSC codec), pinned as a submodule
 set(PXS_BUILD_TESTS OFF)
+option(PXS_CORE_BUILD_RTMIDI "Build the bundled native MIDI backend" ON)
 add_subdirectory(third_party/pxs-qt EXCLUDE_FROM_ALL)
 
 # ---------------------------------------------------------------------------
@@ -245,54 +246,9 @@ elseif(UNIX)
 endif()
 
 # ---------------------------------------------------------------------------
-# MIDI (the timecode's MTC): RtMidi (MIT), a submodule. CoreMIDI, Windows MM, ALSA (Linux: libasound2-dev; without it,
-# no MIDI port)
-# ---------------------------------------------------------------------------
-nyxmap_submodule(rtmidi RtMidi.cpp)
-set(rtmidi_SOURCE_DIR "${CMAKE_SOURCE_DIR}/third_party/rtmidi")
-set(NYXMAP_MIDI_API "")
-if(APPLE)
-  set(NYXMAP_MIDI_API __MACOSX_CORE__)
-  set(NYXMAP_MIDI_LIBS "-framework CoreMIDI" "-framework CoreAudio" "-framework CoreFoundation")
-elseif(WIN32)
-  set(NYXMAP_MIDI_API __WINDOWS_MM__)
-  set(NYXMAP_MIDI_LIBS winmm)
-else()
-  find_package(ALSA QUIET)
-  if(ALSA_FOUND)
-    set(NYXMAP_MIDI_API __LINUX_ALSA__)
-    set(NYXMAP_MIDI_LIBS ALSA::ALSA Threads::Threads)
-  else()
-    message(STATUS "ALSA not found: no MIDI ports (sudo apt install libasound2-dev)")
-  endif()
-endif()
-if(NYXMAP_MIDI_API)
-  # RtMidi declares its CoreMIDI client getters throw() (noexcept), yet reports a failed MIDIClientCreate by throwing
-  # RtMidiError from them: std::terminate, the process aborts before Midi.cpp's catch. MIDIClientCreate does fail now
-  # and then when several processes reach the MIDI server at once (the UI tests under ctest -j). Built from a copy
-  # without those throw(), the error is caught and the port list is empty.
-  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${rtmidi_SOURCE_DIR}/RtMidi.cpp")
-  file(READ "${rtmidi_SOURCE_DIR}/RtMidi.cpp" rtmidi_code)
-  string(REPLACE "getCoreMidiClientSingleton(const std::string& clientName) throw()"
-                 "getCoreMidiClientSingleton(const std::string& clientName)" rtmidi_code "${rtmidi_code}")
-  set(rtmidi_patched "${CMAKE_BINARY_DIR}/generated/rtmidi/RtMidi.cpp")
-  set(rtmidi_previous "")
-  if(EXISTS "${rtmidi_patched}")
-    file(READ "${rtmidi_patched}" rtmidi_previous)
-  endif()
-  if(NOT rtmidi_previous STREQUAL rtmidi_code)
-    file(WRITE "${rtmidi_patched}" "${rtmidi_code}")
-  endif()
-  add_library(rtmidi_static STATIC "${rtmidi_patched}")
-  target_include_directories(rtmidi_static PUBLIC "${rtmidi_SOURCE_DIR}")
-  target_compile_definitions(rtmidi_static PUBLIC ${NYXMAP_MIDI_API})
-  target_link_libraries(rtmidi_static PUBLIC ${NYXMAP_MIDI_LIBS})
-  if(MSVC)
-    target_compile_options(rtmidi_static PRIVATE /W0)
-  else()
-    target_compile_options(rtmidi_static PRIVATE -w)
-  endif()
-  target_link_libraries(nyxmap_engine PRIVATE rtmidi_static)
+# MIDI for MTC, using the same backend as the Qt device registry.
+if(TARGET pxs-core::rtmidi)
+  target_link_libraries(nyxmap_engine PRIVATE pxs-core::rtmidi)
   target_compile_definitions(nyxmap_engine PRIVATE NYXMAP_HAS_MIDI)
 endif()
 
