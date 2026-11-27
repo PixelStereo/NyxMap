@@ -14,9 +14,6 @@
 	path = third_party/spout2
 	url = https://github.com/leadedge/Spout2.git
 	shallow = true
-[submodule "third_party/rtmidi"]
-	path = third_party/rtmidi
-	url = https://github.com/thestk/rtmidi.git
 	shallow = true
 [submodule "third_party/faust"]
 	path = third_party/faust
