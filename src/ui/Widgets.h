@@ -262,6 +262,7 @@ private:
 // Padlock drawn by hand (no emoji font needed): closed and red when locked, closed and dim when locked by the group,
 // open and faint otherwise.
 QIcon padlockIcon(bool locked, bool inherited = false);
+QIcon fxMaskIcon(bool assigned, bool inverted);
 
 // Popup list with a search field (Add Effect…): items filed by group, filtered while typing,
 // Enter or a click picks one.
