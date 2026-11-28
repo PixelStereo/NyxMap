@@ -100,6 +100,9 @@ Engine::Engine(QObject *parent)
     const auto oscName = QStringLiteral("NyxMap (%1)").arg(QHostInfo::localHostName().section('.', 0, 0));
     m_devices = std::make_unique<pxs::devices::Devices>(oscName, 0, this);
     connect(m_devices.get(), &pxs::devices::Devices::changed, this, &Engine::updateDeviceConfiguration);
+    for (const auto signal : {&Engine::interactionsChanged, &Engine::animationsChanged,
+                              &Engine::presetsChanged, &Engine::snapshotsChanged})
+        connect(this, signal, this, &Engine::updateDeviceReferences, Qt::QueuedConnection);
     updateDeviceConfiguration();
 
     // The sACN identity is NyxMap's own, and stays the same from one run to the next

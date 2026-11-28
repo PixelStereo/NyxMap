@@ -1422,6 +1422,7 @@ private:
     void queueDeviceValue(quint64 id, const QString &address, double value, bool normalized);
     void loadDevices(const QJsonObject &json);
     void updateDeviceConfiguration();
+    void updateDeviceReferences();
     std::unique_ptr<pxs::devices::Devices> m_devices;
     QJsonObject m_deviceJson;
     std::map<quint64, pxs::devices::Device> m_dmxDevices;

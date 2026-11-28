@@ -692,6 +692,20 @@ static void collectDeviceReferences(const QJsonValue &value, std::set<quint64> &
     }
 }
 
+void Engine::updateDeviceReferences()
+{
+    std::set<quint64> ids;
+    {
+        Lock lock(&m_mutex);
+        for (const auto &interaction : m_interactions) collectDeviceReferences(interaction.toJson(), ids);
+        collectDeviceReferences(m_interactionGraph.toJson(), ids);
+        collectDeviceReferences(animationsToJson(), ids);
+        for (const auto &preset : m_presets) collectDeviceReferences(presetToJson(preset), ids);
+        for (const auto &snapshot : m_snapshots) collectDeviceReferences(snapshotToJson(snapshot, {}), ids);
+    }
+    m_devices->setReferencedDevices(std::move(ids));
+}
+
 QJsonObject Engine::projectToJson(const QString &dir, const QJsonObject &uiState) const
 {
     QJsonObject root;
