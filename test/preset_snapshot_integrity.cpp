@@ -69,6 +69,28 @@ int main(int argc, char **argv) {
         undo.redo();
         check(engine.preset(pi).animations[0].tracks[0].period == 3, "animation definition edit redo");
     }
+    {
+        Engine::Preset plain;
+        plain.name = "Static opacity";
+        plain.values.push_back(engine.presetValue(layer, "opacity"));
+        const auto id = engine.preset(engine.addPreset(plain)).id;
+
+        Animation added = engine.preset(pi).animations.front();
+        Animation unrelated = added;
+        unrelated.tracks.front().param = "rotation";
+        engine.setLayerAnims(layer, {added, unrelated});
+        QUndoStack undo;
+        undo.push(new cmd::RecallPreset(&engine, id));
+        Animation live;
+        check(engine.layerAnim(layer, "opacity", &live) && !live.tracks.front().enabled,
+              "recall disables an animation added after a static parameter was stored");
+        check(engine.layerAnim(layer, "rotation", &live) && live.tracks.front().enabled,
+              "recall keeps animations on parameters outside the preset");
+        undo.undo();
+        check(engine.layerAnim(layer, "opacity", &live) && live.tracks.front().enabled,
+              "undo restores the animation disabled by recall");
+        engine.setLayerAnims(layer, {});
+    }
     // A snapshot recall adding an animation must remove it again on Undo.
     Engine::Snapshot animated;
     animated.name = "Animated";

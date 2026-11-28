@@ -22,6 +22,7 @@ find_package(Qt6 6.7 REQUIRED COMPONENTS Core Gui Widgets Network)
 set(PXS_BUILD_TESTS OFF)
 option(PXS_CORE_BUILD_RTMIDI "Build the bundled native MIDI backend" ON)
 add_subdirectory(third_party/pxs-qt EXCLUDE_FROM_ALL)
+include(cmake/ControlsPage.cmake)
 
 # ---------------------------------------------------------------------------
 # FFmpeg: pkg-config (macOS Homebrew, Linux) or FFMPEG_ROOT (Windows, "shared" build)

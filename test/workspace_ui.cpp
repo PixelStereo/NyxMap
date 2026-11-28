@@ -527,11 +527,21 @@ int main(int argc, char **argv)
         nestedGroupTests(engine, check);
         MainWindow window(&engine); window.setAutosaveEnabled(false); window.setQuiet(true);
         window.show(); app.processEvents();
-        // The presets' Edit mode from the menu and its shortcut (⌘E / Ctrl+E), the Edit button following
+        if (auto *controls = window.findChild<QAction *>("controlsPageAction")) {
+            check(controls->shortcut() == QKeySequence(Qt::CTRL | Qt::Key_E), "Controls Page is on Cmd/Ctrl+E");
+            auto *tabs = window.findChild<QTabWidget *>("workspaceLeftTabs");
+            const int before = tabs ? tabs->currentIndex() : -1;
+            controls->trigger();
+            check(tabs && tabs->tabText(tabs->currentIndex()) == "Controls", "the shortcut opens Controls");
+            if (tabs) tabs->setCurrentIndex(before);
+        } else {
+            check(false, "the Controls Page action exists");
+        }
+        // The presets' Edit mode from the menu and its shortcut (⌘P / Ctrl+P), the Edit button following
         {
             auto *action = window.findChild<QAction *>("presetEditAction");
             auto *button = window.findChild<QPushButton *>("presetEdit");
-            check(action && action->shortcut() == QKeySequence(Qt::CTRL | Qt::Key_E) && action->isCheckable(), "Preset Edit Mode is on Cmd/Ctrl+E");
+            check(action && action->shortcut() == QKeySequence(Qt::CTRL | Qt::Key_P) && action->isCheckable(), "Preset Edit Mode is on Cmd/Ctrl+P");
             if (action && PresetEditor::instance()) {
                 action->trigger();
                 check(PresetEditor::instance()->editing() && (!button || button->isChecked()), "the shortcut enters Edit mode and the button follows");

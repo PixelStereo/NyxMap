@@ -2,7 +2,7 @@
 #include "../engine/Engine.h"
 // Presets in the interface: which one is selected, the Edit mode, and the parameters' widgets that can go in one.
 //
-// The inspector's widgets of a value register here (AnimateMenu::attach does it). In Edit mode (⌘E / Ctrl+E), each one in
+// The inspector's widgets of a value register here (AnimateMenu::attach does it). In Edit mode (⌘P / Ctrl+P), each one in
 // the selected preset is underlined: green, or orange once its value is no longer the preset's; each one that could go in
 // it and is not, red; the window gets a red frame and a badge. A click on its name (or an Alt-click on its field) puts it
 // in the preset or takes it out. Out of Edit mode the lines go. A right-click on it

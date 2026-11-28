@@ -65,6 +65,7 @@ std::vector<ShowControl> Engine::controls() const
     EngineParameterSource source(const_cast<Engine *>(this));
     for (ShowControl &c : list)
         if (!c.boundParam.isEmpty()) pxs::controls::fillBound(c, source);
+    pxs::controls::fillPhysics(list);
     return list;
 }
 
@@ -315,6 +316,7 @@ bool Engine::setControlValue(quint64 id, double value)
     Lock lk(&m_mutex);
     ShowControl *c = pxs::controls::find(m_controls, id);
     if (!c || c->kind == ShowControl::Kind::Color || c->kind == ShowControl::Kind::Group || !std::isfinite(value)) return false;
+    if (c->physTarget) return pxs::controls::setPhysics(m_controls, id, value);
     if (!c->boundParam.isEmpty()) { // a view of a parameter: the parameter is what is set
         EngineParameterSource source(this);
         return pxs::controls::setBound(*c, source, value);
@@ -394,6 +396,12 @@ std::optional<ShowControl> Engine::control(quint64 id) const
     if (!out.boundParam.isEmpty()) {
         EngineParameterSource source(const_cast<Engine *>(this));
         pxs::controls::fillBound(out, source);
+    }
+    if (out.physTarget) {
+        const ShowControl *target = pxs::controls::find(m_controls, out.physTarget);
+        if (target)
+            if (const auto view = pxs::controls::forPhysics(*target, out.physKey))
+                out.value = std::clamp(view->value, out.min, out.max);
     }
     return out;
 }

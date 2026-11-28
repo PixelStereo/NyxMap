@@ -499,6 +499,23 @@ int main(int argc, char **argv)
             require(engine.control(w)->points.size() == 5 && near(engine.control(w)->points[1][0], 0.3), "more points added, the others kept");
             const ShowControl swarmAgain = ShowControl::fromJson(engine.control(w)->toJson());
             require(swarmAgain.count == 5 && swarmAgain.points.size() == 5 && near(swarmAgain.points[1][0], 0.3), "and saved with the project");
+            phone.sendText(QJsonDocument(QJsonObject{{"t", "edit"}, {"id", QString::number(w)},
+                {"props", QJsonObject{{"physics", QJsonObject{{"mode", 2}}}}}}).toJson(QJsonDocument::Compact));
+            phone.sendText(QJsonDocument(QJsonObject{{"t", "physicsWidget"}, {"id", QString::number(w)},
+                {"key", "friction"}}).toJson(QJsonDocument::Compact));
+            quint64 widget = 0;
+            phone.pumpUntil([&] {
+                for (const auto &control : engine.controls())
+                    if (control.physTarget == w && control.physKey == "friction") widget = control.id;
+                return widget != 0;
+            });
+            require(widget && engine.control(w)->physics.mode == 2, "the page creates a Mass-Spring friction widget");
+            phone.sendText(QJsonDocument(QJsonObject{{"t", "set"}, {"id", QString::number(widget)},
+                {"v", 12.5}}).toJson(QJsonDocument::Compact));
+            phone.pumpUntil([&] { return near(engine.control(w)->physics.friction, 12.5); });
+            require(near(engine.control(w)->physics.friction, 12.5) && near(engine.control(widget)->value, 12.5),
+                    "the friction widget writes to and reads from the pad's physics");
+            engine.removeControl(widget);
             engine.removeControl(w);
             // A multi-slider: its numbers set in one message, each a parameter, the count changed from the phone
             ShowControl eq;
