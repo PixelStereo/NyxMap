@@ -2,6 +2,8 @@
 // clock; the sequences drive their transport.
 #include "EngineInternal.h"
 #include "Osc.h"
+#include "InteractionOutput.h"
+#include <QThread>
 #include <QUrl>
 
 #include <QJsonArray>
@@ -415,6 +417,19 @@ Parameter *Engine::findParameter(quint64 layer, const QString &path)
 
 bool Engine::setAnimParam(quint64 layer, const QString &path, double v)
 {
+    if (!layer && path.startsWith(QLatin1String("output/device/"))) {
+        const auto output = InteractionOutput::fromPath(path);
+        const quint64 id = output.destination.toULongLong();
+        if (!id || output.address.isEmpty()) return false;
+        const auto device = m_dmxDevices.find(id);
+        if (device != m_dmxDevices.end()) {
+            if (!device->second.address(output.address.toStdString())) return false;
+            m_timelineDeviceDmx[{id, output.address}] = v;
+        } else {
+            queueDeviceValue(id, output.address, v, false);
+        }
+        return true;
+    }
     if (layer)
         for (auto &l : m_layers)
             if (l->id == layer && l->locked) return false; // a timeline leaves a locked layer alone
@@ -422,9 +437,33 @@ bool Engine::setAnimParam(quint64 layer, const QString &path, double v)
     return p && p->isNumber() && p->setNumber(v);
 }
 
+std::optional<std::pair<double, double>> Engine::externalAnimationRange(quint64 layer, const QString &path) const
+{
+    if (layer || !path.startsWith(QLatin1String("output/device/")) || QThread::currentThread() != thread()) return {};
+    const auto output = InteractionOutput::fromPath(path);
+    for (const auto &parameter : m_devices->params(output.destination.toULongLong()))
+        if (parameter.path == output.address) return std::pair{parameter.min, parameter.max};
+    return {};
+}
+
 bool Engine::animParamValue(quint64 layer, const QString &path, double *value) const
 {
     Lock lk(&m_mutex);
+    if (!layer && path.startsWith(QLatin1String("output/device/"))) {
+        const auto output = InteractionOutput::fromPath(path);
+        const quint64 id = output.destination.toULongLong();
+        const auto last = m_timelineDeviceDmx.find({id, output.address});
+        if (last != m_timelineDeviceDmx.end()) {
+            *value = last->second;
+            return true;
+        }
+        if (QThread::currentThread() == thread() && m_devices->value(id, output.address, value)) return true;
+        if (const auto sent = m_deviceLastSent.find({id, output.address}); sent != m_deviceLastSent.end()) {
+            *value = sent->second;
+            return true;
+        }
+        return false;
+    }
     const Parameter *p = const_cast<Engine *>(this)->findParameter(layer, path);
     if (!p || !p->isNumber()) return false;
     *value = p->number();

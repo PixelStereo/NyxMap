@@ -26,12 +26,14 @@ void Engine::updateDeviceConfiguration()
         for (const auto &node : m_interactionGraph.nodes)
             if (!node.settings.layer && node.settings.param.startsWith(QLatin1String("output/device/")))
                 m_graphLastOutputs.erase(node.id);
-        for (auto it = m_deviceDmxActions.begin(); it != m_deviceDmxActions.end();) {
-            const auto device = m_dmxDevices.find(it->first.first);
-            if (device == m_dmxDevices.end() || !device->second.address(it->first.second.toStdString()))
-                it = m_deviceDmxActions.erase(it);
-            else
-                ++it;
+        for (auto *levels : {&m_deviceDmxActions, &m_timelineDeviceDmx}) {
+            for (auto it = levels->begin(); it != levels->end();) {
+                const auto device = m_dmxDevices.find(it->first.first);
+                if (device == m_dmxDevices.end() || !device->second.address(it->first.second.toStdString()))
+                    it = levels->erase(it);
+                else
+                    ++it;
+            }
         }
     }
     if (edited) emit deviceConfigurationChanged();
@@ -61,14 +63,26 @@ void Engine::writeDeviceOutput(quint64 id, const QString &address, double value,
         return;
     }
 
-    // Interactions run on the render and cue threads. PXS sockets and their registry live on the owner thread.
+    queueDeviceValue(id, address, unit, true);
+}
+
+void Engine::queueDeviceValue(quint64 id, const QString &address, double value, bool normalized)
+{
+    // Interactions and timelines run on the render and cue threads. PXS sockets and their registry live on the owner thread.
     const quint64 generation = m_deviceProjectGeneration.load();
-    QMetaObject::invokeMethod(this, [this, id, address, unit, generation] {
+    QMetaObject::invokeMethod(this, [this, id, address, value, normalized, generation] {
         if (generation != m_deviceProjectGeneration.load() || !m_devices->online(id)) return;
-        const auto parameters = m_devices->params(id);
-        const auto parameter = std::find_if(parameters.begin(), parameters.end(),
-                                            [&](const auto &entry) { return entry.path == address; });
-        if (parameter != parameters.end())
-            m_devices->send(id, address, parameter->lo + unit * (parameter->hi - parameter->lo));
+        double nativeValue = value;
+        if (normalized) {
+            const auto parameters = m_devices->params(id);
+            const auto parameter = std::find_if(parameters.begin(), parameters.end(),
+                                                [&](const auto &entry) { return entry.path == address; });
+            if (parameter == parameters.end()) return;
+            nativeValue = parameter->lo + value * (parameter->hi - parameter->lo);
+        }
+        if (m_devices->send(id, address, nativeValue)) {
+            Lock lock(&m_mutex);
+            if (generation == m_deviceProjectGeneration.load()) m_deviceLastSent[{id, address}] = nativeValue;
+        }
     }, Qt::QueuedConnection);
 }

@@ -145,6 +145,8 @@ void Engine::clearProject()
         m_fixtureDmx.clear();
         m_actionDmx.clear();
         m_deviceDmx.clear();
+        m_timelineDeviceDmx.clear();
+        m_deviceLastSent.clear();
         m_deviceDmxActions.clear();
         m_interactionDmx.clear();
         ++m_fixturesVersion;
@@ -780,7 +782,7 @@ QJsonObject Engine::projectToJson(const QString &dir, const QJsonObject &uiState
             root["pixel_mapping"] = m_fixtures.toJson();
     }
     std::set<quint64> deviceRefs;
-    for (const char *key : {"interactions", "interaction_graph", "presets", "snapshots"})
+    for (const char *key : {"interactions", "interaction_graph", "timelines", "presets", "snapshots"})
         collectDeviceReferences(root.value(QLatin1String(key)), deviceRefs);
     m_devices->setReferencedDevices(std::move(deviceRefs));
     const QJsonObject devices = m_devices->toJson();
@@ -973,7 +975,7 @@ bool Engine::loadProject(const QString &path, QJsonObject *uiState, QString *err
     clearProject();
     loadDevices(root.value("devices").toObject());
     std::set<quint64> deviceRefs;
-    for (const char *key : {"interactions", "interaction_graph", "presets", "snapshots"})
+    for (const char *key : {"interactions", "interaction_graph", "timelines", "presets", "snapshots"})
         collectDeviceReferences(root.value(QLatin1String(key)), deviceRefs);
     m_devices->setReferencedDevices(std::move(deviceRefs));
     const QJsonObject comp = root.value("composition").toObject();

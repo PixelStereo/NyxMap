@@ -642,6 +642,7 @@ public:
     std::vector<ParamInfo> parameters(quint64 layer) const;
     bool parameterInfo(quint64 layer, const QString &path, ParamInfo *p) const override; // false: it has none at that address
     bool animParamValue(quint64 layer, const QString &path, double *value) const override;
+    std::optional<std::pair<double, double>> externalAnimationRange(quint64 layer, const QString &path) const override;
     // One value, by its layer's id (0: the composition) and its address: every edit by hand (the interface and its
     // undo) goes through here. Set, a fade that drives it lets go. Undefined / false: it has none at that address
     QJsonValue parameterValue(quint64 layer, const QString &path) const;
@@ -1418,13 +1419,14 @@ private:
     std::vector<ActionFade> m_actionFades;
     bool holdsDmxOutput(const QString &path) const;
     void writeDeviceOutput(quint64 id, const QString &address, double value, bool action);
+    void queueDeviceValue(quint64 id, const QString &address, double value, bool normalized);
     void loadDevices(const QJsonObject &json);
     void updateDeviceConfiguration();
     std::unique_ptr<pxs::devices::Devices> m_devices;
     QJsonObject m_deviceJson;
     std::map<quint64, pxs::devices::Device> m_dmxDevices;
     using DeviceLevels = std::map<std::pair<quint64, QString>, double>;
-    DeviceLevels m_deviceDmx, m_deviceDmxActions;
+    DeviceLevels m_deviceDmx, m_deviceDmxActions, m_timelineDeviceDmx, m_deviceLastSent;
     std::atomic<quint64> m_deviceProjectGeneration{0};
     bool writeInteractionOutput(const QString &path, double value, bool action);
     void sendInteractionOsc(const InteractionConsequence &c, double value);
