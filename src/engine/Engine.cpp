@@ -8,6 +8,7 @@
 #include "EngineInternal.h"
 
 #include <QCoreApplication>
+#include <QHostInfo>
 #include <QSettings>
 #include <QUuid>
 #include "RhiDevice.h"
@@ -95,6 +96,11 @@ Engine::Engine(QObject *parent)
     Q_UNUSED(midiNamed);
     m_midiInputs = std::make_unique<pxs::midi::Inputs>(this);
     m_midiInputs->setCallback([this](const InteractionEvent &event) { feedInteraction(event); });
+
+    const auto oscName = QStringLiteral("NyxMap (%1)").arg(QHostInfo::localHostName().section('.', 0, 0));
+    m_devices = std::make_unique<pxs::devices::Devices>(oscName, 0, this);
+    connect(m_devices.get(), &pxs::devices::Devices::changed, this, &Engine::updateDeviceConfiguration);
+    updateDeviceConfiguration();
 
     // The sACN identity is NyxMap's own, and stays the same from one run to the next
     if (!QCoreApplication::organizationName().isEmpty()) {

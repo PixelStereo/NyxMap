@@ -3,6 +3,11 @@
 // a switch, a number, a show action. Saved with the project; a snapshot does not hold its definition.
 // Standalone CTest area: nyxmap_tests --area interaction_actions.
 #include "EngineInternal.h"
+#include "InteractionOutput.h"
+#include "Osc.h"
+#include "OscCodec.h"
+#include <QNetworkDatagram>
+#include <QUdpSocket>
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -251,6 +256,64 @@ int runInteractionActionTests(Engine &e, const QString &tmp)
     const Interaction timed = Interaction::fromJson(fade.toJson());
     check(timed.onTrue == fade.onTrue && timed.onFalse == fade.onFalse && near(timed.onFalse.front().time, 1),
           "an action's time and curve read back as written");
+
+    // A named PXS OSC device receives an interaction using its declared range.
+    QUdpSocket receiver;
+    check(receiver.bind(QHostAddress::LocalHost, 0), "bind the OSC device receiver");
+    pxs::devices::Device device;
+    device.name = "Device receiver";
+    device.host = "127.0.0.1";
+    device.port = receiver.localPort();
+    device.addresses = {{"/gain", -20, 20}};
+    const quint64 deviceId = e.devices().add(device);
+    Interaction mapping = Interaction::made(InteractionSource::Keyboard);
+    mapping.key = QStringLiteral("D");
+    mapping.param = InteractionOutput{QStringLiteral("device"), QString::number(deviceId), QStringLiteral("/gain"), {}}.path();
+    e.addInteraction(mapping);
+    const auto send = [&](double input, double expected) {
+        press("D", input);
+        e.renderFrame();
+        QElapsedTimer wait;
+        wait.start();
+        while (!receiver.hasPendingDatagrams() && wait.elapsed() < 1000)
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        std::vector<osc::Message> received;
+        if (receiver.hasPendingDatagrams()) osc::decode(receiver.receiveDatagram().data(), received);
+        return received.size() == 1 && received.front().address == "/gain" &&
+               near(received.front().args.value(0).toDouble(), expected);
+    };
+    check(deviceId && send(1, 20), "interaction sends through the shared OSC device");
+    const QString deviceProject = tmp + QStringLiteral("/interaction-devices.nyxmap");
+    check(e.saveProject(deviceProject, {}, &err), "save the device and its interaction");
+    e.newProject();
+    check(e.devices().find(deviceId) == nullptr, "new show clears the manual device");
+    check(e.loadProject(deviceProject, nullptr, &err), "load the device show");
+    check(e.devices().find(deviceId) && send(0, -20), "reloaded target uses the same device ID and range");
+
+    // An OSCQuery device discovers a writable parameter and writes it using the advertised OSC port.
+    Engine remote;
+    check(remote.initialize(&err), "initialize the remote OSCQuery show");
+    const quint64 remoteLayer = remote.layerId(remote.addLayer("Receiver"));
+    OscServer remoteServer(&remote);
+    check(remoteServer.start(0, 0, QStringLiteral("Device fixture"), false, QStringLiteral("127.0.0.1")),
+          "start the remote OSCQuery server");
+    const quint64 queryId = e.devices().addOscQuery(QStringLiteral("127.0.0.1"), remoteServer.queryPort());
+    QElapsedTimer queryWait;
+    queryWait.start();
+    while (!e.devices().online(queryId) && queryWait.elapsed() < 3000)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+    check(e.devices().online(queryId), "PXS discovers the remote namespace");
+    mapping.key = QStringLiteral("Q");
+    mapping.param = InteractionOutput{QStringLiteral("device"), QString::number(queryId),
+                                      QStringLiteral("/layer/Receiver/opacity"), {}}.path();
+    e.addInteraction(mapping);
+    press("Q", 0.25);
+    e.renderFrame();
+    queryWait.restart();
+    while (!near(remote.parameterValue(remoteLayer, "opacity").toDouble(), 0.25) && queryWait.elapsed() < 3000)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+    check(near(remote.parameterValue(remoteLayer, "opacity").toDouble(), 0.25),
+          "interaction drives the external OSCQuery parameter");
 
     e.setFadesManual(false);
     if (!failures) std::printf("interaction_actions: OK\n");

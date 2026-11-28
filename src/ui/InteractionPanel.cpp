@@ -1950,6 +1950,23 @@ void InteractionPanel::fillOutputTargets(QMenu *menu, const QString &currentPath
             if (dialog.exec() == QDialog::Accepted) select(output.path());
         });
     };
+    auto *devices = menu->addMenu(QStringLiteral("Devices"));
+    const auto &registry = m_engine->devices();
+    for (const auto *device : registry.all()) {
+        const quint64 id = device->id;
+        const QString name = registry.nameOf(id);
+        const auto parameters = registry.params(id);
+        if (parameters.empty()) continue;
+        auto *addresses = devices->addMenu(name);
+        for (const auto &parameter : parameters) {
+            const InteractionOutput output{QStringLiteral("device"), QString::number(id), parameter.path, {}};
+            auto *target = addresses->addAction(parameter.label, this, [select, output] { select(output.path()); });
+            target->setCheckable(true);
+            target->setChecked(current.protocol == output.protocol && current.destination == output.destination &&
+                               current.address == output.address);
+        }
+    }
+    if (devices->isEmpty()) devices->addAction(QStringLiteral("Configure an address in Devices"))->setEnabled(false);
     auto *osc = menu->addMenu(QStringLiteral("OSC"));
     const auto senders = QSettings().value(QStringLiteral("osc/feedback/targets"), SequenceFeedback::defaultTargets()).toStringList();
     for (const auto &sender : senders)
@@ -2120,7 +2137,8 @@ void InteractionPanel::buildActionSettings(QFormLayout *form, const Interaction 
             };
             ParamInfo info;
             const bool known = !c.param.isEmpty() && m_engine->parameterInfo(c.layer, c.param, &info);
-            if (path.startsWith(QLatin1String("output/dmx/")) || path.startsWith(QLatin1String("output/midi/"))) {
+            if (path.startsWith(QLatin1String("output/dmx/")) || path.startsWith(QLatin1String("output/midi/")) ||
+                path.startsWith(QLatin1String("output/device/"))) {
                 auto *value = number(c.value);
                 value->setRange(0, 1);
                 value->setValue(c.value);
