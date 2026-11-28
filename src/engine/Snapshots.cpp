@@ -558,6 +558,42 @@ void Engine::recallPreset(int i, double fadeOverride)
         if (idx < 0 || isLocked(idx)) continue; // gone, or locked: left alone
         QSet<QString> owned;
         for (auto it = params.constBegin(); it != params.constEnd(); ++it) owned.insert(it.key());
+        // A preset owns only its stored addresses. Stop drivers added since
+        // capture before applying those values, preserving any other XY axis.
+        {
+            Lock lock(&m_mutex);
+            auto current = layerAnims(layerId);
+            const auto saved = [&](const QString &path) {
+                return std::any_of(p.animations.begin(), p.animations.end(), [&](const Animation &animation) {
+                    if (animation.tracks.empty()) return false;
+                    const auto &track = animation.tracks.front();
+                    return track.layer == layerId && track.drives(path);
+                });
+            };
+            bool changed = false;
+            for (Animation &animation : current) {
+                if (animation.tracks.empty() || !animation.tracks.front().enabled) continue;
+                auto &track = animation.tracks.front();
+                const auto missing = [&](const QString &path) {
+                    return (owned.contains(path) || owned.contains(track.param)) && !saved(path);
+                };
+                if (track.isPoint()) {
+                    for (auto &axis : track.axes) {
+                        if (!axis.enabled || !missing(axis.param)) continue;
+                        axis.enabled = false;
+                        changed = true;
+                    }
+                    if (track.drivenParams().isEmpty()) track.enabled = false;
+                } else {
+                    const auto paths = track.drivenParams();
+                    if (std::any_of(paths.begin(), paths.end(), missing)) {
+                        track.enabled = false;
+                        changed = true;
+                    }
+                }
+            }
+            if (changed) setLayerAnims(layerId, current);
+        }
         takeOverFades(layerId, owned);
         Lock lk(&m_mutex);
         Layer *l = layer(idx);
@@ -1775,7 +1811,10 @@ QStringList Engine::interactionKeys()
                      QStringLiteral("source/audio/feature"),
                      QStringLiteral("source/audio/low"),
                      QStringLiteral("source/audio/high"),
+                     QStringLiteral("source/audio/sensitivity"),
+                     QStringLiteral("source/audio/gap"),
                      QStringLiteral("target"),
+                     QStringLiteral("color/map_alpha"),
                      QStringLiteral("enable"),
                      QStringLiteral("master"),
                      QStringLiteral("takeover"),

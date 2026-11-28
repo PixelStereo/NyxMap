@@ -25,6 +25,7 @@ class ControlsPanel : public QWidget
     Q_OBJECT
 public:
     ControlsPanel(Engine *engine, QUndoStack *undo, QWidget *parent = nullptr);
+    void openPage();
     void rebuild();      // the list again (a control added, removed, shaped)
     void refreshValues(); // the values as they are now (OSC, an interaction, a timeline, the remote), except one being dragged
 

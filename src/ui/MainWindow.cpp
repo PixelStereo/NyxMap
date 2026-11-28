@@ -367,6 +367,7 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     // Left: Media Bin and Layers, two tabs (Shift+1 / Shift+2). Dragging a media over the Layers tab opens it.
     m_layerTable = new LayerTable;
     m_leftTabs = new QTabWidget;
+    m_leftTabs->setObjectName(QStringLiteral("workspaceLeftTabs"));
     m_leftTabs->addTab(m_bin, QStringLiteral("Media Bin"));
     m_fixtures = new FixturePanel(m_engine, m_undo);
     m_fixtures->setObjectName(QStringLiteral("fixturePanel"));
@@ -1323,12 +1324,19 @@ void MainWindow::buildMenus()
         refreshAll();
     });
     edit->addSeparator();
-    // The presets' Edit mode, from anywhere: ⌘E on macOS, Ctrl+E elsewhere (the Edit button of the Presets panel follows)
+    auto *controlsPage = edit->addAction(QStringLiteral("Open Controls Page"), this, [this] {
+        m_leftTabs->setCurrentWidget(m_controls);
+        m_controls->openPage();
+    });
+    controlsPage->setObjectName(QStringLiteral("controlsPageAction"));
+    controlsPage->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_E));
+    controlsPage->setShortcutContext(Qt::ApplicationShortcut);
+    // The presets' Edit mode, from anywhere: ⌘P on macOS, Ctrl+P elsewhere (the Edit button of the Presets panel follows)
     if (PresetEditor *presets = PresetEditor::instance()) {
         QAction *presetEdit = edit->addAction(QStringLiteral("Preset Edit Mode"));
         presetEdit->setObjectName(QStringLiteral("presetEditAction"));
         presetEdit->setCheckable(true);
-        presetEdit->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_E));
+        presetEdit->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_P));
         presetEdit->setShortcutContext(Qt::ApplicationShortcut);
         presetEdit->setChecked(presets->editing());
         connect(presetEdit, &QAction::toggled, presets, &PresetEditor::setEditing);

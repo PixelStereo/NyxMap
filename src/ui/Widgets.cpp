@@ -1127,6 +1127,23 @@ QPainterPath triangle(double x, double y, double w, double h, int dir) // dir +1
 }
 } // namespace
 
+QIcon fxMaskIcon(bool assigned, bool inverted)
+{
+    return drawnIcon([assigned, inverted](QPainter &p, const QColor &) {
+        const QColor dark(14, 14, 17), light(248, 248, 250);
+        const QColor ink = inverted ? dark : light;
+        p.setPen(QPen(inverted ? light : QColor(162, 162, 171), 1));
+        p.setBrush(inverted ? light : dark);
+        p.drawRoundedRect(QRectF(1.5, 3.5, 17, 13), 2.5, 2.5);
+
+        QPolygonF diamond;
+        diamond << QPointF(10, 5.5) << QPointF(15, 10) << QPointF(10, 14.5) << QPointF(5, 10);
+        p.setPen(assigned ? QPen(Qt::NoPen) : QPen(ink, 1.4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p.setBrush(assigned ? QBrush(ink) : QBrush(Qt::NoBrush));
+        p.drawPolygon(diamond);
+    });
+}
+
 QIcon transportIcon(TransportIcon kind)
 {
     return drawnIcon([kind](QPainter &p, const QColor &c) {

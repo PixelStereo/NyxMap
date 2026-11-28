@@ -241,8 +241,11 @@ ControlsPanel::ControlsPanel(Engine *engine, QUndoStack *undo, QWidget *parent) 
     add->setToolTip(QStringLiteral("Make a slider, a switch, a selector, a button or a color of your own"));
     add->setPopupMode(QToolButton::InstantPopup);
     auto *menu = new QMenu(add);
-    for (int k = 0; k < ShowControl::kKindCount; ++k)
-        menu->addAction(ShowControl::kindName(ShowControl::Kind(k)), this, [this, k] { addControl(k); })->setObjectName(QStringLiteral("controlsAdd%1").arg(k));
+    for (int k = 0; k < ShowControl::kKindCount; ++k) {
+        const auto kind = ShowControl::Kind(k);
+        const QString label = kind == ShowControl::Kind::Points ? QStringLiteral("2D Multi-ball Pad") : ShowControl::kindName(kind);
+        menu->addAction(label, this, [this, k] { addControl(k); })->setObjectName(QStringLiteral("controlsAdd%1").arg(k));
+    }
     add->setMenu(menu);
     head->addWidget(add);
     // With a browser, the panel is the remote's page (the same grid, Edit mode and widgets a phone has); the list of rows stays as the
@@ -432,6 +435,11 @@ void ControlsPanel::showEvent(QShowEvent *e)
     if (m_pageTried || !controlsweb::available()) return;
     m_pageTried = true;
     if (QSettings().value(QStringLiteral("controls/page"), true).toBool()) m_pageButton->setChecked(true);
+}
+
+void ControlsPanel::openPage()
+{
+    if (controlsweb::available()) m_pageButton->setChecked(true);
 }
 
 void ControlsPanel::showPage(bool page)

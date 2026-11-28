@@ -392,7 +392,7 @@ protected:
         p.setPen(Qt::white);
         p.drawText(badge, Qt::AlignCenter, text);
     }
-    static QString shortcutText() { return QKeySequence(Qt::CTRL | Qt::Key_E).toString(QKeySequence::NativeText); }
+    static QString shortcutText() { return QKeySequence(Qt::CTRL | Qt::Key_P).toString(QKeySequence::NativeText); }
 
 private:
     PresetEditor *m_editor;

@@ -265,6 +265,8 @@ int runXyParameterUiTests(Engine &engine, const QString &root)
     auto *mask = row ? row->findChild<QToolButton *>("fxMask") : nullptr;
     auto *red = row ? row->findChild<QToolButton *>("fxChannelR") : nullptr;
     check(speed && mask && red, "FX row has its speed, mask and channels");
+    check(mask && !mask->icon().isNull() && mask->text() == "Mask" && mask->accessibleName().contains("None"),
+          "an unassigned FX mask has a visible icon and a descriptive label");
     check(undo.count() == steps, "building the FX rows is not an edit");
     // Its switch, under the row's controls, still enables and disables it
     if (list && list->count()) {

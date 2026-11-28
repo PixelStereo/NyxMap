@@ -4493,19 +4493,29 @@ QWidget *LayerInspector::effectRowControls(int k, FxChainPanel *panel)
         h->addWidget(mix);
     }
 
-    // Mask: a chip naming the layer (◑: inverted); a click opens where it comes from
+    // Mask thumbnail and source name, with reversed luminance when inverted.
     auto *mask = new QToolButton;
     mask->setObjectName(QStringLiteral("fxMask"));
+    mask->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    mask->setIconSize(QSize(20, 20));
+    mask->setMaximumWidth(110);
     auto label = [mask](const QString &name, bool inverted) {
-        mask->setText((inverted ? QStringLiteral("◑ ") : QStringLiteral("◐ ")) + (name.isEmpty() ? QStringLiteral("—") : name));
-        mask->setStyleSheet(name.isEmpty() ? QStringLiteral("QToolButton { color:#666; padding:1px 6px; }")
-                                           : QStringLiteral("QToolButton { color:white; background:%1; border-radius:3px; "
-                                                            "padding:1px 6px; }").arg(theme::accent().darker(140).name()));
+        const bool assigned = !name.isEmpty();
+        mask->setIcon(fxMaskIcon(assigned, assigned && inverted));
+        mask->setText(assigned ? name : QStringLiteral("Mask"));
+        const QString status = !assigned ? QStringLiteral("FX Mask · None")
+            : inverted ? QStringLiteral("FX Mask · %1 (inverted)").arg(name)
+                       : QStringLiteral("FX Mask · %1").arg(name);
+        mask->setAccessibleName(status);
+        mask->setToolTip(status + QStringLiteral("\nChoose where this effect applies. White reveals the effect."));
+        mask->setStyleSheet(QStringLiteral(
+            "QToolButton { color:#f4f4f6; background:#25252a; border:1px solid %1; border-radius:4px; padding:0 5px; }"
+            "QToolButton:hover, QToolButton:focus { background:#38383f; border-color:#d2d2da; }"
+            "QToolButton:pressed { background:#18181d; }"
+            "QToolButton:disabled { color:#81818b; border-color:#4c4c55; }")
+            .arg(assigned ? theme::accent().name() : QStringLiteral("#62626e")));
     };
     label(maskName, invert);
-    mask->setMaximumWidth(110);
-    mask->setToolTip(QStringLiteral("Where this FX applies: fully where the chosen layer's picture is white, not at all "
-                                    "where it is black or transparent. Click to choose it"));
     h->addWidget(mask);
     connect(mask, &QToolButton::clicked, this, [this, mask, label, masks, stagesOf, ownEffects, selfId, maskId, maskStage,
                                                  invert, maskOnly, valid, prefix, panel, k] {
