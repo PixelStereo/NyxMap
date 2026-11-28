@@ -160,16 +160,22 @@ int main(int argc, char **argv)
     if (targetPicker && targetPicker->menu()) {
         auto *menu = targetPicker->menu();
         emit menu->aboutToShow();
-        const auto entries = menu->actions();
-        check(entries.size() >= 3 && entries[0]->text() == "OSC" && entries[1]->text() == "DMX" &&
-              entries[2]->text() == "MIDI", "network and MIDI outputs are at the root of the target menu");
-        const auto hasOutput = [&entries](int index, const QString &name) {
-            if (index >= entries.size() || !entries[index]->menu()) return false;
-            for (auto *action : entries[index]->menu()->actions())
+        const auto submenu = [menu](const QString &name) -> QMenu * {
+            for (auto *action : menu->actions())
+                if (action->text() == name && action->menu()) return action->menu();
+            return nullptr;
+        };
+        auto *dmxMenu = submenu("DMX");
+        auto *midiMenu = submenu("MIDI");
+        check(submenu("Devices") && submenu("OSC") && dmxMenu && midiMenu,
+              "Devices, OSC, DMX and MIDI are at the root of the target menu");
+        const auto hasOutput = [](QMenu *outputMenu, const QString &name) {
+            if (!outputMenu) return false;
+            for (auto *action : outputMenu->actions())
                 if (action->text() == name && action->isEnabled()) return true;
             return false;
         };
-        check(hasOutput(1, "Stage lights") && hasOutput(2, "Stage MIDI"),
+        check(hasOutput(dmxMenu, "Stage lights") && hasOutput(midiMenu, "Stage MIDI"),
               "DMX and MIDI menus show the outputs configured in Composition");
     }
 
