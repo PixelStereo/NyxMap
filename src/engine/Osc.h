@@ -23,20 +23,18 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QObject>
-#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QTimer>
 #include <QVariant>
 #include <functional>
 #include <map>
+#include <memory>
 #include <vector>
 
 class Engine;
-class QTcpServer;
-class QTcpSocket;
 class QUdpSocket;
-namespace pxs { class MdnsResponder; }
+namespace pxs { class MdnsResponder; class QueryServer; }
 
 #include "OscCodec.h"
 #include <pxs/Convert.h>
@@ -136,28 +134,15 @@ signals:
     void eventObserved(const QString &channel, const QString &message);
 
 private:
-    struct Client {
-        QTcpSocket *socket = nullptr;
-        QByteArray buffer;
-        bool websocket = false;
-        QSet<QString> listening;
-        QHash<QString, QVariantList> sent; // last value sent per listened path
-    };
     void onUdp();
-    void onConnection();
-    void onData(QTcpSocket *s);
-    void onWsFrame(Client &c, int opcode, const QByteArray &payload);
-    void sendWs(QTcpSocket *s, int opcode, const QByteArray &payload);
     void pushListened();
-    QByteArray httpAnswer(const QByteArray &method, const QByteArray &target, int *status);
 
     Engine *m_e;
     OscNamespace m_ns;
     QUdpSocket *m_udp = nullptr;
-    QTcpServer *m_http = nullptr;
-    QHash<QTcpSocket *, Client> m_clients;
+    std::unique_ptr<pxs::QueryServer> m_query;
     QTimer m_listenTimer;
-    QString m_name, m_status;
-    QString m_treeSignature; // tree last seen by the WebSocket clients (PATH_CHANGED when it changes)
+    QString m_status;
+    int m_publishedGeneration = 0;
     pxs::MdnsResponder *m_mdns = nullptr;
 };

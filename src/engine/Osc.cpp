@@ -5,16 +5,13 @@
 #include "Engine.h"
 #include <pxs/MdnsResponder.h>
 #include <pxs/QueryServer.h>
-#include <pxs/core/tree/oscquery_server.h>
-#include <WebSocketFrame.h>
+#include <pxs/core/tree/oscquery.h>
 
 #include <QFileInfo>
 #include <QHostAddress>
 #include <QHostInfo>
 #include <QJsonDocument>
 #include <QNetworkDatagram>
-#include <QTcpServer>
-#include <QTcpSocket>
 #include <QUdpSocket>
 #include <algorithm>
 #include <cmath>
@@ -1352,8 +1349,15 @@ void OscNamespace::addLayer(const QString &P, quint64 id)
 // Server
 // ---------------------------------------------------------------------------
 
-OscServer::OscServer(Engine *engine, QObject *parent) : QObject(parent), m_e(engine), m_ns(engine), m_listenTimer(this)
+OscServer::OscServer(Engine *engine, QObject *parent)
+    : QObject(parent), m_e(engine), m_ns(engine), m_query(std::make_unique<pxs::QueryServer>(&m_ns.tree(), this)), m_listenTimer(this)
 {
+    m_query->setBeforeAnswer([this] { m_ns.refresh(); });
+    connect(m_query.get(), &pxs::QueryServer::packetReceived, this, &OscServer::handlePacket);
+    QJsonObject extensions = pxs::convert::jsonObjectFromText(pxs::core::tree::defaultExtensionsJson());
+    extensions.insert("LISTEN", true);
+    extensions.insert("PATH_CHANGED", true);
+    m_query->setExtensions(extensions);
     m_listenTimer.setInterval(40);
     connect(&m_listenTimer, &QTimer::timeout, this, &OscServer::pushListened);
 }
@@ -1363,7 +1367,6 @@ OscServer::~OscServer() { stop(); }
 bool OscServer::start(quint16 oscPort, quint16 queryPort, const QString &name, bool announce, const QString &listen)
 {
     stop();
-    m_name = name;
     QHostAddress udpAddress(QHostAddress::AnyIPv4), tcpAddress(QHostAddress::Any);
     if (!listen.isEmpty()) {
         const QHostAddress a(listen);
@@ -1376,18 +1379,23 @@ bool OscServer::start(quint16 oscPort, quint16 queryPort, const QString &name, b
     }
     m_udp = new QUdpSocket(this);
     if (!m_udp->bind(udpAddress, oscPort)) {
-        m_status = QStringLiteral("OSC: UDP port %1 unavailable (%2)").arg(oscPort).arg(m_udp->errorString());
+        const QString error = m_udp->errorString();
         stop();
+        m_status = QStringLiteral("OSC: UDP port %1 unavailable (%2)").arg(oscPort).arg(error);
         return false;
     }
     connect(m_udp, &QUdpSocket::readyRead, this, &OscServer::onUdp);
-    m_http = new QTcpServer(this);
-    if (!m_http->listen(tcpAddress, queryPort)) {
-        m_status = QStringLiteral("OSCQuery: TCP port %1 unavailable (%2)").arg(queryPort).arg(m_http->errorString());
+    m_query->setBindAddress(tcpAddress);
+    m_query->setName(name);
+    m_query->setOscPort(this->oscPort());
+    if (!m_query->start(queryPort)) {
+        const QString error = m_query->listenErrorString();
         stop();
+        m_status = QStringLiteral("OSCQuery: TCP port %1 unavailable (%2)").arg(queryPort).arg(error);
         return false;
     }
-    connect(m_http, &QTcpServer::newConnection, this, &OscServer::onConnection);
+    m_query->setHostInfoMore(QJsonObject{{"WS_PORT", int(this->queryPort())}});
+    m_publishedGeneration = m_ns.generation();
     m_listenTimer.start();
     m_status = QStringLiteral("OSC on UDP %1 · OSCQuery on http://%3:%2")
                    .arg(this->oscPort())
@@ -1409,18 +1417,17 @@ void OscServer::stop()
     delete m_mdns; // goodbye sent
     m_mdns = nullptr;
     m_listenTimer.stop();
-    for (auto &c : m_clients) c.socket->deleteLater();
-    m_clients.clear();
+    m_query->stop();
+    m_query->setOscPort(0);
+    m_query->setHostInfoMore(QJsonObject{{"WS_PORT", 0}});
     delete m_udp;
     m_udp = nullptr;
-    delete m_http;
-    m_http = nullptr;
     m_status = QStringLiteral("OSC off");
 }
 
-bool OscServer::isRunning() const { return m_udp && m_http; }
+bool OscServer::isRunning() const { return m_udp && m_query->isListening(); }
 quint16 OscServer::oscPort() const { return m_udp ? m_udp->localPort() : 0; }
-quint16 OscServer::queryPort() const { return m_http ? m_http->serverPort() : 0; }
+quint16 OscServer::queryPort() const { return m_query->port(); }
 
 void OscServer::onUdp()
 {
@@ -1542,173 +1549,24 @@ bool OscServer::handleMessage(const osc::Message &m)
 
 QByteArray OscServer::httpGet(const QString &target, int *status)
 {
-    return httpAnswer("GET", target.toUtf8(), status);
-}
-
-QByteArray OscServer::httpAnswer(const QByteArray &method, const QByteArray &target, int *status)
-{
-    m_ns.refresh();
-    pxs::core::tree::ServerInfo info;
-    info.name = toUtf8(m_name);
-    info.oscPort = oscPort();
-    QJsonObject extensions = pxs::convert::jsonObjectFromText(info.extensionsJson);
-    extensions.insert("LISTEN", true);
-    extensions.insert("PATH_CHANGED", true);
-    info.extensionsJson = pxs::convert::toJsonText(extensions);
-    info.moreJson = pxs::convert::toJsonText(QJsonObject{{"WS_PORT", int(queryPort())}});
-    const auto answer = pxs::core::tree::answerRequest(m_ns.tree(), info, method.toStdString(), target.toStdString());
+    const auto answer = m_query->answer(QStringLiteral("GET"), target.toUtf8());
     *status = answer.status;
-    return QByteArray::fromStdString(answer.body);
-}
-
-void OscServer::onConnection()
-{
-    while (QTcpSocket *s = m_http->nextPendingConnection()) {
-        Client c;
-        c.socket = s;
-        m_clients.insert(s, c);
-        connect(s, &QTcpSocket::readyRead, this, [this, s] { onData(s); });
-        connect(s, &QTcpSocket::disconnected, this, [this, s] {
-            m_clients.remove(s);
-            s->deleteLater();
-        });
-    }
-}
-
-static QByteArray httpResponse(int status, const QByteArray &body, bool head = false)
-{
-    static const QHash<int, QByteArray> text = {{200, "OK"}, {204, "No Content"}, {400, "Bad Request"}, {403, "Forbidden"},
-                                                {404, "Not Found"}, {405, "Method Not Allowed"}};
-    QByteArray r = "HTTP/1.1 " + QByteArray::number(status) + ' ' + text.value(status, "Error") + "\r\n";
-    if (status == 200) r += "Content-Type: application/json; charset=utf-8\r\n";
-    r += "Content-Length: " + QByteArray::number(body.size()) + "\r\n";
-    r += "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, HEAD, OPTIONS\r\nConnection: close\r\n\r\n";
-    return head ? r : r + body;
-}
-
-void OscServer::onData(QTcpSocket *s)
-{
-    auto it = m_clients.find(s);
-    if (it == m_clients.end()) return;
-    Client &c = *it;
-    c.buffer += s->readAll();
-    if (!c.websocket) {
-        const int end = c.buffer.indexOf("\r\n\r\n");
-        if (end < 0) {
-            if (c.buffer.size() > 65536) s->disconnectFromHost();
-            return;
-        }
-        const QList<QByteArray> lines = c.buffer.left(end).split('\n');
-        c.buffer.remove(0, end + 4);
-        const QList<QByteArray> request = lines.value(0).trimmed().split(' ');
-        QHash<QByteArray, QByteArray> headers;
-        for (int k = 1; k < lines.size(); ++k) {
-            const int colon = lines[k].indexOf(':');
-            if (colon > 0) headers.insert(lines[k].left(colon).trimmed().toLower(), lines[k].mid(colon + 1).trimmed());
-        }
-        if (request.value(0) == "GET" && headers.value("upgrade").toLower() == "websocket") {
-            if (!pxs::QueryServer::originAllowed(headers.value("origin"))) {
-                s->write(httpResponse(403, {}));
-                s->disconnectFromHost();
-                return;
-            }
-            const QByteArray accept = pxs::websocket::acceptKey(headers.value("sec-websocket-key"));
-            s->write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
-                     "Sec-WebSocket-Accept: " + accept + "\r\n\r\n");
-            c.websocket = true;
-            m_treeSignature = m_ns.signature(); // the client has just read the tree
-        } else {
-            int status = 400;
-            const QByteArray body = request.size() < 2 ? QByteArray() : httpAnswer(request[0], request[1], &status);
-            s->write(httpResponse(status, body, request.value(0) == "HEAD"));
-            s->disconnectFromHost();
-            return;
-        }
-    }
-    // WebSocket frames (client frames are masked)
-    while (c.websocket) {
-        int opcode = 0;
-        QByteArray payload;
-        const int decoded = pxs::websocket::decode(c.buffer, &opcode, &payload, 16 * 1024 * 1024);
-        if (decoded <= 0) {
-            if (decoded < 0) s->disconnectFromHost();
-            return;
-        }
-        onWsFrame(c, opcode, payload);
-        if (!m_clients.contains(s)) return;
-    }
-}
-
-void OscServer::sendWs(QTcpSocket *s, int opcode, const QByteArray &payload)
-{
-    s->write(pxs::websocket::encode(opcode, payload));
-}
-
-void OscServer::onWsFrame(Client &c, int opcode, const QByteArray &payload)
-{
-    switch (opcode) {
-    case 1: { // text: LISTEN / IGNORE
-        const auto [cmd, data] = pxs::core::tree::parseCommand(payload.toStdString());
-        const QString path = fromUtf8(data);
-        if (cmd == "LISTEN") {
-            c.listening.insert(path);
-            c.sent.remove(path);
-        } else if (cmd == "IGNORE") {
-            c.listening.remove(path);
-            c.sent.remove(path);
-        }
-        break;
-    }
-    case 2: handlePacket(payload); break; // binary: OSC
-    case 8:
-        sendWs(c.socket, 8, {});
-        c.socket->disconnectFromHost();
-        break;
-    case 9: sendWs(c.socket, 10, payload); break; // ping -> pong
-    default: break;
-    }
+    return answer.body;
 }
 
 void OscServer::pushListened()
 {
-    // The tree changed (layer added, renamed, source or effect changed): clients fetch it again
-    bool websockets = false;
-    for (const Client &c : std::as_const(m_clients)) websockets |= c.websocket;
-    if (websockets) {
-        const QString sig = m_ns.signature();
-        if (sig != m_treeSignature) {
-            m_treeSignature = sig;
-            const QByteArray msg = QJsonDocument(QJsonObject{{"COMMAND", "PATH_CHANGED"}, {"DATA", "/"}}).toJson(QJsonDocument::Compact);
-            for (const Client &c : std::as_const(m_clients))
-                if (c.websocket) sendWs(c.socket, 1, msg);
-        }
-    }
-    bool anyone = false;
-    for (const Client &c : std::as_const(m_clients)) anyone |= c.websocket && !c.listening.isEmpty();
-    if (!anyone) return;
+    if (!m_query->webSocketCount()) return;
     m_ns.refresh();
-    QHash<QString, QVariantList> values; // read once per path
-    for (Client &c : m_clients) {
-        if (!c.websocket) continue;
-        for (const QString &p : std::as_const(c.listening)) {
-            const OscNode *n = m_ns.node(p);
-            if (!n || !n->get) continue;
-            if (!values.contains(p)) values.insert(p, toVariants(n->get()));
-            const QVariantList v = values.value(p);
-            if (v.isEmpty() || c.sent.value(p) == v) continue;
-            c.sent.insert(p, v);
-            osc::Message m;
-            m.address = p;
-            for (int k = 0; k < n->type.size(); ++k) {
-                const QChar t = n->type[k];
-                m.types += (t == 'T' || t == 'F') ? (v.value(k).toBool() ? QChar('T') : QChar('F')) : t;
-            }
-            m.args = v;
-                if (EventLog::instance().wants(EventLog::OscOut)) {
-                    EventLog::instance().append(EventLog::OscOut, m.address);
-                    emit eventObserved(QStringLiteral("OSC OUT"), m.address);
-                }
-            sendWs(c.socket, 2, osc::encode(m));
+    if (m_ns.generation() != m_publishedGeneration) {
+        m_publishedGeneration = m_ns.generation();
+        m_query->broadcast(QByteArrayLiteral("{\"COMMAND\":\"PATH_CHANGED\",\"DATA\":\"/\"}"));
+    }
+    const QStringList sent = m_query->pollSubscriptions();
+    if (EventLog::instance().wants(EventLog::OscOut)) {
+        for (const QString &address : sent) {
+            EventLog::instance().append(EventLog::OscOut, address);
+            emit eventObserved(QStringLiteral("OSC OUT"), address);
         }
     }
 }
