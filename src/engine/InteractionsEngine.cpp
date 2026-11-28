@@ -1,7 +1,7 @@
 // Engine: the interactions (Interactions.h) — their list, their sources' events, and the chains run each frame.
 #include "EngineInternal.h"
 #include "InteractionOutput.h"
-#include "Midi.h"
+#include <pxs/Midi.h>
 #include "EventLog.h"
 #include "OscCodec.h"
 #include "SequenceFeedback.h"
@@ -428,40 +428,6 @@ std::vector<InteractionEvent> Engine::takeLearnedInteractions(int settleMs)
 // MIDI: every input of the machine, open while a MIDI interaction is there (or while learning); looked for again every
 // few seconds (a controller plugged in)
 // ---------------------------------------------------------------------------
-static bool parseMidi(const uint8_t *m, size_t n, InteractionEvent &e)
-{
-    if (n < 2) return false;
-    const int status = m[0] & 0xF0;
-    e.source = InteractionSource::Midi;
-    e.channel = (m[0] & 0x0F) + 1;
-    switch (status) {
-    case 0xB0:
-        if (n < 3) return false;
-        e.message = MidiMessageKind::ControlChange;
-        e.number = m[1] & 0x7F;
-        e.value = (m[2] & 0x7F) / 127.0;
-        return true;
-    case 0x90:
-    case 0x80:
-        if (n < 3) return false;
-        e.message = MidiMessageKind::Note;
-        e.number = m[1] & 0x7F;
-        e.value = status == 0x90 ? (m[2] & 0x7F) / 127.0 : 0.0; // note on at velocity 0: off
-        return true;
-    case 0xE0:
-        if (n < 3) return false;
-        e.message = MidiMessageKind::PitchBend;
-        e.value = (((m[2] & 0x7F) << 7) | (m[1] & 0x7F)) / 16383.0;
-        return true;
-    case 0xC0:
-        e.message = MidiMessageKind::ProgramChange;
-        e.number = m[1] & 0x7F;
-        e.value = 1.0; // a program chosen: up (then down at once, below)
-        return true;
-    default: return false;
-    }
-}
-
 void Engine::requestMidiInputUpdate()
 {
     if (!m_midiUpdatePending.exchange(true))
@@ -495,43 +461,7 @@ void Engine::updateMidiInputs()
         std::lock_guard<std::mutex> lk(m_interactionEventsMutex);
         wanted = wanted || m_interactionLearn;
     }
-    if (!wanted) {
-        m_midiIns.clear();
-        m_midiInNames.clear();
-        if (m_midiScan) m_midiScan->stop();
-        return;
-    }
-    if (!m_midiScan) {
-        m_midiScan = new QTimer(this);
-        m_midiScan->setObjectName(QStringLiteral("midiInputScan"));
-        m_midiScan->setInterval(2000);
-        connect(m_midiScan, &QTimer::timeout, this, &Engine::updateMidiInputs);
-    }
-    if (!m_midiScan->isActive()) m_midiScan->start();
-    const QStringList names = midi::inputNames();
-    // m_midiInNames: every port tried, opened or not. A port that failed to open is not retried every scan (that
-    // would close and reopen all the others, losing their messages), only when the list of devices changes
-    if (names == m_midiInNames) return;
-    m_midiIns.clear();
-    m_midiInNames.clear();
-    for (const QString &name : names) {
-        auto in = std::make_unique<midi::Input>();
-        QString err;
-        const bool ok = in->open(name, [this, name](const uint8_t *m, size_t n) {
-            InteractionEvent e;
-            e.port = name;
-            if (!parseMidi(m, n, e)) return;
-            feedInteraction(e);
-            if (e.message == MidiMessageKind::ProgramChange) { // an action: up, then down
-                e.value = 0.0;
-                feedInteraction(e);
-            }
-        }, &err);
-        if (!ok) continue;
-        m_midiIns.push_back(std::move(in));
-        m_midiInNames << name;
-    }
-    m_midiInNames = names; // the ones that could not be opened are not tried again until the list changes
+    m_midiInputs->setWanted(wanted);
 }
 
 // ---------------------------------------------------------------------------
@@ -629,8 +559,7 @@ bool Engine::writeInteractionOutput(const QString &path, double value, bool acti
         }
     } else if (output.channel >= 1 && output.channel <= 16 && output.number >= 0 && output.number <= 127) {
         const auto id = output.destination.toULongLong();
-        m_tcRouter->sendMidi(id, {uint8_t(0xb0 | (output.channel - 1)), uint8_t(output.number),
-                                  uint8_t(std::lround(std::clamp(value, 0.0, 1.0) * 127))});
+        m_tcRouter->sendMidi(id, pxs::midi::controlChange(output.channel, output.number, value));
     }
     return true;
 }

@@ -1,5 +1,5 @@
 // A virtual MIDI output (the timecode's MTC to other software): made, seen by others, sent to, without an error.
-#include "Midi.h"
+#include <pxs/Midi.h>
 
 #include <QCoreApplication>
 #include <QFile>
@@ -9,7 +9,7 @@
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
-    if (!midi::available() || !midi::virtualPorts()) {
+    if (!pxs::midi::available() || !pxs::midi::virtualPorts()) {
         std::printf("midi_virtual: skipped (no virtual MIDI ports here)\n");
         return 0;
     }
@@ -27,13 +27,13 @@ int main(int argc, char **argv)
         }
     };
     const QString name = QStringLiteral("NyxMap virtual test %1").arg(QCoreApplication::applicationPid());
-    midi::Output out;
+    pxs::midi::Output out;
     QString err;
     check(out.openVirtual(name, &err), qPrintable(QStringLiteral("a virtual port is made (%1)").arg(err)));
     check(err.isEmpty() && out.name() == name, "no error reported, its name kept");
     bool seen = false;
     for (int i = 0; i < 50 && !seen; ++i) { // other software sees it as a port to receive from
-        seen = midi::inputNames().join('\n').contains(name);
+        seen = pxs::midi::inputNames().join('\n').contains(name);
         if (!seen) QThread::msleep(20);
     }
     check(seen, "other software sees it");

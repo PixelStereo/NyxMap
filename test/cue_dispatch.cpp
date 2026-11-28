@@ -1,4 +1,5 @@
 #include "Engine.h"
+#include <pxs/Midi.h>
 #include <QApplication>
 #include <QTimer>
 #include <QElapsedTimer>
@@ -58,20 +59,23 @@ QApplication app(argc,argv);
     Interaction midi = Interaction::made(InteractionSource::Midi);
     midi.layer = surfaceId; midi.param = "opacity";
     midi.id = engine.addInteraction(midi);
-    auto *scan = engine.findChild<QTimer *>("midiInputScan");
-    check(scan && scan->thread() == app.thread() && scan->isActive(), "MIDI scan belongs to the GUI thread");
+    pxs::midi::Inputs *scan = nullptr;
+    for (QObject *child : engine.children()) {
+        if ((scan = dynamic_cast<pxs::midi::Inputs *>(child))) break;
+    }
+    check(scan && scan->thread() == app.thread() && scan->wanted(), "MIDI scan belongs to the GUI thread");
     engine.removeInteraction(midi.id);
-    check(scan && !scan->isActive(), "removing the last MIDI definition stops scanning");
+    check(scan && !scan->wanted(), "removing the last MIDI definition stops scanning");
     Engine::Preset preset; preset.name = "MIDI preset"; preset.fade = 0; preset.interactions = {midi};
     const auto presetId = engine.preset(engine.addPreset(preset)).id;
     engine.sequencer().clear();
     Sequencer::Sequence sequence; Sequencer::Step step; step.preset = presetId; step.preWait = .02;
     sequence.steps = {step}; engine.sequencer().add(sequence); engine.sequencer().go();
     wait.restart();
-    while ((!scan || !scan->isActive() || engine.interactions().empty()) && wait.elapsed() < 5000) {
+    while ((!scan || !scan->wanted() || engine.interactions().empty()) && wait.elapsed() < 5000) {
         app.processEvents(); QThread::msleep(1);
     }
-    check(scan && scan->thread() == app.thread() && scan->isActive() && !engine.interactions().empty(),
+    check(scan && scan->thread() == app.thread() && scan->wanted() && !engine.interactions().empty(),
           "a delayed preset safely restarts MIDI scanning on its owner thread");
     engine.sequencer().shutdownClock();
     const QString master = QStringLiteral("interaction/%1/master").arg(midi.id);

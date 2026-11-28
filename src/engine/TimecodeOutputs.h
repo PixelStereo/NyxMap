@@ -90,7 +90,7 @@ private:
     int64_t m_held = -1;     // the frame last sent as a full frame while held (-1: none)
 };
 
-namespace midi {
+namespace pxs::midi {
 class Output;
 }
 namespace tcaudio {
@@ -120,7 +120,7 @@ public:
 
 private:
     struct Port {
-        std::unique_ptr<midi::Output> out;
+        std::unique_ptr<pxs::midi::Output> out;
         QString error;
         qint64 triedAt = -1;
     };

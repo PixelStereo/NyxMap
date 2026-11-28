@@ -3,7 +3,7 @@
 #include "Naming.h"
 #include "EngineInternal.h"
 #include <pxs/ChangeFeed.h>
-#include "Midi.h"
+#include <pxs/Midi.h>
 #include "ImageFile.h"
 #include "Psd.h"
 
@@ -2743,9 +2743,9 @@ void Engine::removeAudioChannelOutput(quint64 id)
 
 QString Engine::audioChannelOutputStatus(quint64 id) const { return m_tcRouter->audioStatus(id); }
 
-QStringList Engine::midiPorts() { return midi::outputNames(); }
-QStringList Engine::midiInputPorts() { return midi::inputNames(); }
-bool Engine::midiVirtualPorts() { return midi::virtualPorts(); }
+QStringList Engine::midiPorts() { return pxs::midi::outputNames(); }
+QStringList Engine::midiInputPorts() { return pxs::midi::inputNames(); }
+bool Engine::midiVirtualPorts() { return pxs::midi::virtualPorts(); }
 QStringList Engine::audioOutputDevices() { return AudioOutput::deviceNames(); }
 QStringList Engine::audioInputDevices() { return AudioOutput::captureDeviceNames(); }
 

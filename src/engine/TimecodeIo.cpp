@@ -5,7 +5,7 @@
 // And the audio devices of the timecode, inputs and outputs (tcaudio::Device), used by the LTC outputs too.
 #include "TimecodeIo.h"
 #include "DeckLink.h"
-#include "Midi.h"
+#include <pxs/Midi.h>
 #include "NetVideo.h"
 
 #include <miniaudio.h>
@@ -123,7 +123,7 @@ struct TimecodeIo::Impl {
     std::unique_ptr<ltc::Decoder> ltcDecoder;
 
     // MTC
-    std::unique_ptr<midi::Input> mtcIn;
+    std::unique_ptr<pxs::midi::Input> mtcIn;
     mtc::Decoder mtcDecoder;
 
     // ATC
@@ -206,7 +206,7 @@ TimecodeIo::TimecodeIo(TimecodeClock *clock, const TimecodeSettings &s) : d(std:
         break;
     }
     case Src::Mtc:
-        d->mtcIn = std::make_unique<midi::Input>();
+        d->mtcIn = std::make_unique<pxs::midi::Input>();
         if (d->mtcIn->open(s.input, [this](const uint8_t *m, size_t n) {
                 if (d->mtcDecoder.push(m, n))
                     if (std::optional<Timecode> tc = d->mtcDecoder.current()) d->clock->received(*tc);

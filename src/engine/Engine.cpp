@@ -12,7 +12,7 @@
 #include <QUuid>
 #include "RhiDevice.h"
 #include "RhiRenderer.h"
-#include "Midi.h"
+#include <pxs/Midi.h>
 #include "ProcessMemory.h"
 #include "VideoBudget.h"
 #include "VideoDecoder.h"
@@ -87,6 +87,15 @@ Engine::Engine(QObject *parent)
     : QObject(parent), m_audio(std::make_unique<AudioOutput>()), m_sequencerHost(makeSequencerHost(*this)), m_sequencer(new Sequencer(*m_sequencerHost, m_mutex, this)),
       m_tcRouter(std::make_unique<TimecodeRouter>())
 {
+    // Set the shared MIDI client name once, before any ports are opened.
+    static const bool midiNamed = [] {
+        pxs::midi::setClientName(QStringLiteral("NyxMap"));
+        return true;
+    }();
+    Q_UNUSED(midiNamed);
+    m_midiInputs = std::make_unique<pxs::midi::Inputs>(this);
+    m_midiInputs->setCallback([this](const InteractionEvent &event) { feedInteraction(event); });
+
     // The sACN identity is NyxMap's own, and stays the same from one run to the next
     if (!QCoreApplication::organizationName().isEmpty()) {
         QSettings s;
@@ -111,7 +120,7 @@ void Engine::stopAudio() { m_audio->stop(); }
 Engine::~Engine()
 {
     m_sequencer->shutdownClock(); // the cue clock recalls snapshots on its own thread: stopped before anything goes
-    m_midiIns.clear(); // their callbacks feed the interactions: stopped first
+    m_midiInputs.reset(); // their callbacks feed the interactions: stopped first
     shutdown();
 }
 
