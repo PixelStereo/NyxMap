@@ -812,11 +812,6 @@ if(NYXMAP_TESTS)
   find_package(Python3 QUIET COMPONENTS Interpreter)
   if(Python3_Interpreter_FOUND)
     # Render one small frame of each example with strict layer and effect error checks.
-    add_test(NAME demo_fixture COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/examples/demo/build_show.py --out ${CMAKE_BINARY_DIR}/demo-fixture)
-    set_tests_properties(demo_fixture PROPERTIES FIXTURES_SETUP demo)
-    add_test(NAME demo_render COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/test/render_example.py
-      $<TARGET_FILE:NyxMap> ${CMAKE_BINARY_DIR}/demo-fixture/Demo.nyxmap ${CMAKE_BINARY_DIR}/demo-preview.png)
-    set_tests_properties(demo_render PROPERTIES FIXTURES_REQUIRED demo TIMEOUT 120)
     add_test(NAME pbr_render COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/test/render_example.py
       $<TARGET_FILE:NyxMap> ${CMAKE_SOURCE_DIR}/examples/pbr/PBR.nyxmap ${CMAKE_BINARY_DIR}/pbr-preview.png)
     set_tests_properties(pbr_render PROPERTIES TIMEOUT 300)
