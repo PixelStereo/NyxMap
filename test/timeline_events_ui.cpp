@@ -2,11 +2,14 @@
 // step), Delete removes the selected one; a flag that sets a switch shows its value.
 #include "AnimEditor.h"
 #include "EngineInternal.h"
+#include "InteractionOutput.h"
 #include "TimelinePanel.h"
 #include "Widgets.h"
 #include <QApplication>
 #include <QKeyEvent>
 #include <QMouseEvent>
+#include <QMenu>
+#include <QPushButton>
 #include <QUndoStack>
 #include <cstdio>
 
@@ -97,6 +100,42 @@ int main(int argc, char **argv)
         app.processEvents();
         const auto k = engine.animation(engine.indexOfAnimation(sid)).tracks.front().keys;
         check(k.size() == 2 && k[1].v == 1, "a new flag on a switch sets the other state");
+    }
+    pxs::devices::Device fixture;
+    fixture.kind = pxs::devices::Kind::Dmx;
+    fixture.name = "Fixture";
+    pxs::devices::Address dimmer;
+    dimmer.path = "/light/dimmer";
+    fixture.addresses = {dimmer};
+    const quint64 deviceId = engine.devices().add(fixture);
+    auto *picker = editor.findChild<QPushButton *>("timelineParameter");
+    QMenu *menu = picker ? picker->menu() : nullptr;
+    if (menu) emit menu->aboutToShow();
+    const auto action = [](QMenu *parent, const QString &label) -> QAction * {
+        if (parent)
+            for (auto *item : parent->actions())
+                if (item->text() == label) return item;
+        return nullptr;
+    };
+    const auto submenu = [&action](QMenu *parent, const QString &label) -> QMenu * {
+        auto *item = action(parent, label);
+        return item ? item->menu() : nullptr;
+    };
+    auto *destination = action(submenu(submenu(submenu(menu, "Devices"), "Fixture"), "light"), "dimmer");
+    check(destination != nullptr, "the timeline picker groups device parameters by address");
+    if (destination) {
+        destination->trigger();
+        const int index = engine.indexOfAnimation(sid);
+        auto edited = engine.animation(index);
+        auto &target = edited.tracks.front();
+        const auto output = InteractionOutput::fromPath(target.param);
+        check(!target.event && target.layer == 0 && output.destination.toULongLong() == deviceId && output.address == "/light/dimmer",
+              "selecting a device creates a scalar track with its complete address");
+        target.keys = {AnimKey{0, 128, 3}};
+        engine.setAnimation(index, edited);
+        engine.controlAnimation(sid, AnimAction::Play);
+        double value = 0;
+        check(engine.animParamValue(0, target.param, &value) && value == 128, "the timeline drives the device in native DMX units");
     }
     std::printf("timeline_events_ui: %d failures\n", failures);
     return failures ? 1 : 0;

@@ -3,6 +3,8 @@
 #include "Engine.h"
 #include "AnimEditor.h"
 #include "InteractionPanel.h"
+#include "InteractionOutput.h"
+#include <QJsonArray>
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
 #include <QDropEvent>
@@ -339,6 +341,29 @@ int main(int argc, char **argv)
             auto *activity = qobject_cast<TimelineActivity *>(pages->currentWidget());
             check(activity && !activity->rows().empty(), "fold all retains timeline overview");
         }
+    }
+    {
+        Engine routing;
+        const QString name = QStringLiteral("Offline OSCQuery fixture");
+        QJsonObject remembered{{"kind", "oscquery"}, {"name", name},
+                               {"host", "127.0.0.1"}, {"port", 12345}};
+        routing.devices().fromJson(QJsonObject{{"ids", QJsonObject{{"oscquery:" + name, 42}}},
+                                               {"remembered_oscquery", QJsonArray{remembered}}});
+        check(routing.devices().find(42) && routing.devices().all().empty(),
+              "an absent OSCQuery device without mappings stays hidden");
+
+        Interaction interaction;
+        interaction.param = InteractionOutput{QStringLiteral("device"), QStringLiteral("42"),
+                                              QStringLiteral("/level"), {}}.path();
+        const auto id = routing.addInteraction(interaction);
+        settle();
+        check(routing.devices().all().size() == 1 && !routing.devices().online(42),
+              "adding a mapping keeps its absent OSCQuery device visible before saving");
+
+        routing.removeInteraction(id);
+        settle();
+        check(routing.devices().all().empty(),
+              "removing the last mapping hides the absent OSCQuery device before saving");
     }
     return failures ? 1 : 0;
 }

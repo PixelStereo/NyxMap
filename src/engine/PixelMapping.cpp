@@ -206,7 +206,7 @@ void Engine::stepPixelMapping()
         m_fixtureLooks.clear();
         m_fixtureDmx.clear();
     }
-    const bool deviceLevels = !m_deviceDmxActions.empty() || !m_deviceDmx.empty();
+    const bool deviceLevels = !m_deviceDmxActions.empty() || !m_deviceDmx.empty() || !m_timelineDeviceDmx.empty();
     if (got || m_fixturePoints.empty() || !m_actionDmx.empty() || !m_interactionDmx.empty() || deviceLevels || m_hadInteractionDmx) {
         m_hadInteractionDmx = !m_interactionDmx.empty() || deviceLevels;
         auto frame = m_fixtureDmx;
@@ -227,7 +227,7 @@ void Engine::stepPixelMapping()
         }
         if (deviceLevels) {
             std::map<int, QByteArray> levels, masks;
-            for (const auto *values : {&m_deviceDmxActions, &m_deviceDmx}) {
+            for (const auto *values : {&m_timelineDeviceDmx, &m_deviceDmxActions, &m_deviceDmx}) {
                 for (const auto &[key, value] : *values) {
                     const auto found = m_dmxDevices.find(key.first);
                     if (found == m_dmxDevices.end()) continue;
@@ -238,7 +238,8 @@ void Engine::stepPixelMapping()
                     if (!channel) continue;
                     auto &universe = levels.try_emplace(device.universe, 512, char(0)).first->second;
                     auto &mask = masks.try_emplace(device.universe, 512, char(0)).first->second;
-                    const double level = value * pxs::core::device::nativeMaximum(device.kind, *address);
+                    const double level = values == &m_timelineDeviceDmx ? value
+                        : value * pxs::core::device::nativeMaximum(device.kind, *address);
                     if (pxs::core::device::writeDmx(device, *address, level,
                             reinterpret_cast<std::uint8_t *>(universe.data()), std::size_t(universe.size())))
                         for (int i = channel - 1; i < channel - 1 + width; ++i) mask[i] = 1;

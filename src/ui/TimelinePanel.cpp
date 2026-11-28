@@ -1,3 +1,5 @@
+#include <pxs/DeviceTargetMenu.h>
+#include "InteractionOutput.h"
 #include "Naming.h"
 #include "TimelinePanel.h"
 #include "ShowMenus.h"
@@ -214,6 +216,24 @@ void TimelineTrackRow::fillParams()
     QMenu *menu = m_param->menu();
     showmenu::clearMenu(menu);
     showmenu::fillOwners(menu, m_e, [this](QMenu *into, const showmenu::Owner &owner) { fillOwner(into, owner); });
+    const auto current = InteractionOutput::fromPath(track().param);
+    m_e->devices().startDiscovery();
+    pxs::devices::addDeviceTargets(menu->addMenu(QStringLiteral("Devices")), m_e->devices(), this,
+        [this](quint64 id, const ParamInfo &p) {
+            const InteractionOutput output{QStringLiteral("device"), QString::number(id), p.path, {}};
+            auto &t = track();
+            t.layer = 0;
+            t.param = output.path();
+            t.event = t.color = false;
+            t.axes.clear();
+            t.center = (p.lo + p.hi) / 2;
+            t.amplitude = (p.hi - p.lo) / 2;
+            double value = t.center;
+            m_e->animParamValue(0, t.param, &value);
+            t.keys = {AnimKey{0, value, 3}};
+            fill();
+            changed();
+        }, current.destination.toULongLong(), current.address);
 }
 
 // What a track can drive of one owner: the actions its flags fire, the values they set, the points, the colors, the numbers
@@ -345,6 +365,11 @@ void TimelineTrackRow::fill()
     const AnimTrack &t = track();
     m_on->setChecked(t.enabled);
     QString label = t.param.isEmpty() ? QStringLiteral("(choose a parameter)") : showmenu::valueLabel(m_e, t.layer, t.param, QString());
+    if (!t.layer && t.param.startsWith(QLatin1String("output/device/"))) {
+        const auto output = InteractionOutput::fromPath(t.param);
+        const auto name = m_e->devices().nameOf(output.destination.toULongLong());
+        label = QStringLiteral("%1 › %2").arg(name.isEmpty() ? QStringLiteral("Unknown device") : name, output.address);
+    }
     if (t.event && !t.param.isEmpty()) label = QStringLiteral("⚑ ") + label;
     m_param->setText(label);
     m_filling = false;
