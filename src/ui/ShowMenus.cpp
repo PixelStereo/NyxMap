@@ -209,6 +209,10 @@ QString valueLabel(Engine *e, quint64 layer, const QString &param, const QString
     if (param.isEmpty()) return none;
     if (!layer) {
         const auto output = InteractionOutput::fromPath(param);
+        if (output.protocol == "device") {
+            const QString name = e->devices().nameOf(output.destination.toULongLong());
+            return QStringLiteral("%1 · %2").arg(name.isEmpty() ? QStringLiteral("(device gone)") : name, output.address);
+        }
         if (output.protocol == "osc") return QStringLiteral("OSC · %1 · %2").arg(output.destination, output.address);
         if (output.protocol == "dmx") {
             const auto patch = e->fixturePatch();

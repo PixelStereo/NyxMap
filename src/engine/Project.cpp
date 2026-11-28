@@ -1,5 +1,6 @@
 // Engine: the project file — a layer to and from JSON, saving and opening a .nyxmap.
 #include "EngineInternal.h"
+#include "InteractionOutput.h"
 
 #include <set>
 #include <functional>
@@ -85,6 +86,7 @@ void Engine::clearProject()
     std::vector<std::unique_ptr<Layer>> old;
     {
         Lock lk(&m_mutex);
+        ++m_deviceProjectGeneration;
         old.swap(m_layers);
         m_materials.clear();
         m_projectPath.clear();
@@ -142,10 +144,13 @@ void Engine::clearProject()
         m_fixtures = FixturePatch();
         m_fixtureDmx.clear();
         m_actionDmx.clear();
+        m_deviceDmx.clear();
+        m_deviceDmxActions.clear();
         m_interactionDmx.clear();
         ++m_fixturesVersion;
         m_fixtureParamsDirty = true;
     }
+    loadDevices({});
     emit fixturesChanged();
     for (auto &l : old) {
         if (l->video) l->video->close();
@@ -669,6 +674,22 @@ bool Engine::saveProject(const QString &path, const QJsonObject &uiState, QStrin
     return true;
 }
 
+static void collectDeviceReferences(const QJsonValue &value, std::set<quint64> &ids)
+{
+    if (value.isObject()) {
+        const QJsonObject object = value.toObject();
+        for (const auto &child : object) collectDeviceReferences(child, ids);
+    } else if (value.isArray()) {
+        const QJsonArray array = value.toArray();
+        for (const auto &child : array) collectDeviceReferences(child, ids);
+    } else if (value.isString()) {
+        const QString path = value.toString();
+        if (!path.startsWith(QLatin1String("output/device/"))) return;
+        const quint64 id = InteractionOutput::fromPath(path).destination.toULongLong();
+        if (id) ids.insert(id);
+    }
+}
+
 QJsonObject Engine::projectToJson(const QString &dir, const QJsonObject &uiState) const
 {
     QJsonObject root;
@@ -758,6 +779,13 @@ QJsonObject Engine::projectToJson(const QString &dir, const QJsonObject &uiState
         if (!m_fixtures.types.empty() || !m_fixtures.fixtures.empty() || !m_fixtures.outputs.empty())
             root["pixel_mapping"] = m_fixtures.toJson();
     }
+    std::set<quint64> deviceRefs;
+    for (const char *key : {"interactions", "interaction_graph", "presets", "snapshots"})
+        collectDeviceReferences(root.value(QLatin1String(key)), deviceRefs);
+    m_devices->setReferencedDevices(std::move(deviceRefs));
+    const QJsonObject devices = m_devices->toJson();
+    if (!devices.value("devices").toArray().isEmpty() || !devices.value("ids").toObject().isEmpty())
+        root["devices"] = devices;
     root["ui"] = uiState;
     return root;
 }
@@ -777,7 +805,7 @@ static QString projectPreflightError(const QJsonObject &root)
         return o.contains(k) && !o.value(k).isArray() ? invalid(at + "/" + k, QStringLiteral("array")) : QString();
     };
     const QString rootPath = QStringLiteral("$");
-    for (const QString &key : {QStringLiteral("composition"), QStringLiteral("audio"), QStringLiteral("ui")}) {
+    for (const QString &key : {QStringLiteral("composition"), QStringLiteral("audio"), QStringLiteral("devices"), QStringLiteral("ui")}) {
         const QString error = optionalObject(root, key, rootPath);
         if (!error.isEmpty()) return error;
     }
@@ -943,6 +971,11 @@ bool Engine::loadProject(const QString &path, QJsonObject *uiState, QString *err
         return false;
     }
     clearProject();
+    loadDevices(root.value("devices").toObject());
+    std::set<quint64> deviceRefs;
+    for (const char *key : {"interactions", "interaction_graph", "presets", "snapshots"})
+        collectDeviceReferences(root.value(QLatin1String(key)), deviceRefs);
+    m_devices->setReferencedDevices(std::move(deviceRefs));
     const QJsonObject comp = root.value("composition").toObject();
     setCompositionSize(QSize(comp.value("width").toInt(1920), comp.value("height").toInt(1080)));
     setCompositionSpeed(comp.value("speed").toDouble(1.0));

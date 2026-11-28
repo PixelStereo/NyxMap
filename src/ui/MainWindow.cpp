@@ -40,6 +40,7 @@
 #include "FixturePanel.h"
 #include "FixtureInspector.h"
 #include "DmxOutputsPanel.h"
+#include <pxs/DevicesPanel.h>
 #include "Widgets.h"
 
 #include <QAction>
@@ -327,6 +328,15 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     auto *dmxOutputs = new DmxOutputsPanel(m_engine, m_undo);
     m_composition->addSection(dmxOutputs);
     connect(dmxOutputs, &DmxOutputsPanel::projectEdited, this, &MainWindow::markDirty);
+    auto *devices = new pxs::devices::DevicesPanel(&m_engine->devices(),
+        QStringLiteral("Choose an address from Devices in an interaction's target menu. DMX devices use the source universes configured under Composition."));
+    devices->setObjectName(QStringLiteral("showDevices"));
+    devices->setCompactList();
+    m_tabs->addTab(devices, QStringLiteral("Devices"));
+    connect(m_tabs, &QTabWidget::currentChanged, devices, [this, devices](int index) {
+        if (m_tabs->widget(index) == devices) m_engine->devices().startDiscovery();
+    });
+    connect(m_engine, &Engine::deviceConfigurationChanged, this, &MainWindow::markDirty);
     m_settings = new SettingsPanel(m_engine);
     m_settingsTab = scrolled(m_settings);
     m_tabs->addTab(m_settingsTab, QStringLiteral("Settings"));

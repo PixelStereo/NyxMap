@@ -28,6 +28,7 @@
 #include "Publish.h"
 #include "Publishing.h"
 #include <pxs/DmxOut.h>
+#include <pxs/Devices.h>
 #include <pxs/TimelineHost.h>
 #include "Fixtures.h"
 #include "PixelSampler.h"
@@ -389,6 +390,7 @@ public:
     InteractionGraph interactionGraph() const;
     bool setInteractionGraph(const InteractionGraph &graph, QString *error = nullptr);
     std::vector<Interaction> interactions() const;
+    pxs::devices::Devices &devices() const { return *m_devices; } // on the Engine QObject thread
     void setInteractions(const std::vector<Interaction> &list); // the whole list (undo); ids 0 are given one; the groups stay
     // The folders of the list (InteractionGroup), with the list in one go (undo); a group with an unknown parent goes to the top level,
     // an interaction in an unknown group too; ids 0 are given one
@@ -994,6 +996,7 @@ signals:
     void layerAnimsChanged(quint64 layer); // the animations of a layer's numbers (their contents, not their transport)
     void snapshotRecalled(int index);
     void timecodeRoutingChanged(); // timecode / MIDI outputs, their patch, or which layer drives which output
+    void deviceConfigurationChanged();
     void interactionsChanged();    // the list of interactions (not their values)
     void eventObserved(const QString &channel, const QString &message);
     // Their values changed by a preset, a snapshot, a timeline, OSC (sent once for many, from the main thread)
@@ -1413,6 +1416,16 @@ private:
         int curve = 3;
     };
     std::vector<ActionFade> m_actionFades;
+    bool holdsDmxOutput(const QString &path) const;
+    void writeDeviceOutput(quint64 id, const QString &address, double value, bool action);
+    void loadDevices(const QJsonObject &json);
+    void updateDeviceConfiguration();
+    std::unique_ptr<pxs::devices::Devices> m_devices;
+    QJsonObject m_deviceJson;
+    std::map<quint64, pxs::devices::Device> m_dmxDevices;
+    using DeviceLevels = std::map<std::pair<quint64, QString>, double>;
+    DeviceLevels m_deviceDmx, m_deviceDmxActions;
+    std::atomic<quint64> m_deviceProjectGeneration{0};
     bool writeInteractionOutput(const QString &path, double value, bool action);
     void sendInteractionOsc(const InteractionConsequence &c, double value);
     void runConsequence(const InteractionConsequence &c, double sourceValue); // lock held

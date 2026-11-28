@@ -25,7 +25,7 @@ struct InteractionOutput {
     {
         if (!path.startsWith(QLatin1String("output/"))) return {};
         const auto protocol = path.section(QLatin1Char('/'), 1, 1);
-        if (protocol != "osc" && protocol != "dmx" && protocol != "midi") return {};
+        if (protocol != "osc" && protocol != "dmx" && protocol != "midi" && protocol != "device") return {};
         const auto settings = QJsonDocument::fromJson(
             QByteArray::fromBase64(path.section(QLatin1Char('/'), 2).toLatin1(), QByteArray::Base64UrlEncoding)).object();
         const auto destination = settings.value("destination").toString();

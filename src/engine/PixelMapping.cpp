@@ -206,8 +206,9 @@ void Engine::stepPixelMapping()
         m_fixtureLooks.clear();
         m_fixtureDmx.clear();
     }
-    if (got || m_fixturePoints.empty() || !m_actionDmx.empty() || !m_interactionDmx.empty() || m_hadInteractionDmx) {
-        m_hadInteractionDmx = !m_interactionDmx.empty();
+    const bool deviceLevels = !m_deviceDmxActions.empty() || !m_deviceDmx.empty();
+    if (got || m_fixturePoints.empty() || !m_actionDmx.empty() || !m_interactionDmx.empty() || deviceLevels || m_hadInteractionDmx) {
+        m_hadInteractionDmx = !m_interactionDmx.empty() || deviceLevels;
         auto frame = m_fixtureDmx;
         DmxFrame owned = buildDmxOwnership(m_fixtures); // the channels that are ours: sACN gives the others away
         for (const auto *overrides : {&m_actionDmx, &m_interactionDmx}) {
@@ -221,6 +222,37 @@ void Engine::stepPixelMapping()
                 for (const auto &[channel, value] : values) {
                     universe[channel] = char(value);
                     mine[channel] = 1; // a channel an action or an interaction sets: ours
+                }
+            }
+        }
+        if (deviceLevels) {
+            std::map<int, QByteArray> levels, masks;
+            for (const auto *values : {&m_deviceDmxActions, &m_deviceDmx}) {
+                for (const auto &[key, value] : *values) {
+                    const auto found = m_dmxDevices.find(key.first);
+                    if (found == m_dmxDevices.end()) continue;
+                    const auto &device = found->second;
+                    const auto *address = device.address(key.second.toStdString());
+                    if (!address) continue;
+                    const auto [channel, width] = pxs::core::device::dmxChannels(device, *address);
+                    if (!channel) continue;
+                    auto &universe = levels.try_emplace(device.universe, 512, char(0)).first->second;
+                    auto &mask = masks.try_emplace(device.universe, 512, char(0)).first->second;
+                    const double level = value * pxs::core::device::nativeMaximum(device.kind, *address);
+                    if (pxs::core::device::writeDmx(device, *address, level,
+                            reinterpret_cast<std::uint8_t *>(universe.data()), std::size_t(universe.size())))
+                        for (int i = channel - 1; i < channel - 1 + width; ++i) mask[i] = 1;
+                }
+            }
+            const auto routedMasks = pxs::dmx::route(masks, m_fixtures.outputs);
+            for (const auto &[key, values] : pxs::dmx::route(levels, m_fixtures.outputs)) {
+                auto &universe = frame.try_emplace(key, 512, char(0)).first->second;
+                auto &mine = owned.try_emplace(key, 512, char(0)).first->second;
+                const auto &mask = routedMasks.at(key);
+                for (qsizetype channel = 0; channel < mask.size(); ++channel) {
+                    if (!mask.at(channel)) continue;
+                    universe[channel] = values.at(channel);
+                    mine[channel] = 1;
                 }
             }
         }

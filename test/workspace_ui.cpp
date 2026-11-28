@@ -645,6 +645,10 @@ int main(int argc, char **argv)
                     check(window.width() <= compact.width() && window.height() <= compact.height(),
                           "switching workspace and inspector pages preserves a compact window size");
                 }
+                if (mainTabs) mainTabs->setCurrentIndex(3);
+                app.processEvents();
+                check(window.width() <= compact.width() && window.height() <= compact.height(),
+                      "Devices fits in a compact inspector");
             }
             if (auto *status = window.findChild<QLabel *>("contextHelpStatus")) {
                 const QString before = status->text();
@@ -723,8 +727,9 @@ int main(int argc, char **argv)
             auto *mainTabs = window.findChild<QTabWidget *>("mainInspectorTabs");
             auto *inspectorStack = window.findChild<QStackedWidget *>("inspectorStack");
             check(mainTabs && mainTabs->tabText(0) == "Inspector" && mainTabs->tabText(1) == "Viewports" && mainTabs->tabText(2) == "Composition" &&
-                      mainTabs->count() == 4 && inspectorStack && inspectorStack->count() == 2,
-                  "an Inspector tab (a layer, a group or a fixture), the Viewports tab (their list, + and −, their parameters), then Composition and Settings");
+                      mainTabs->count() == 5 && mainTabs->tabText(3) == "Devices" && mainTabs->tabText(4) == "Settings" &&
+                      mainTabs->widget(3)->objectName() == "showDevices" && inspectorStack && inspectorStack->count() == 2,
+                  "Inspector, Viewports, Composition, Devices and Settings tabs");
             // The views of a viewport have the Layer / Mask tool: a mask drawn in one lands on that viewport, as one undo step
             {
                 auto *previews = window.findChild<PreviewWorkspace *>();

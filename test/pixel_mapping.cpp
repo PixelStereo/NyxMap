@@ -1,6 +1,7 @@
 // Pixel mapping: the fixture model, the universes built from colours, the Art-Net and sACN packets, the composition
 // sampled on the GPU, the packets received over the loopback, and the patch saved with the project.
 #include "Engine.h"
+#include "InteractionOutput.h"
 #include "Gdtf.h"
 #include "Zip.h"
 
@@ -673,6 +674,37 @@ static void networkTests(Engine &e)
             check(!priorities.isEmpty() && quint8(priorities[126]) == quint8(o.priority) && priorities[127] == 0 && priorities[637] == 0,
                   "sACN: a priority for each channel, 0 for the channels that are not ours");
         }
+        pxs::devices::Device device;
+        device.kind = pxs::devices::Kind::Dmx;
+        device.name = "Registered fixture";
+        device.universe = o.firstSourceUniverse + 3 - o.firstUniverse;
+        device.start = 4;
+        pxs::devices::Address level;
+        level.path = "/level";
+        level.fine = true;
+        device.addresses = {level};
+        const quint64 deviceId = e.devices().add(device);
+        Interaction mapping = Interaction::made(InteractionSource::Keyboard);
+        mapping.key = QStringLiteral("D");
+        mapping.param = InteractionOutput{QStringLiteral("device"), QString::number(deviceId), QStringLiteral("/level"), {}}.path();
+        e.addInteraction(mapping);
+        InteractionEvent half;
+        half.source = InteractionSource::Keyboard;
+        half.address = "D";
+        half.value = 0.5;
+        e.feedInteraction(half);
+        bool patched = false;
+        const int offset = art ? 18 : 126;
+        for (int i = 0; i < 100 && !patched; ++i) {
+            e.renderFrame();
+            if (!rx.hasPendingDatagrams()) rx.waitForReadyRead(20);
+            while (rx.hasPendingDatagrams()) {
+                const QByteArray data = rx.receiveDatagram().data();
+                if (data.size() > offset + 4 && (art || data[125] == 0) &&
+                    quint8(data[offset + 3]) == 128 && data[offset + 4] == 0) patched = true;
+            }
+        }
+        check(patched, "a shared 16-bit DMX device reaches the routed universe");
         // The UDP datagram can reach the receiver just before the sender thread
         // publishes its corresponding status snapshot. Wait for that publication
         // instead of making this assertion depend on thread scheduling.

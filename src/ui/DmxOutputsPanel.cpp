@@ -15,7 +15,8 @@ DmxOutputsPanel::DmxOutputsPanel(Engine *engine, QUndoStack *undo, QWidget *pare
     auto *v = new QVBoxLayout(this);
     m_panel = new pxs::dmx::OutputsPanel;
     m_panel->setDefaultSourceName(QStringLiteral("NyxMap"));
-    // The fixtures address an output and a network universe themselves: there is no universe map to edit
+    // Devices use this map. Pixel-mapped fixtures still specify the network universe directly.
+    m_panel->setMappingShown(true);
     m_panel->setStateSource([this](quint64 id) { return m_engine->dmxOutputState(id); });
     v->addWidget(m_panel);
 

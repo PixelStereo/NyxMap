@@ -146,7 +146,7 @@ void Engine::stepInteractionGraph(double dt, const std::vector<InteractionEvent>
                 continue;
             }
             const auto last = m_graphLastOutputs.find(node.id);
-            const bool dmx = !target.layer && target.param.startsWith(QLatin1String("output/dmx/"));
+            const bool dmx = !target.layer && holdsDmxOutput(target.param);
             if (!eventOnly && !dmx && last != m_graphLastOutputs.end() && std::abs(last->second - *value) <= 1e-9) continue;
             if (!target.layer && writeInteractionOutput(target.param, *value, false)) {
                 m_graphLastOutputs[node.id] = *value;
@@ -541,7 +541,9 @@ bool Engine::writeInteractionOutput(const QString &path, double value, bool acti
     const auto output = InteractionOutput::fromPath(path);
     if (output.protocol.isEmpty()) return false;
     if (!std::isfinite(value)) return true;
-    if (output.protocol == "osc") {
+    if (output.protocol == "device") {
+        writeDeviceOutput(output.destination.toULongLong(), output.address, value, action);
+    } else if (output.protocol == "osc") {
         InteractionConsequence message;
         message.oscDestination = output.destination;
         message.oscAddress = output.address;
@@ -587,6 +589,7 @@ void Engine::runConsequence(const InteractionConsequence &c, double sourceValue)
 void Engine::stepInteractions(double dt)
 {
     m_interactionDmx.clear();
+    m_deviceDmx.clear();
     std::vector<InteractionEvent> events;
     {
         std::lock_guard<std::mutex> lk(m_interactionEventsMutex);
@@ -884,7 +887,7 @@ void Engine::stepInteractions(double dt)
         }
         const bool changed = fresh || colorMoved || !run.lastOut || std::abs(*run.lastOut - *out) > 1e-9;
         run.lastOut = out;
-        const bool dmx = !it.layer && it.param.startsWith(QLatin1String("output/dmx/"));
+        const bool dmx = !it.layer && holdsDmxOutput(it.param);
         if (!changed && !dmx) continue; // nothing new: the target is left to whatever else moves it
         if (!it.layer && writeInteractionOutput(it.param, *out, false)) continue;
         if (it.param.isEmpty()) continue; // no target yet: its source and its filters still shown moving
