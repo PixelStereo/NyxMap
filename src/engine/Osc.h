@@ -36,6 +36,7 @@ class Engine;
 class QTcpServer;
 class QTcpSocket;
 class QUdpSocket;
+namespace pxs { class MdnsResponder; }
 
 #include "OscCodec.h"
 #include <pxs/Convert.h>
@@ -57,6 +58,7 @@ public:
     explicit OscNamespace(Engine *e) : m_e(e) {}
 
     void refresh();                         // rebuilds if the structure signature changed
+    const pxs::core::tree::Tree &tree() const { return m_tree; }
     int generation() const { return m_generation; } // counts the rebuilds
     QString signature() const;              // layers, sources, effects and parameters (not values)
     const OscNode *node(const QString &path) const;
@@ -147,7 +149,7 @@ private:
     void onWsFrame(Client &c, int opcode, const QByteArray &payload);
     void sendWs(QTcpSocket *s, int opcode, const QByteArray &payload);
     void pushListened();
-    QJsonObject hostInfo() const;
+    QByteArray httpAnswer(const QByteArray &method, const QByteArray &target, int *status);
 
     Engine *m_e;
     OscNamespace m_ns;
@@ -157,5 +159,5 @@ private:
     QTimer m_listenTimer;
     QString m_name, m_status;
     QString m_treeSignature; // tree last seen by the WebSocket clients (PATH_CHANGED when it changes)
-    class Zeroconf *m_zeroconf = nullptr;
+    pxs::MdnsResponder *m_mdns = nullptr;
 };

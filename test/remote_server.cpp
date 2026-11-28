@@ -3,7 +3,6 @@
 #include "RemotePage.h"
 #include "RemoteServer.h"
 #include "ShowPage.h"
-#include "WebSocketFrame.h"
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QElapsedTimer>
@@ -13,6 +12,7 @@
 #include <QTcpSocket>
 #include <QTcpServer>
 #include <QTimer>
+#include <QtEndian>
 #include <cstdio>
 #include <iostream>
 #include <stdexcept>

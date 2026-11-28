@@ -15,7 +15,6 @@
 #include "Osc.h"
 #include "SequenceFeedback.h"
 #include <pxs/Parameter.h>
-#include "Zeroconf.h"
 #include <QJsonArray>
 #include <QSet>
 #include <QTcpSocket>
@@ -2061,6 +2060,21 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             return reply.contains("VALUE");
         });
         CHECK(reply.startsWith("HTTP/1.1 200") && reply.contains("[0.75]"));
+        // The shared OSCQuery answer is also available to HTTP clients using HEAD and preflight.
+        for (const QByteArray &method : {QByteArray("HEAD"), QByteArray("OPTIONS")}) {
+            QTcpSocket probe;
+            probe.connectToHost(QHostAddress::LocalHost, server.queryPort());
+            CHECK(pump([&] { return probe.state() == QAbstractSocket::ConnectedState; }));
+            probe.write(method + ' ' + (F + "/opacity?VALUE").toUtf8() + " HTTP/1.1\r\nHost: x\r\n\r\n");
+            QByteArray response;
+            CHECK(pump([&] {
+                response += probe.readAll();
+                return probe.state() == QAbstractSocket::UnconnectedState;
+            }));
+            CHECK(response.startsWith(method == "HEAD" ? "HTTP/1.1 200" : "HTTP/1.1 204"));
+            CHECK(response.endsWith("\r\n\r\n"));
+            if (method == "HEAD") CHECK(!response.contains("Content-Length: 0\r\n"));
+        }
         // WebSocket: LISTEN, then a change is pushed as a binary OSC message
         QTcpSocket ws;
         ws.connectToHost(QHostAddress::LocalHost, server.queryPort());
@@ -2134,29 +2148,6 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         http.close();
         server.stop();
 
-        // Zeroconf responder: answers to a PTR question for _oscjson._tcp.local (without the network)
-        {
-            Zeroconf z;
-            z.start("NyxMap (test)", {{"_oscjson._tcp", 5678, {{"txtvers", "1"}}}, {"_osc._udp", 1234, {}}});
-            QByteArray q;
-            const char head[12] = {0x12, 0x34, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0};
-            q.append(head, 12);
-            for (const char *label : {"_oscjson", "_tcp", "local"}) {
-                q.append(char(std::strlen(label)));
-                q.append(label);
-            }
-            q.append('\0');
-            q.append("\x00\x0c\x00\x01", 4); // PTR, IN
-            bool uni = false;
-            const QByteArray a = z.answerQuery(q, &uni);
-            CHECK(a.size() > 12 && quint8(a[0]) == 0x12 && quint8(a[2]) == 0x84 && a.contains("NyxMap (test)"));
-            CHECK(a.contains(QByteArray("\x16\x2e", 2))); // SRV port 5678 in the additional records
-            CHECK(a.contains(z.hostName().toUtf8()) && a.contains("txtvers=1"));
-            q[q.size() - 3] = 0x10; // TXT of another name: no answer
-            CHECK(z.answerQuery(QByteArray("\x00\x00\x84\x00", 4) + q.mid(4)).isEmpty()); // a response is ignored
-            CHECK(z.announcement(true).contains("_osc"));
-            z.stop();
-        }
         e.newProject();
     }
     } // osc

@@ -62,10 +62,9 @@ class QOffscreenSurface;
 class QSurface;
 class QThread;
 class QWindow;
-class QTimer;
 
-namespace midi {
-class Input;
+namespace pxs::midi {
+class Inputs;
 }
 
 
@@ -1351,9 +1350,7 @@ private:
     std::optional<InteractionSource> m_learnKind;
     std::vector<InteractionEvent> m_learned; // distinct sources, the first one first
     QElapsedTimer m_learnClock;              // since the first
-    std::vector<std::unique_ptr<midi::Input>> m_midiIns; // every MIDI input, open while a MIDI interaction is there
-    QStringList m_midiInNames;
-    QTimer *m_midiScan = nullptr;
+    std::unique_ptr<pxs::midi::Inputs> m_midiInputs;
     std::atomic<bool> m_midiUpdatePending{false};
     void stepInteractions(double dt); // lock held
     // Their values as the composition's parameters ("interaction/<id>/master"…): presets, timelines, OSC, other

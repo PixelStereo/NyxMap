@@ -1,6 +1,6 @@
 #include "TimecodeOutputs.h"
 
-#include "Midi.h"
+#include <pxs/Midi.h>
 #include "TimecodeIo.h"
 
 #include <QElapsedTimer>
@@ -306,7 +306,7 @@ void TimecodeRouter::openPorts(qint64 now, bool testSink, std::map<quint64, QStr
         Port &p = m_ports[key];
         if (!p.out && (p.triedAt < 0 || now - p.triedAt >= kRetryMs)) {
             p.triedAt = now;
-            auto out = std::make_unique<midi::Output>();
+            auto out = std::make_unique<pxs::midi::Output>();
             QString err;
             const bool ok = m.port == QLatin1String(MidiOutput::kVirtualPort) ? out->openVirtual(m.name, &err) : out->open(m.port, &err);
             if (ok) {

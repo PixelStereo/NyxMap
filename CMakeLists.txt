@@ -77,7 +77,6 @@ add_library(nyxmap_engine STATIC
   src/engine/Media.cpp
   src/engine/Publish.cpp
   src/engine/DeckLink.cpp
-  src/engine/Midi.cpp
   src/engine/LiveInput.cpp
   src/engine/Tox.cpp
   src/engine/ToxTouchEngine.cpp
@@ -101,7 +100,6 @@ add_library(nyxmap_engine STATIC
   src/engine/EventLog.cpp
   src/engine/FrameTiming.cpp
   src/engine/SequenceFeedback.cpp
-  src/engine/Zeroconf.cpp
   src/engine/StoredContent.cpp
   src/engine/Snapshots.cpp
   src/engine/Publishing.cpp
@@ -188,7 +186,7 @@ qt_add_shaders(nyxmap_engine "nyxmap_shaders"
         src/engine/shaders/scenelit_noglow.frag src/engine/shaders/sceneglowdown.frag src/engine/shaders/sceneglowup.frag
         src/engine/shaders/scenebackground.frag src/engine/shaders/scenesky.vert src/engine/shaders/scenesky.frag
         src/engine/shaders/scenesky_noglow.frag src/engine/shaders/scenefog.frag src/engine/shaders/scenefogblur.frag)
-target_link_libraries(nyxmap_engine PUBLIC Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::ShaderToolsPrivate Qt6::Network ffmpeg pxs::osc pxs::params pxs::tree pxs::controls pxs::dmxout pxs::interaction pxs::sequence)
+target_link_libraries(nyxmap_engine PUBLIC Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::ShaderToolsPrivate Qt6::Network ffmpeg pxs::osc pxs::params pxs::tree pxs::controls pxs::dmxout pxs::interaction pxs::sequence pxs::midi PRIVATE pxs::oscquery)
 if(WIN32)
   target_link_libraries(nyxmap_engine PRIVATE psapi pdh) # resource usage (ProcessMemory.cpp)
 endif()
@@ -243,13 +241,6 @@ if(APPLE)
 elseif(UNIX)
   find_package(Threads REQUIRED)
   target_link_libraries(nyxmap_engine PRIVATE Threads::Threads ${CMAKE_DL_LIBS} m)
-endif()
-
-# ---------------------------------------------------------------------------
-# MIDI for MTC, using the same backend as the Qt device registry.
-if(TARGET pxs-core::rtmidi)
-  target_link_libraries(nyxmap_engine PRIVATE pxs-core::rtmidi)
-  target_compile_definitions(nyxmap_engine PRIVATE NYXMAP_HAS_MIDI)
 endif()
 
 # ---------------------------------------------------------------------------

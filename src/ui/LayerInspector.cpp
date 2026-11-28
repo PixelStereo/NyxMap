@@ -10,7 +10,7 @@
 #include "LayerTable.h"
 #include "LiveInput.h"
 #include "MaskPanel.h"
-#include "Midi.h"
+#include <pxs/Midi.h>
 #include "ParamAnimPanel.h"
 #include "ParamPanel.h"
 #include "PresetEditor.h"
@@ -2331,7 +2331,7 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
                     items = names(AudioOutput::captureDeviceNames());
                     first = QStringLiteral("Default input");
                 } else if (ts.source == Src::Mtc) {
-                    items = names(midi::inputNames());
+                    items = names(pxs::midi::inputNames());
                 } else if (ts.source == Src::AtcNdi) {
                     for (const LiveInputInfo &li : listLiveInputs())
                         if (li.kind == QLatin1String("NDI")) items.append({li.name, li.uri.section(':', 2, -1)});

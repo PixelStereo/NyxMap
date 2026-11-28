@@ -7,6 +7,7 @@
 #include "PresetEditor.h"
 #include "Osc.h"
 #include "OscCodec.h"
+#include <pxs/Midi.h>
 #include "SequenceFeedback.h"
 #include "InteractionOutput.h"
 #include <QSettings>
@@ -917,10 +918,7 @@ void InteractionPanel::applyLearned(const InteractionEvent &ev)
     switch (e->source) {
     case InteractionSource::Keyboard: input.key = e->address; break;
     case InteractionSource::Midi:
-        input.midiPort = e->port;
-        input.midiChannel = e->channel;
-        input.midiMessage = e->message;
-        input.midiNumber = e->number;
+        pxs::midi::learn(input, *e);
         break;
     case InteractionSource::Osc:
         input.oscAddress = e->address;
