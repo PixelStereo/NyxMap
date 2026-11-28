@@ -6,7 +6,7 @@
 #include "LibraryTree.h"
 #include <QKeySequence>
 #include "PresetEditor.h"
-#include "Engine.h"
+#include "EngineInternal.h"
 #include "Widgets.h"
 
 #include <QApplication>
@@ -88,6 +88,38 @@ static QString valueText(const MemField &f, const QJsonValue &value)
     }
     default: return value.toString();
     }
+}
+
+// Expand stored definitions using the same JSON that is written to the project.
+static QTreeWidgetItem *showStoredSettings(QTreeWidgetItem *parent, const QString &label, const QJsonValue &value)
+{
+    QString text;
+    if (value.isObject() || value.isArray()) {
+        const auto count = value.isObject() ? value.toObject().size() : value.toArray().size();
+        if (count == 0) text = QStringLiteral("None");
+    } else if (value.isBool()) {
+        text = value.toBool() ? QStringLiteral("On") : QStringLiteral("Off");
+    } else if (value.isDouble()) {
+        text = QString::number(value.toDouble(), 'g', 15);
+    } else {
+        text = value.toString();
+    }
+    auto *item = new QTreeWidgetItem(parent, {label, text});
+    item->setToolTip(1, text);
+    if (value.isObject()) {
+        const auto fields = value.toObject();
+        for (auto it = fields.constBegin(); it != fields.constEnd(); ++it) {
+            QString name = it.key();
+            name.replace(QLatin1Char('_'), QLatin1Char(' '));
+            if (!name.isEmpty()) name[0] = name.at(0).toUpper();
+            showStoredSettings(item, name, it.value());
+        }
+    } else if (value.isArray()) {
+        const auto entries = value.toArray();
+        for (qsizetype i = 0; i < entries.size(); ++i)
+            showStoredSettings(item, QString::number(i + 1), entries.at(i));
+    }
+    return item;
 }
 
 // The object a field's row refers to: a layer of the snapshot, (-1) its composition, (-2 - k) its interaction k, or
@@ -360,7 +392,7 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
     m_presetEdit->setToolTip(QStringLiteral("Edit mode (%1): the values of the selected preset are underlined in the inspector "
                                             "(green; orange once changed), those that could go in it in red, and the window is framed "
                                             "in red. Click a value's name — or Alt-click its field — to put it in the preset or take it out.")
-                                 .arg(QKeySequence(Qt::CTRL | Qt::Key_E).toString(QKeySequence::NativeText)));
+                                 .arg(QKeySequence(Qt::CTRL | Qt::Key_P).toString(QKeySequence::NativeText)));
     // On, it is as loud as the frame around the window: the same red
     m_presetEdit->setStyleSheet(QStringLiteral("QPushButton:checked { background:#eb4034; color:white; font-weight:bold; }"));
     m_presetNew = new QPushButton(QStringLiteral("+"));
@@ -1295,9 +1327,12 @@ void SnapshotPanel::fillLayer(QTreeWidgetItem *parent, int row, const QJsonObjec
             const QJsonObject a = v.toObject();
             const QString state = a.value("state").toString(QStringLiteral("playing"));
             const QString what = a.contains("oscillator") ? a.value("oscillator").toObject().value("wave").toString() : QStringLiteral("keys");
-            info(sec, a.value("param").toString(),
-                 state == "paused" ? QStringLiteral("paused at %1 s").arg(a.value("clock").toDouble(), 0, 'f', 2) : state,
-                 QStringLiteral("%1 · %2 s · %3").arg(what).arg(a.value("duration").toDouble(), 0, 'g', 4).arg(a.value("loop").toString()));
+            const QString transport = state == "paused"
+                ? QStringLiteral("paused at %1 s").arg(a.value("clock").toDouble(), 0, 'f', 2) : state;
+            const QString tooltip = QStringLiteral("%1 · %2 s · %3")
+                .arg(what).arg(a.value("duration").toDouble(), 0, 'g', 4).arg(a.value("loop").toString());
+            auto *animation = info(sec, a.value("param").toString(), transport, tooltip);
+            showStoredSettings(animation, QStringLiteral("Settings"), a)->setExpanded(true);
         }
         expand(sec);
     }
@@ -1735,7 +1770,9 @@ void SnapshotPanel::fillInteractions(const QJsonArray &interactions)
             it->setToolTip(0, QStringLiteral("Removed since: made again by the recall"));
         }
         const int row = -2 - k;
+        QSet<QString> displayed;
         auto field = [&](MemField::Kind kind, const QString &key, const QString &label) -> MemField {
+            displayed.insert(key);
             MemField f;
             f.kind = kind;
             f.row = row;
@@ -1785,8 +1822,8 @@ void SnapshotPanel::fillInteractions(const QJsonArray &interactions)
         };
         info(QStringLiteral("name"), QStringLiteral("Name"), params.value("name").toString());
         choice(QStringLiteral("source/kind"), QStringLiteral("Source"),
-               {QStringLiteral("keyboard"), QStringLiteral("midi"), QStringLiteral("osc"), QStringLiteral("internal")},
-               {QStringLiteral("Keyboard"), QStringLiteral("MIDI"), QStringLiteral("OSC"), QStringLiteral("Internal")});
+               {QStringLiteral("keyboard"), QStringLiteral("midi"), QStringLiteral("osc"), QStringLiteral("internal"), QStringLiteral("audio")},
+               {QStringLiteral("Keyboard"), QStringLiteral("MIDI"), QStringLiteral("OSC"), QStringLiteral("Internal"), QStringLiteral("Audio")});
         const QString kind = params.value("source/kind").toString();
         if (kind == QLatin1String("keyboard")) info(QStringLiteral("source/key"), QStringLiteral("Key"), params.value("source/key").toString());
         if (kind == QLatin1String("midi")) {
@@ -1803,6 +1840,15 @@ void SnapshotPanel::fillInteractions(const QJsonArray &interactions)
         }
         if (kind == QLatin1String("internal"))
             info(QStringLiteral("source/internal"), QStringLiteral("Follows"), refText(params.value("source/internal").toString()));
+        if (kind == QLatin1String("audio")) {
+            info(QStringLiteral("source/audio/input"), QStringLiteral("Audio Source"), params.value("source/audio/input").toString());
+            info(QStringLiteral("source/audio/feature"), QStringLiteral("Audio Measure"), params.value("source/audio/feature").toString());
+            number(QStringLiteral("source/audio/low"), QStringLiteral("Audio Low"), 20, 20000, 1, QStringLiteral(" Hz"));
+            number(QStringLiteral("source/audio/high"), QStringLiteral("Audio High"), 20, 20000, 1, QStringLiteral(" Hz"));
+            number(QStringLiteral("source/audio/sensitivity"), QStringLiteral("Hit Sensitivity"), 0, 1, 100, QStringLiteral(" %"));
+            number(QStringLiteral("source/audio/gap"), QStringLiteral("Minimum Hit Gap"), 0.04, 2, 1, QStringLiteral(" s"));
+        }
+        flag(QStringLiteral("color/map_alpha"), QStringLiteral("Map Color Alpha"));
         info(QStringLiteral("target"), QStringLiteral("Target"), refText(params.value("target").toString()));
         flag(QStringLiteral("enable"), QStringLiteral("On"));
         number(QStringLiteral("master"), QStringLiteral("Master Level"), 0, 1, 100, QStringLiteral(" %"));
@@ -1817,8 +1863,11 @@ void SnapshotPanel::fillInteractions(const QJsonArray &interactions)
             info(QStringLiteral("filters"), QStringLiteral("Filters"), kinds.isEmpty() ? QStringLiteral("None") : kinds.join(QStringLiteral(" → ")));
             for (size_t k = 0; k < stages.size(); ++k) {
                 const QString base = QStringLiteral("filters/%1/").arg(k + 1);
-                const QString name = QStringLiteral("Filter %1 %2").arg(k + 1).arg(interactionFilterName(stages[k].kind));
+                const QString name = QStringLiteral("Filter %1 %2").arg(k + 1).arg(stages[k].displayName());
                 flag(base + QStringLiteral("enable"), name);
+                auto extra = stages[k].toJson();
+                for (const char *key : {"type", "name", "enabled", "a", "b", "c", "d"}) extra.remove(key);
+                if (!extra.isEmpty()) showStoredSettings(it, name + QStringLiteral(" › Details"), extra);
                 for (int which = 0; which < kFilterSettingCount; ++which) {
                     const FilterSetting set = interactionFilterSetting(stages[k].kind, which);
                     if (set.name.isEmpty()) continue;
@@ -1826,6 +1875,15 @@ void SnapshotPanel::fillInteractions(const QJsonArray &interactions)
                 }
             }
         }
+        for (auto setting = params.constBegin(); setting != params.constEnd(); ++setting) {
+            if (displayed.contains(setting.key())) continue;
+            const auto json = QJsonDocument::fromJson(setting.value().toString().toUtf8());
+            const auto value = json.isObject() ? QJsonValue(json.object())
+                             : json.isArray() ? QJsonValue(json.array()) : setting.value();
+            showStoredSettings(it, setting.key(), value);
+        }
+        if (o.contains("definition"))
+            showStoredSettings(it, QStringLiteral("Definition"), o.value("definition"));
         it->setExpanded(m_expanded.contains(it->data(0, KeyRole).toString()));
     }
     top->setExpanded(!m_expanded.contains(QStringLiteral("!interactions"))); // shown unless folded
@@ -2316,6 +2374,7 @@ void SnapshotPanel::showPreset()
     std::map<QString, QTreeWidgetItem *> layers;
     QHash<quint64, QString> interactionNames;
     for (const Interaction &x : m_engine->interactions()) interactionNames.insert(x.id, x.name);
+    for (const Interaction &x : p.interactions) interactionNames.insert(x.id, x.name);
     auto layerItem = [&](quint64 id, const QString &path) {
         const bool interaction = !id && path.startsWith(QLatin1String("interaction/"));
         const quint64 iid = interaction ? path.section('/', 1, 1).toULongLong() : 0;
@@ -2351,6 +2410,10 @@ void SnapshotPanel::showPreset()
         it->setData(0, KeyRole, v.path);
         it->setData(1, KeyRole, v.easing);
         it->setToolTip(0, v.path);
+        if (interaction && v.path.endsWith(QLatin1String("/filters"))) {
+            const auto filters = QJsonDocument::fromJson(v.value.toString().toUtf8());
+            if (filters.isArray()) showStoredSettings(it, QStringLiteral("Settings"), QJsonValue(filters.array()));
+        }
         if (!known) it->setForeground(0, QColor(255, 180, 90));
         auto *time = new NumberBox;
         time->setRange(-1, 600);
@@ -2399,10 +2462,6 @@ void SnapshotPanel::showPreset()
         m_presetValues->setItemWidget(it, 3, delay);
     }
     auto extra = [&](quint64 layer, const QString &key, const QString &label, const QString &summary) {
-        QString owner;
-        if (layer) { Engine::Lock lock(&m_engine->mutex());
-            if (const Layer *l = m_engine->layer(m_engine->indexOfId(layer))) owner = l->name + QStringLiteral(" › ");
-        }
         auto *item = new QTreeWidgetItem(layerItem(layer, key.startsWith("@interaction/")
                                                               ? QStringLiteral("interaction/%1/").arg(key.mid(13))
                                                               : QString()),
@@ -2410,6 +2469,7 @@ void SnapshotPanel::showPreset()
         item->setData(0, IdRole, layer);
         item->setData(0, KeyRole, key);
         item->setToolTip(0, QStringLiteral("Stored definition; right-click to remove from preset"));
+        return item;
     };
     if (!p.views.isEmpty())
         extra(0, QStringLiteral("@views"), QStringLiteral("Views"),
@@ -2424,11 +2484,14 @@ void SnapshotPanel::showPreset()
     }
     for (const auto &animation : p.animations) if (!animation.tracks.empty()) {
         const auto &track = animation.tracks.front();
-        extra(track.layer, QStringLiteral("@animation/") + track.param, QStringLiteral("Animation › ") + track.param,
-              track.oscillator ? QStringLiteral("Oscillator") : QStringLiteral("Keys"));
+        auto *item = extra(track.layer, QStringLiteral("@animation/") + track.param, QStringLiteral("Animation › ") + track.param,
+                           track.oscillator ? QStringLiteral("Oscillator") : QStringLiteral("Keys"));
+        showStoredSettings(item, QStringLiteral("Settings"), layerAnimToJson(animation))->setExpanded(true);
     }
-    for (const auto &interaction : p.interactions)
-        extra(0, QStringLiteral("@interaction/%1").arg(interaction.id), QStringLiteral("Interaction › ") + interaction.name, QStringLiteral("Complete definition"));
+    for (const auto &interaction : p.interactions) {
+        auto *item = extra(0, QStringLiteral("@interaction/%1").arg(interaction.id), QStringLiteral("Definition"), interaction.name);
+        showStoredSettings(item, QStringLiteral("Settings"), interaction.toJson())->setExpanded(true);
+    }
     // The value shown on the right, selected again (its pane rebuilt, unless the edit came from it)
     QTreeWidgetItem *current = nullptr;
     for (QTreeWidgetItemIterator x(m_presetValues); *x && !m_presetCurrent.second.isEmpty(); ++x)

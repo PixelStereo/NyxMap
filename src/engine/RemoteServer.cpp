@@ -32,6 +32,13 @@ public:
     bool setColor(quint64 id, double r, double g, double b) override { return m_e->setControlColor(id, r, g, b); }
     bool setLayouts(const QHash<quint64, std::array<int, 4>> &places) override { return m_e->setControlLayouts(places); }
     bool update(quint64 id, const pxs::controls::Control &changed) override { return m_e->updateControl(id, changed); }
+    quint64 add(const pxs::controls::Control &control) override { return m_e->addControl(control); }
+    bool restore(const std::vector<pxs::controls::Control> &controls) override
+    {
+        QJsonArray state;
+        for (const auto &control : controls) state.append(control.toJson());
+        return m_e->setControlsJson(state);
+    }
     bool remove(quint64 id) override { return m_e->removeControl(id); }
 
 private:

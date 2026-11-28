@@ -518,13 +518,23 @@ RecallPreset::RecallPreset(Engine *e, quint64 preset, double fadeOverride)
 {
     Engine::Lock lock(&e->mutex()); // parameter outputs and animation clocks are one Undo state
     const Engine::Preset p = e->preset(e->indexOfPreset(preset));
-    for (const Engine::PresetValue &v : p.values) m_before.push_back(e->presetValue(v.layer, v.path));
+    for (const Engine::PresetValue &v : p.values) {
+        m_before.push_back(e->presetValue(v.layer, v.path));
+        if (!v.layer || v.value.isNull() || v.value.isUndefined()) continue;
+        auto found = m_animations.find(v.layer);
+        if (found == m_animations.end()) found = m_animations.emplace(v.layer, e->layerAnims(v.layer)).first;
+        auto &paths = m_animationParams[v.layer];
+        for (const auto &animation : found->second)
+            if (!animation.tracks.empty() && animation.tracks.front().drives(v.path))
+                paths.push_back(animation.tracks.front().param);
+    }
     for (auto it = p.geometry.begin(); it != p.geometry.end(); ++it) m_parts[it.key().toULongLong()] |= Engine::PartSpatial;
     for (auto it = p.categories.begin(); it != p.categories.end(); ++it) m_parts[it.key().section(':', 0, 0).toULongLong()] |= it.key().section(':', 1).toInt();
     for (const auto &animation : p.animations) if (!animation.tracks.empty()) {
         const auto &target = animation.tracks.front();
         const quint64 layer = target.layer;
         m_animations[layer] = e->layerAnims(layer);
+        m_animationParams[layer].push_back(target.param);
         QStringList paths = target.drivenParams();
         for (const auto &old : m_animations[layer]) if (!old.tracks.empty())
             if (std::any_of(paths.begin(), paths.end(), [&](const QString &path) { return old.tracks.front().drives(path); }))
